@@ -30,6 +30,8 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 - 以 CSV 匯出排序與合併結果
 - GUI 可在 DSM 分頁正確顯示 Task ID 行表頭
 - 依賴性視覺化：新分頁展示任務間依賴圖及 SCC 群組
+- k 係數參數設定：透過對話框調整合併演算法參數
+- 深色模式支援：可切換介面主題，包含圖表樣式
 
 ## 使用方式
 
@@ -46,9 +48,29 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 #### PyQt5 進階 GUI
 
 ```bash
-pip install pyqt5 pandas
+pip install -r requirements.txt
 python -m src.gui_qt
 ```
+
+#### 進階 GUI 功能
+
+1. **檔案操作**
+
+   - 支援選擇 DSM/WBS 檔案
+   - 即時預覽資料內容
+   - CSV 格式匯出結果
+
+2. **視覺化功能**
+
+   - 多分頁檢視（原始資料、排序結果、合併結果）
+   - 依賴關係圖顯示
+   - DSM 中的依賴關係以紅色醒目標示
+   - 深色/淺色主題切換
+
+3. **參數調整**
+   - k 係數參數設定對話框
+   - 支援 Override 功能
+   - 設定值自動保存
 
 功能：
 

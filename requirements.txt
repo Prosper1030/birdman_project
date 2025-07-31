@@ -2,3 +2,4 @@ pandas
 openpyxl
 networkx
 matplotlib
+qdarkstyle

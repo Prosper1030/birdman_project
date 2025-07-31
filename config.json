@@ -3,12 +3,18 @@
     "base": 1.0,
     "trf_scale": 1.0,
     "trf_divisor": 10.0,
-    "n_coef": 0.05,
+    "n_coef": 0.1,
     "override": null
   },
   "visualization_params": {
     "node_color": "skyblue",
-    "scc_color_palette": ["#FFD700", "#FF8C00", "#FF6347", "#DA70D6", "#9370DB"],
+    "scc_color_palette": [
+      "#FFD700",
+      "#FF8C00",
+      "#FF6347",
+      "#DA70D6",
+      "#9370DB"
+    ],
     "font_size": 8
   }
 }
