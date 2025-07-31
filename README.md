@@ -1,6 +1,5 @@
 # Birdman Project
 
-
 此工具根據 DSM 與 WBS 檔案計算任務依賴層級並輸出排序後的 WBS。
 
 DSM 矩陣中，若某列某欄的值為 `1`，代表該列任務必須等待該欄任務完成。
@@ -11,7 +10,6 @@ DSM 矩陣中，若某列某欄的值為 `1`，代表該列任務必須等待該
 ```bash
 python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 ```
-
 
 完成後會在目前目錄生成 `sorted_wbs.csv`、`merged_wbs.csv`，以及 `sorted_dsm.csv`。
 
@@ -37,19 +35,41 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 
 執行後會在目前目錄產生 `sorted_wbs.csv`、`merged_wbs.csv` 及 `sorted_dsm.csv`。
 
-### GUI
+### GUI（推薦 PyQt5 進階版）
+
+#### PyQt5 進階 GUI（推薦）
+
+```bash
+pip install pyqt5 pandas
+python -m src.gui_qt
+```
+
+功能：
+
+- 多分頁切換（原始/排序/合併/DSM 預覽）
+- 表格預覽（像 Excel，可橫向捲動、欄位標題清楚）
+- DSM 依賴格自動標紅(目前有問題)
+- 匯出功能完整
+
+#### tkinter 簡易 GUI（備用）
 
 ```bash
 python -m src.gui
 ```
 
-使用視窗選擇檔案後執行，畫面中央會預覽資料，可放大或縮小。分析完成後，可依需求按下按鈕匯出 `sorted_wbs.csv`、`merged_wbs.csv` 或 `sorted_dsm.csv`。
+功能：
+
+- 操作簡單，無需額外安裝 PyQt5
+- 僅支援基本預覽與匯出
+
+> **建議**：如無特殊需求，請優先使用 `gui_qt.py`（PyQt5 版），功能較完整且介面更佳。
 
 ## 安裝套件
 
 ```bash
 pip install -r requirements.txt
 ```
+
 執行此指令會同時安裝 `networkx` 等必要套件。
 
 ## 範例資料
@@ -63,4 +83,3 @@ pip install -r requirements.txt
 ```bash
 pytest
 ```
-

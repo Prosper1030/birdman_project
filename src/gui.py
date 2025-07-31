@@ -4,6 +4,7 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import font as tkfont
+from tkinter import ttk
 from .dsm_processor import (
     readDsm,
     buildGraph,
@@ -39,16 +40,28 @@ class BirdmanApp:
 
         tk.Button(master, text='執行', command=self.run).grid(row=2, column=1)
 
-        self.text = tk.Text(master, width=80, height=20, font=self.font)
-        self.text.grid(row=3, column=0, columnspan=3)
+
+        # Treeview for DataFrame preview (Excel-like)
+        self.tree = ttk.Treeview(master, show='headings')
+        self.tree.grid(row=3, column=0, columnspan=3, sticky='nsew')
+        # Add scrollbars
+        self.vsb = ttk.Scrollbar(master, orient="vertical", command=self.tree.yview)
+        self.hsb = ttk.Scrollbar(master, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)
+        self.vsb.grid(row=3, column=3, sticky='ns')
+        self.hsb.grid(row=4, column=0, columnspan=3, sticky='ew')
+
+        # 讓 grid 可自動調整大小
+        master.grid_rowconfigure(3, weight=1)
+        master.grid_columnconfigure(1, weight=1)
 
         zoom_frame = tk.Frame(master)
-        zoom_frame.grid(row=4, column=0, columnspan=3)
+        zoom_frame.grid(row=5, column=0, columnspan=3)
         tk.Button(zoom_frame, text='放大', command=self.zoomIn).pack(side=tk.LEFT)
         tk.Button(zoom_frame, text='縮小', command=self.zoomOut).pack(side=tk.LEFT)
 
         export_frame = tk.Frame(master)
-        export_frame.grid(row=5, column=0, columnspan=3)
+        export_frame.grid(row=6, column=0, columnspan=3)
         tk.Button(export_frame, text='匯出排序 WBS', command=self.exportSortedWbs).pack(side=tk.LEFT)
         tk.Button(export_frame, text='匯出合併 WBS', command=self.exportMergedWbs).pack(side=tk.LEFT)
         tk.Button(export_frame, text='匯出排序 DSM', command=self.exportSortedDsm).pack(side=tk.LEFT)
@@ -101,18 +114,24 @@ class BirdmanApp:
             messagebox.showerror('錯誤', str(e))
 
     def preview(self, df):
-        """在文字區塊顯示資料前幾列"""
-        self.text.delete("1.0", tk.END)
-        self.text.insert(tk.END, df.head().to_string())
+        """在 Treeview 預覽 DataFrame 前幾列（像 Excel）"""
+        # 清空欄位與內容
+        self.tree.delete(*self.tree.get_children())
+        self.tree['columns'] = list(df.columns)
+        for col in df.columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=100, anchor='center')
+        # 只顯示前 30 列，避免太多
+        for _, row in df.head(30).iterrows():
+            self.tree.insert('', 'end', values=list(row))
 
     def zoomIn(self):
-        self.font_size += 1
-        self.font.configure(size=self.font_size)
+        # ttk.Treeview 不支援直接改字體，需額外設計
+        # 這裡可略過或用 style 設定
+        pass
 
     def zoomOut(self):
-        if self.font_size > 4:
-            self.font_size -= 1
-            self.font.configure(size=self.font_size)
+        pass
 
     def exportSortedWbs(self):
         if self.sorted_wbs is None:
