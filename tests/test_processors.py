@@ -69,3 +69,19 @@ def test_reorder_dsm():
     assert list(reordered.index) == order
     assert list(reordered.columns) == order
 
+
+def test_reorder_dsm_missing_task():
+    """當順序缺少任務時應拋出錯誤"""
+    dsm = pd.DataFrame([[0, 0], [0, 0]], index=["A", "B"], columns=["A", "B"])
+    order = ["A"]
+    with pytest.raises(ValueError):
+        reorderDsm(dsm, order)
+
+
+def test_reorder_dsm_extra_task():
+    """當順序多出任務時應拋出錯誤"""
+    dsm = pd.DataFrame([[0]], index=["A"], columns=["A"])
+    order = ["A", "B"]
+    with pytest.raises(ValueError):
+        reorderDsm(dsm, order)
+

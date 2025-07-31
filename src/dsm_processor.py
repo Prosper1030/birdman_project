@@ -55,5 +55,7 @@ def computeLayersAndScc(G: nx.DiGraph) -> tuple[dict, dict]:
 
 def reorderDsm(dsm: pd.DataFrame, order: list[str]) -> pd.DataFrame:
     """依指定順序重新排列 DSM 的列與欄"""
+    if set(order) != set(dsm.index):
+        raise ValueError("指定的順序與 DSM 任務不符")
     return dsm.loc[order, order]
 
