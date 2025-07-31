@@ -23,6 +23,8 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --year 25
 - DSM 拓撲排序、下三角化與 SCC 分析
 - WBS 依排序重排並加入 Layer、SCC_ID
 - 同一 SCC 任務自動合併並計算工時
+- 合併時自動判斷 Task ID 年份並建立新任務編號，若年份不一致將報錯
+- 新合併任務的 Name 欄位預設留空
 - 以 CSV 匯出排序與合併結果
 
 ## 使用方式
