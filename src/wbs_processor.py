@@ -7,6 +7,16 @@ def readWbs(path: str) -> pd.DataFrame:
     return pd.read_csv(path, encoding="utf-8-sig")
 
 
+def validateIds(wbs: pd.DataFrame, dsm: pd.DataFrame) -> None:
+    """確認 WBS 的 Task ID 是否皆存在於 DSM"""
+    if "Task ID" not in wbs.columns:
+        raise ValueError("WBS 缺少 Task ID 欄位")
+    dsm_ids = set(dsm.index.tolist()) | set(dsm.columns.tolist())
+    missing = [tid for tid in wbs["Task ID"] if tid not in dsm_ids]
+    if missing:
+        raise ValueError(f"下列 Task ID 未在 DSM 中找到：{', '.join(missing)}")
+
+
 
 def mergeByScc(wbs: pd.DataFrame, year: str) -> pd.DataFrame:
     """依據 SCC_ID 合併任務並計算新工時"""

@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 from src.dsm_processor import readDsm, buildGraph, computeLayersAndScc
-from src.wbs_processor import readWbs, mergeByScc
+from src.wbs_processor import readWbs, mergeByScc, validateIds
 
 
 
@@ -19,8 +19,7 @@ def main():
 
 
     wbs = readWbs(args.wbs)
-    if "Task ID" not in wbs.columns:
-        raise ValueError("WBS 缺少 Task ID 欄位")
+    validateIds(wbs, dsm)
 
     wbs["Layer"] = wbs["Task ID"].map(layers).fillna(-1).astype(int)
     wbs["SCC_ID"] = wbs["Task ID"].map(scc_id).fillna(-1).astype(int)
