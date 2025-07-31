@@ -5,6 +5,10 @@
 DSM 矩陣中，若某列某欄的值為 `1`，代表該列任務必須等待該欄任務完成。
 建圖時會將此視為「欄任務 -> 列任務」的邊。
 
+## 環境需求
+
+建議使用 **Python 3.10** 以上版本，並先安裝 `requirements.txt` 內的相依套件。
+
 ## 執行方式
 
 ```bash
@@ -24,6 +28,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 - 合併時自動判斷 Task ID 年份並建立新任務編號，若年份不一致將報錯
 - 新合併任務的 Name 欄位預設留空
 - 以 CSV 匯出排序與合併結果
+- GUI 可在 DSM 分頁正確顯示 Task ID 行表頭
 
 ## 使用方式
 
