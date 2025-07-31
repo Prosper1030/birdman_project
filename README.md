@@ -32,7 +32,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 ### CLI
 
 ```bash
-python main.py --dsm <DSM.csv> --wbs <WBS.csv>
+python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 ```
 
 執行後會在目前目錄產生 `sorted_wbs.csv`、`merged_wbs.csv` 及 `sorted_dsm.csv`。
