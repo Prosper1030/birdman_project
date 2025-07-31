@@ -28,7 +28,6 @@ def validateIds(wbs: pd.DataFrame, dsm: pd.DataFrame) -> None:
         raise ValueError(f"下列 Task ID 未在 DSM 中找到：{', '.join(missing)}")
 
 
-
 def _extract_year(task_id: str) -> str:
     """從 Task ID 解析年份兩碼
 
@@ -40,7 +39,10 @@ def _extract_year(task_id: str) -> str:
     return m.group(1)
 
 
-def mergeByScc(wbs: pd.DataFrame, kParams: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
+def mergeByScc(
+    wbs: pd.DataFrame,
+    kParams: Optional[Dict[str, Any]] = None,
+) -> pd.DataFrame:
     """依據 SCC_ID 合併任務並計算新工時
 
     若同一 SCC 中的任務年份不一致則報錯。可透過 ``kParams``
@@ -97,7 +99,8 @@ def mergeByScc(wbs: pd.DataFrame, kParams: Optional[Dict[str, Any]] = None) -> p
             scale = float(kParams.get("trf_scale", 1.0))
             divisor = float(kParams.get("trf_divisor", 10.0))
             nCoef = float(kParams.get("n_coef", 0.05))
-            k = base + ((trf_sum / n) * scale) ** 0.5 / divisor + nCoef * (n - 1)
+            k = base + ((trf_sum / n) * scale) ** 0.5 / \
+                divisor + nCoef * (n - 1)
 
         for col in time_cols:
             if col in grp.columns:
@@ -107,4 +110,3 @@ def mergeByScc(wbs: pd.DataFrame, kParams: Optional[Dict[str, Any]] = None) -> p
         merged_rows.append(new_row)
 
     return pd.DataFrame(merged_rows)
-

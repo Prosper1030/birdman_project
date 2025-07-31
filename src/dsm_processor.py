@@ -2,8 +2,6 @@ import pandas as pd
 import networkx as nx
 
 
-
-
 def readDsm(path: str) -> pd.DataFrame:
     """讀取 DSM CSV 並檢查方陣"""
     dsm = pd.read_csv(path, index_col=0, encoding="utf-8-sig")
@@ -65,16 +63,21 @@ def reorderDsm(dsm: pd.DataFrame, order: list[str]) -> pd.DataFrame:
     return dsm.loc[order, order]
 
 
-def process_dsm(dsm: pd.DataFrame, wbs: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, nx.DiGraph]:
+def process_dsm(
+    dsm: pd.DataFrame,
+    wbs: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame, nx.DiGraph]:
     """整合 DSM 與 WBS，回傳排序後的 DSM、WBS 以及依賴圖"""
     G = buildGraph(dsm)
     layers, scc_map = computeLayersAndScc(G)
 
     wbs_sorted = wbs.copy()
-    wbs_sorted["Layer"] = wbs_sorted["Task ID"].map(layers).fillna(-1).astype(int)
-    wbs_sorted["SCC_ID"] = wbs_sorted["Task ID"].map(scc_map).fillna(-1).astype(int)
-    wbs_sorted = wbs_sorted.sort_values(by=["Layer", "Task ID"]).reset_index(drop=True)
+    wbs_sorted["Layer"] = wbs_sorted["Task ID"].map(
+        layers).fillna(-1).astype(int)
+    wbs_sorted["SCC_ID"] = wbs_sorted["Task ID"].map(
+        scc_map).fillna(-1).astype(int)
+    wbs_sorted = wbs_sorted.sort_values(
+        by=["Layer", "Task ID"]).reset_index(drop=True)
 
     sorted_dsm = reorderDsm(dsm, wbs_sorted["Task ID"].tolist())
     return sorted_dsm, wbs_sorted, G
-
