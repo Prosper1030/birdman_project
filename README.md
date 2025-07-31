@@ -48,6 +48,7 @@ python -m src.gui
 ```bash
 pip install -r requirements.txt
 ```
+執行此指令會同時安裝 `networkx` 等必要套件。
 
 ## 範例資料
 
