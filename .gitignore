@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+.env
+*.egg-info/
+venv/
+.idea/
+.DS_Store
+sorted_wbs.csv
+merged_wbs.csv
