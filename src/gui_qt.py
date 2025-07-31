@@ -53,7 +53,10 @@ class PandasModel(QAbstractTableModel):
             if orientation == Qt.Horizontal:
                 return str(self._df.columns[section])
             else:
-                # 以 1 起始的列號，避免顯示原始索引
+                # DSM 模式下，直接使用索引作為行表頭（Task ID）
+                if self._dsm_mode:
+                    return str(self._df.index[section])
+                # 其他情況維持 1 起始的列號
                 return str(section + 1)
         return None
 
@@ -132,14 +135,12 @@ class BirdmanQtApp(QMainWindow):
         self.sorted_wbs_view = QTableView()
         self.merged_wbs_view = QTableView()
         self.sorted_dsm_view = QTableView()
-        for view in [
-            self.raw_dsm_view,
-            self.raw_wbs_view,
-            self.sorted_wbs_view,
-            self.merged_wbs_view,
-            self.sorted_dsm_view,
-        ]:
+        # 只在 WBS 相關表格隱藏行號
+        for view in [self.raw_wbs_view, self.sorted_wbs_view, self.merged_wbs_view]:
             view.verticalHeader().setVisible(False)
+        # DSM 表格顯示行號 (Task ID)
+        self.raw_dsm_view.verticalHeader().setVisible(True)
+        self.sorted_dsm_view.verticalHeader().setVisible(True)
         self.tab_raw_dsm.setLayout(QVBoxLayout())
         self.tab_raw_dsm.layout().addWidget(self.raw_dsm_view)
         self.tab_raw_wbs.setLayout(QVBoxLayout())
