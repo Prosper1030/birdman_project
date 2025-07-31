@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+import json
 from src.dsm_processor import readDsm, buildGraph, computeLayersAndScc, reorderDsm
 from src.wbs_processor import readWbs, mergeByScc, validateIds
 
@@ -9,6 +10,7 @@ def main():
     parser = argparse.ArgumentParser(description="DSM 排序工具")
     parser.add_argument("--dsm", required=True)
     parser.add_argument("--wbs", required=True)
+    parser.add_argument("--config", default="config.json")
     args = parser.parse_args()
 
     dsm = readDsm(args.dsm)
@@ -33,7 +35,10 @@ def main():
     sorted_dsm.to_csv(out_dsm, encoding="utf-8-sig")
     print(f"已輸出 {out_dsm}")
 
-    merged = mergeByScc(wbs_sorted)
+    with open(args.config, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    k_params = config.get('merge_k_params', {})
+    merged = mergeByScc(wbs_sorted, k_params)
     out_merged = Path("merged_wbs.csv")
     merged.to_csv(out_merged, index=False, encoding="utf-8-sig")
     print(f"已輸出 {out_merged}")
