@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from src.dsm_processor import readDsm, buildGraph, computeLayersAndScc, reorderDsm
 
-from src.wbs_processor import readWbs, validateIds, mergeByScc
+from src.wbs_processor import readWbs, validateIds, mergeByScc, _extract_year
 
 
 def test_read_dsm_matrix_check(tmp_path):
@@ -82,6 +82,19 @@ def test_reorder_dsm_extra_task():
     """當順序多出任務時應拋出錯誤"""
     dsm = pd.DataFrame([[0]], index=["A"], columns=["A"])
     order = ["A", "B"]
+    with pytest.raises(ValueError):
+        reorderDsm(dsm, order)
+
+
+def test_extract_year_numeric_prefix():
+    """Task ID 前綴含數字亦可正確解析年份"""
+    assert _extract_year("0X26-001") == "26"
+
+
+def test_reorder_dsm_duplicate():
+    """排序陣列出現重複 Task ID 應拋出錯誤"""
+    dsm = pd.DataFrame([[0, 0], [0, 0]], index=["A", "B"], columns=["A", "B"])
+    order = ["A", "A"]
     with pytest.raises(ValueError):
         reorderDsm(dsm, order)
 

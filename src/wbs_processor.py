@@ -29,8 +29,11 @@ def validateIds(wbs: pd.DataFrame, dsm: pd.DataFrame) -> None:
 
 
 def _extract_year(task_id: str) -> str:
-    """從 Task ID 解析年份兩碼"""
-    m = re.search(r"\D(\d{2})-\d+$", task_id)
+    """從 Task ID 解析年份兩碼
+
+    支援字母或數字開頭的識別碼，例如 ``0X26-001`` 或 ``A26-001``。
+    """
+    m = re.search(r"[A-Za-z0-9]+?(\d{2})-\d+$", task_id)
     if not m:
         raise ValueError(f"無法從 {task_id} 解析年份")
     return m.group(1)

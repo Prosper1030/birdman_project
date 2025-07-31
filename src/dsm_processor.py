@@ -57,5 +57,8 @@ def reorderDsm(dsm: pd.DataFrame, order: list[str]) -> pd.DataFrame:
     """依指定順序重新排列 DSM 的列與欄"""
     if set(order) != set(dsm.index):
         raise ValueError("指定的順序與 DSM 任務不符")
+    # 檢查排序陣列是否有重複值
+    if len(order) != len(set(order)):
+        raise ValueError("排序陣列含有重複 Task ID")
     return dsm.loc[order, order]
 
