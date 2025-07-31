@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from src.dsm_processor import readDsm, buildGraph, computeLayersAndScc
+from src.dsm_processor import readDsm, buildGraph, computeLayersAndScc, reorderDsm
 from src.wbs_processor import readWbs, mergeByScc, validateIds
 
 
@@ -27,6 +27,11 @@ def main():
     out_sorted = Path("sorted_wbs.csv")
     wbs_sorted.to_csv(out_sorted, index=False, encoding="utf-8-sig")
     print(f"已輸出 {out_sorted}")
+
+    sorted_dsm = reorderDsm(dsm, wbs_sorted["Task ID"].tolist())
+    out_dsm = Path("sorted_dsm.csv")
+    sorted_dsm.to_csv(out_dsm, encoding="utf-8-sig")
+    print(f"已輸出 {out_dsm}")
 
     merged = mergeByScc(wbs_sorted)
     out_merged = Path("merged_wbs.csv")

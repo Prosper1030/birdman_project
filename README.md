@@ -13,7 +13,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 ```
 
 
-完成後會在目前目錄生成 `sorted_wbs.csv` 與 `merged_wbs.csv`。
+完成後會在目前目錄生成 `sorted_wbs.csv`、`merged_wbs.csv`，以及 `sorted_dsm.csv`。
 
 此專案為鳥人間團隊開發的 DSM/WBS 處理工具，提供拓撲排序、強連通分量分析與任務合併等功能，並具備簡易 GUI。
 
@@ -35,7 +35,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 python main.py --dsm <DSM.csv> --wbs <WBS.csv>
 ```
 
-執行後會在目前目錄產生 `sorted_wbs.csv` 與 `merged_wbs.csv`。
+執行後會在目前目錄產生 `sorted_wbs.csv`、`merged_wbs.csv` 及 `sorted_dsm.csv`。
 
 ### GUI
 
@@ -43,7 +43,7 @@ python main.py --dsm <DSM.csv> --wbs <WBS.csv>
 python -m src.gui
 ```
 
-使用視窗選擇檔案後執行，即可匯出結果。
+使用視窗選擇檔案後執行，畫面中央會預覽資料，可放大或縮小。分析完成後，可依需求按下按鈕匯出 `sorted_wbs.csv`、`merged_wbs.csv` 或 `sorted_dsm.csv`。
 
 ## 安裝套件
 
