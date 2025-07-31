@@ -3,8 +3,12 @@ import networkx as nx
 
 
 def readDsm(path: str) -> pd.DataFrame:
-    """讀取 DSM CSV 並回傳資料框"""
-    return pd.read_csv(path, index_col=0, encoding="utf-8-sig")
+    """讀取 DSM CSV 並檢查方陣"""
+    dsm = pd.read_csv(path, index_col=0, encoding="utf-8-sig")
+    # 檢查列數與欄數是否相等
+    if dsm.shape[0] != dsm.shape[1]:
+        raise ValueError("DSM 必須為方陣，請檢查檔案內容")
+    return dsm
 
 
 def buildGraph(dsm: pd.DataFrame) -> nx.DiGraph:
