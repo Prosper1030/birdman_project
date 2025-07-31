@@ -3,15 +3,19 @@
 PyQt5 進階 GUI，支援分頁切換與 DataFrame 表格預覽
 """
 import sys
+import json
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QMessageBox, QTabWidget, QLabel, QTableView
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 import pandas as pd
-from .dsm_processor import readDsm, buildGraph, computeLayersAndScc, reorderDsm
+from .dsm_processor import readDsm, reorderDsm, buildGraph, computeLayersAndScc, process_dsm
 from .wbs_processor import readWbs, mergeByScc, validateIds
+from . import visualizer
 from pandas import DataFrame
 from PyQt5.QtCore import QAbstractTableModel
 
@@ -106,11 +110,13 @@ class BirdmanQtApp(QMainWindow):
         self.tab_sorted_wbs = QWidget()
         self.tab_merged_wbs = QWidget()
         self.tab_sorted_dsm = QWidget()
+        self.tab_graph = QWidget()
         self.tabs.addTab(self.tab_raw_dsm, '原始 DSM')
         self.tabs.addTab(self.tab_raw_wbs, '原始 WBS')
         self.tabs.addTab(self.tab_sorted_wbs, '排序 WBS')
         self.tabs.addTab(self.tab_merged_wbs, '合併 WBS')
         self.tabs.addTab(self.tab_sorted_dsm, '排序 DSM')
+        self.tabs.addTab(self.tab_graph, '依賴關係圖')
         main_layout.addWidget(self.tabs)
 
         # 匯出按鈕
@@ -135,6 +141,9 @@ class BirdmanQtApp(QMainWindow):
         self.sorted_wbs_view = QTableView()
         self.merged_wbs_view = QTableView()
         self.sorted_dsm_view = QTableView()
+        # 依賴關係圖畫布
+        self.graph_figure = Figure(figsize=(6, 4))
+        self.graph_canvas = FigureCanvas(self.graph_figure)
         # 只在 WBS 相關表格隱藏行號
         for view in [self.raw_wbs_view, self.sorted_wbs_view, self.merged_wbs_view]:
             view.verticalHeader().setVisible(False)
@@ -151,6 +160,8 @@ class BirdmanQtApp(QMainWindow):
         self.tab_merged_wbs.layout().addWidget(self.merged_wbs_view)
         self.tab_sorted_dsm.setLayout(QVBoxLayout())
         self.tab_sorted_dsm.layout().addWidget(self.sorted_dsm_view)
+        self.tab_graph.setLayout(QVBoxLayout())
+        self.tab_graph.layout().addWidget(self.graph_canvas)
 
     def chooseDsm(self):
         path, _ = QFileDialog.getOpenFileName(self, '選擇 DSM 檔案', '', 'CSV Files (*.csv)')
@@ -184,18 +195,24 @@ class BirdmanQtApp(QMainWindow):
             wbs_with_no = self._add_no_column(wbs)
             self.raw_wbs_view.setModel(PandasModel(wbs_with_no.head(100)))
 
-            graph = buildGraph(dsm)
-            layers, scc_map = computeLayersAndScc(graph)
             validateIds(wbs, dsm)
-            wbs_for_sort = wbs.copy()
-            wbs_for_sort["Layer"] = wbs_for_sort["Task ID"].map(layers).fillna(-1).astype(int)
-            wbs_for_sort["SCC_ID"] = wbs_for_sort["Task ID"].map(scc_map).fillna(-1).astype(int)
-            sorted_wbs = wbs_for_sort.sort_values(by=["Layer", "Task ID"]).reset_index(drop=True)
+
+            sorted_dsm, sorted_wbs, graph = process_dsm(dsm, wbs)
             self.sorted_wbs = self._add_no_column(sorted_wbs)
-            self.sorted_dsm = reorderDsm(dsm, sorted_wbs["Task ID"].tolist())
-            # 合併 WBS 並讓 No. 連號從 1 開始
-            merged = mergeByScc(sorted_wbs)
+            self.sorted_dsm = sorted_dsm
+
+            with open('config.json', 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            k_params = config.get('merge_k_params', {})
+            viz_params = config.get('visualization_params', {})
+
+            merged = mergeByScc(sorted_wbs, k_params)
             self.merged_wbs = self._add_no_column(merged)
+
+            scc_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['SCC_ID']))
+            fig = visualizer.create_dependency_graph_figure(graph, scc_map, viz_params)
+            self.graph_canvas.figure = fig
+            self.graph_canvas.draw()
             # 預覽
             self.sorted_wbs_view.setModel(PandasModel(self.sorted_wbs.head(100)))
             self.merged_wbs_view.setModel(PandasModel(self.merged_wbs.head(100)))

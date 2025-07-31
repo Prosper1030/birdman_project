@@ -1,6 +1,7 @@
 
 import pandas as pd
 import re
+from typing import Optional, Dict, Any
 
 
 def validateTrf(wbs: pd.DataFrame) -> None:
@@ -39,10 +40,11 @@ def _extract_year(task_id: str) -> str:
     return m.group(1)
 
 
-def mergeByScc(wbs: pd.DataFrame) -> pd.DataFrame:
+def mergeByScc(wbs: pd.DataFrame, kParams: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     """依據 SCC_ID 合併任務並計算新工時
 
-    若同一 SCC 中的任務年份不一致則報錯。
+    若同一 SCC 中的任務年份不一致則報錯。可透過 ``kParams``
+    自訂計算係數的相關參數。
     """
     time_cols = [
         "M",
@@ -54,6 +56,15 @@ def mergeByScc(wbs: pd.DataFrame) -> pd.DataFrame:
         "P_newbie",
         "Te_newbie",
     ]
+
+    if kParams is None:
+        kParams = {
+            "base": 1.0,
+            "trf_scale": 1.0,
+            "trf_divisor": 10.0,
+            "n_coef": 0.05,
+            "override": None,
+        }
 
     merged_rows = []
     serial = 1
@@ -78,7 +89,15 @@ def mergeByScc(wbs: pd.DataFrame) -> pd.DataFrame:
 
         trf_sum = grp["TRF"].astype(float).sum()
         n = len(grp)
-        k = 1 + ((trf_sum / n) * 10) ** 0.5 / 10 + 0.05 * (n - 1)
+
+        if kParams.get("override") is not None:
+            k = float(kParams["override"])
+        else:
+            base = float(kParams.get("base", 1.0))
+            scale = float(kParams.get("trf_scale", 1.0))
+            divisor = float(kParams.get("trf_divisor", 10.0))
+            nCoef = float(kParams.get("n_coef", 0.05))
+            k = base + ((trf_sum / n) * scale) ** 0.5 / divisor + nCoef * (n - 1)
 
         for col in time_cols:
             if col in grp.columns:
