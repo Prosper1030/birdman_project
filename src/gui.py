@@ -5,8 +5,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import pandas as pd
 
-from .dsm_processor import readDsm, buildGraph, topologicalSort, tarjanScc, computeLayers
-from .wbs_processor import readWbs, validateIds, reorderWbs, mergeByScc
+from .dsm_processor import readDsm, buildGraph, computeLayersAndScc
+from .wbs_processor import readWbs, mergeByScc
 
 
 class BirdmanApp:
@@ -41,21 +41,22 @@ class BirdmanApp:
         try:
             dsm = readDsm(self.dsmPath.get())
             graph = buildGraph(dsm)
-            order, hasCycle = topologicalSort(graph)
-            if hasCycle:
-                sccs, sccMap = tarjanScc(graph)
-                msg = '\n'.join([f'SCC {i+1}: {s}' for i, s in enumerate(sccs)])
-                messagebox.showinfo('存在循環依賴', msg)
-            else:
-                sccMap = {t: 0 for t in order}
-            layers = computeLayers(order, graph)
+
+            # 依照圖計算層次與強連通分量
+            layers, scc_map = computeLayersAndScc(graph)
+
             wbs = readWbs(self.wbsPath.get())
-            validateIds(wbs, dsm)
-            sortedWbs = reorderWbs(wbs, order, sccMap)
-            sortedWbs['Layer'] = [layers[t] for t in order]
-            sortedWbs.to_csv('sorted_wbs.csv', index=False)
-            merged = mergeByScc(sortedWbs, sccMap)
-            merged.to_csv('merged_wbs.csv', index=False)
+
+            # 新增 Layer 與 SCC_ID 欄位並依層次排序
+            wbs["Layer"] = wbs["Task ID"].map(layers).fillna(-1).astype(int)
+            wbs["SCC_ID"] = wbs["Task ID"].map(scc_map).fillna(-1).astype(int)
+            sorted_wbs = wbs.sort_values(by=["Layer", "Task ID"]).reset_index(drop=True)
+
+            sorted_wbs.to_csv("sorted_wbs.csv", index=False, encoding="utf-8-sig")
+
+            merged = mergeByScc(sorted_wbs, "")
+            merged.to_csv("merged_wbs.csv", index=False, encoding="utf-8-sig")
+
             messagebox.showinfo('完成', '輸出檔已生成')
         except Exception as e:
             messagebox.showerror('錯誤', str(e))
