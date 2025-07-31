@@ -1,40 +1,32 @@
-# -*- coding: utf-8 -*-
-"""Birdman Project 主程式"""
-
-from __future__ import annotations
-
 import argparse
+from pathlib import Path
 
-from src.dsm_processor import readDsm, buildGraph, topologicalSort, tarjanScc, computeLayers
-from src.wbs_processor import readWbs, validateIds, reorderWbs, mergeByScc
-
-
-def process(dsmPath: str, wbsPath: str):
-    dsm = readDsm(dsmPath)
-    graph = buildGraph(dsm)
-    order, hasCycle = topologicalSort(graph)
-    if hasCycle:
-        sccs, sccMap = tarjanScc(graph)
-    else:
-        sccMap = {t: 0 for t in order}
-    layers = computeLayers(order, graph)
-    wbs = readWbs(wbsPath)
-    validateIds(wbs, dsm)
-    sortedWbs = reorderWbs(wbs, order, sccMap)
-    sortedWbs['Layer'] = [layers[t] for t in order]
-    sortedWbs.to_csv('sorted_wbs.csv', index=False)
-    merged = mergeByScc(sortedWbs, sccMap)
-    merged.to_csv('merged_wbs.csv', index=False)
-    print('排序與合併完成')
+from src.dsm_processor import readDsm, buildGraph, assignLayer
+from src.wbs_processor import readWbs
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Birdman Project 工具')
-    parser.add_argument('--dsm', required=True, help='DSM CSV 檔案路徑')
-    parser.add_argument('--wbs', required=True, help='WBS CSV 檔案路徑')
+    parser = argparse.ArgumentParser(description="DSM 排序工具")
+    parser.add_argument("--dsm", required=True)
+    parser.add_argument("--wbs", required=True)
+    parser.add_argument("--year", type=str, default="")
     args = parser.parse_args()
-    process(args.dsm, args.wbs)
+
+    dsm = readDsm(args.dsm)
+    G = buildGraph(dsm)
+    layers = assignLayer(G)
+
+    wbs = readWbs(args.wbs)
+    if "Task ID" not in wbs.columns:
+        raise ValueError("WBS 缺少 Task ID 欄位")
+
+    wbs["Layer"] = wbs["Task ID"].map(layers).fillna(-1).astype(int)
+    wbs_sorted = wbs.sort_values(by="Layer").reset_index(drop=True)
+
+    out_path = Path("sorted_wbs.csv")
+    wbs_sorted.to_csv(out_path, index=False, encoding="utf-8-sig")
+    print(f"已輸出 {out_path}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

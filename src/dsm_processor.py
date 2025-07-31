@@ -1,113 +1,46 @@
-# -*- coding: utf-8 -*-
-"""DSM 處理模組"""
-
-from __future__ import annotations
-
 import pandas as pd
-from dataclasses import dataclass
-from typing import List, Dict, Tuple
-
-@dataclass
-class DSMData:
-    taskIds: List[str]
-    matrix: pd.DataFrame
+import networkx as nx
 
 
-def readDsm(path: str) -> DSMData:
-    """讀取 DSM CSV 並進行基本驗證"""
-    df = pd.read_csv(path, index_col=0)
-    df.index = df.index.astype(str)
-    df.columns = df.columns.astype(str)
-
-    if df.shape[0] != df.shape[1]:
-        raise ValueError("DSM 不是方陣")
-    if list(df.index) != list(df.columns):
-        raise ValueError("DSM 行列 Task_ID 不一致")
-
-    return DSMData(taskIds=list(df.index), matrix=df)
+def readDsm(path: str) -> pd.DataFrame:
+    """讀取 DSM CSV 並回傳資料框"""
+    return pd.read_csv(path, index_col=0, encoding="utf-8-sig")
 
 
-def buildGraph(dsm: DSMData) -> Dict[str, List[str]]:
-    """將 DSM 轉換為依賴圖"""
-    graph: Dict[str, List[str]] = {task: [] for task in dsm.taskIds}
-    for rowTask in dsm.taskIds:
-        deps = dsm.matrix.loc[rowTask]
-        graph[rowTask] = [col for col, v in deps.items() if v == 1]
-    return graph
+def buildGraph(dsm: pd.DataFrame) -> nx.DiGraph:
+    """根據 DSM 建立依賴圖
+
+    DSM 內若某格為 1，代表列任務必須等待欄任務完成，
+    因此在圖中視為「欄任務 -> 列任務」的有向邊。
+    """
+    G = nx.DiGraph()
+    tasks = dsm.columns.tolist()
+    G.add_nodes_from(tasks)
+    for row_task in dsm.index:
+        for col_task in dsm.columns:
+            if dsm.at[row_task, col_task] == 1:
+                G.add_edge(col_task, row_task)
+    return G
 
 
-def topologicalSort(graph: Dict[str, List[str]]) -> Tuple[List[str], bool]:
-    """拓撲排序，回傳排序結果與是否有循環依賴"""
-    from collections import defaultdict, deque
+def assignLayer(G: nx.DiGraph) -> dict:
+    """回傳每個節點的層次，越早執行層次越小"""
+    try:
+        order = list(nx.topological_sort(G))
+    except nx.NetworkXUnfeasible:
+        # 若圖含有迴圈，先進行強連通分量縮減
+        sccs = list(nx.strongly_connected_components(G))
+        mapping = {}
+        for idx, comp in enumerate(sccs):
+            for node in comp:
+                mapping[node] = idx
+        condensed = nx.condensation(G, sccs)
+        comp_layer = assignLayer(condensed)
+        return {node: comp_layer[mapping[node]] for node in G.nodes}
 
-    indegree = defaultdict(int)
-    for node, deps in graph.items():
-        indegree.setdefault(node, 0)
-        for dep in deps:
-            indegree[dep] += 1
-
-    q = deque([n for n in graph if indegree[n] == 0])
-    result: List[str] = []
-    while q:
-        n = q.popleft()
-        result.append(n)
-        for m in graph[n]:
-            indegree[m] -= 1
-            if indegree[m] == 0:
-                q.append(m)
-
-    hasCycle = len(result) != len(graph)
-    return result, hasCycle
-
-
-def tarjanScc(graph: Dict[str, List[str]]) -> Tuple[List[List[str]], Dict[str, int]]:
-    """使用 Tarjan 演算法找出強連通分量"""
-    index = 0
-    indices: Dict[str, int] = {}
-    lowlinks: Dict[str, int] = {}
-    stack: List[str] = []
-    onStack: Dict[str, bool] = {}
-    sccs: List[List[str]] = []
-    sccIdMap: Dict[str, int] = {}
-
-    def strongconnect(node: str):
-        nonlocal index
-        indices[node] = index
-        lowlinks[node] = index
-        index += 1
-        stack.append(node)
-        onStack[node] = True
-
-        for neighbor in graph[node]:
-            if neighbor not in indices:
-                strongconnect(neighbor)
-                lowlinks[node] = min(lowlinks[node], lowlinks[neighbor])
-            elif onStack.get(neighbor, False):
-                lowlinks[node] = min(lowlinks[node], indices[neighbor])
-
-        if lowlinks[node] == indices[node]:
-            scc = []
-            while True:
-                w = stack.pop()
-                onStack[w] = False
-                scc.append(w)
-                if w == node:
-                    break
-            sccs.append(scc)
-            for n in scc:
-                sccIdMap[n] = len(sccs)
-
-    for v in graph:
-        if v not in indices:
-            strongconnect(v)
-
-    return sccs, sccIdMap
-
-
-def computeLayers(order: List[str], graph: Dict[str, List[str]]) -> Dict[str, int]:
-    """依照拓撲順序計算每個節點的層次"""
-    layer: Dict[str, int] = {task: 0 for task in order}
-    for task in order:
-        for dep in graph[task]:
-            layer[dep] = max(layer.get(dep, 0), layer[task] + 1)
+    layer = {node: 0 for node in G.nodes}
+    for node in order:
+        preds = list(G.predecessors(node))
+        if preds:
+            layer[node] = max(layer[p] for p in preds) + 1
     return layer
