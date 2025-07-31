@@ -1,5 +1,6 @@
 
 import pandas as pd
+import re
 
 
 def readWbs(path: str) -> pd.DataFrame:
@@ -8,8 +9,19 @@ def readWbs(path: str) -> pd.DataFrame:
 
 
 
-def mergeByScc(wbs: pd.DataFrame, year: str) -> pd.DataFrame:
-    """依據 SCC_ID 合併任務並計算新工時"""
+def _extract_year(task_id: str) -> str:
+    """從 Task ID 解析年份兩碼"""
+    m = re.search(r"\D(\d{2})-\d+$", task_id)
+    if not m:
+        raise ValueError(f"無法從 {task_id} 解析年份")
+    return m.group(1)
+
+
+def mergeByScc(wbs: pd.DataFrame) -> pd.DataFrame:
+    """依據 SCC_ID 合併任務並計算新工時
+
+    若同一 SCC 中的任務年份不一致則報錯。
+    """
     time_cols = [
         "M",
         "O_expert",
@@ -28,11 +40,19 @@ def mergeByScc(wbs: pd.DataFrame, year: str) -> pd.DataFrame:
             merged_rows.append(grp.iloc[0])
             continue
 
+        years = grp["Task ID"].apply(_extract_year).unique()
+        if len(years) == 1:
+            year = years[0]
+        else:
+            raise ValueError(f"SCC {scc_id} 包含不同年份的 Task ID: {years}")
+
         new_id = f"M{year}-{serial:03d}[{','.join(grp['Task ID'])}]"
         serial += 1
 
         new_row = grp.iloc[0].copy()
         new_row["Task ID"] = new_id
+        if "Name" in new_row.index:
+            new_row["Name"] = ""
 
         trf_sum = grp["TRF"].astype(float).sum()
         n = len(grp)

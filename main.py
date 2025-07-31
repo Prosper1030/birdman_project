@@ -9,7 +9,6 @@ def main():
     parser = argparse.ArgumentParser(description="DSM 排序工具")
     parser.add_argument("--dsm", required=True)
     parser.add_argument("--wbs", required=True)
-    parser.add_argument("--year", type=str, default="")
     args = parser.parse_args()
 
     dsm = readDsm(args.dsm)
@@ -30,7 +29,7 @@ def main():
     wbs_sorted.to_csv(out_sorted, index=False, encoding="utf-8-sig")
     print(f"已輸出 {out_sorted}")
 
-    merged = mergeByScc(wbs_sorted, args.year)
+    merged = mergeByScc(wbs_sorted)
     out_merged = Path("merged_wbs.csv")
     merged.to_csv(out_merged, index=False, encoding="utf-8-sig")
     print(f"已輸出 {out_merged}")
