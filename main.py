@@ -1,8 +1,8 @@
 import argparse
 from pathlib import Path
-
 from src.dsm_processor import readDsm, buildGraph, computeLayersAndScc
 from src.wbs_processor import readWbs, mergeByScc
+
 
 
 def main():
@@ -14,7 +14,9 @@ def main():
 
     dsm = readDsm(args.dsm)
     G = buildGraph(dsm)
+
     layers, scc_id = computeLayersAndScc(G)
+
 
     wbs = readWbs(args.wbs)
     if "Task ID" not in wbs.columns:
@@ -36,3 +38,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

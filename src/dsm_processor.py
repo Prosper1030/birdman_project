@@ -26,6 +26,7 @@ def buildGraph(dsm: pd.DataFrame) -> nx.DiGraph:
 def assignLayer(G: nx.DiGraph) -> dict:
     """依拓撲排序結果計算各節點層次"""
     order = list(nx.topological_sort(G))
+
     layer = {node: 0 for node in G.nodes}
     for node in order:
         preds = list(G.predecessors(node))
@@ -46,3 +47,4 @@ def computeLayersAndScc(G: nx.DiGraph) -> tuple[dict, dict]:
             scc_map[node] = idx
             layer_map[node] = cond_layers[idx]
     return layer_map, scc_map
+
