@@ -36,14 +36,16 @@ class PandasModel(QAbstractTableModel):
             return str(value)
         # 只有DSM分頁才標紅依賴格子
         if self._dsm_mode and role == Qt.BackgroundRole:
-            # 非第一欄且值為1
-            if index.column() > 0:
-                try:
-                    if float(value) == 1:
-                        from PyQt5.QtGui import QColor
-                        return QColor(255, 120, 120)
-                except Exception:
-                    pass
+            """若值為 1 則以紅色標示，避免解析失敗"""
+            try:
+                if str(value).strip() in {"1", "1.0"}:
+                    from PyQt5.QtGui import QColor
+                    return QColor(255, 120, 120)
+                if float(value) == 1:
+                    from PyQt5.QtGui import QColor
+                    return QColor(255, 120, 120)
+            except Exception:
+                pass
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
@@ -51,7 +53,8 @@ class PandasModel(QAbstractTableModel):
             if orientation == Qt.Horizontal:
                 return str(self._df.columns[section])
             else:
-                return str(self._df.index[section])
+                # 以 1 起始的列號，避免顯示原始索引
+                return str(section + 1)
         return None
 
 class BirdmanQtApp(QMainWindow):
@@ -129,6 +132,14 @@ class BirdmanQtApp(QMainWindow):
         self.sorted_wbs_view = QTableView()
         self.merged_wbs_view = QTableView()
         self.sorted_dsm_view = QTableView()
+        for view in [
+            self.raw_dsm_view,
+            self.raw_wbs_view,
+            self.sorted_wbs_view,
+            self.merged_wbs_view,
+            self.sorted_dsm_view,
+        ]:
+            view.verticalHeader().setVisible(False)
         self.tab_raw_dsm.setLayout(QVBoxLayout())
         self.tab_raw_dsm.layout().addWidget(self.raw_dsm_view)
         self.tab_raw_wbs.setLayout(QVBoxLayout())

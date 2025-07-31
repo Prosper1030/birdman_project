@@ -37,7 +37,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 
 ### GUI（推薦 PyQt5 進階版）
 
-#### PyQt5 進階 GUI（推薦）
+#### PyQt5 進階 GUI
 
 ```bash
 pip install pyqt5 pandas
@@ -48,21 +48,10 @@ python -m src.gui_qt
 
 - 多分頁切換（原始/排序/合併/DSM 預覽）
 - 表格預覽（像 Excel，可橫向捲動、欄位標題清楚）
-- DSM 依賴格自動標紅(目前有問題)
+- DSM 依賴格自動標紅
 - 匯出功能完整
 
-#### tkinter 簡易 GUI（備用）
-
-```bash
-python -m src.gui
-```
-
-功能：
-
-- 操作簡單，無需額外安裝 PyQt5
-- 僅支援基本預覽與匯出
-
-> **建議**：如無特殊需求，請優先使用 `gui_qt.py`（PyQt5 版），功能較完整且介面更佳。
+> **僅提供 PyQt5 版 GUI，請確保已安裝對應套件。**
 
 ## 安裝套件
 
