@@ -1,0 +1,46 @@
+import pandas as pd
+import networkx as nx
+
+
+def readDsm(path: str) -> pd.DataFrame:
+    """讀取 DSM CSV 並回傳資料框"""
+    return pd.read_csv(path, index_col=0, encoding="utf-8-sig")
+
+
+def buildGraph(dsm: pd.DataFrame) -> nx.DiGraph:
+    """根據 DSM 建立依賴圖
+
+    DSM 內若某格為 1，代表列任務必須等待欄任務完成，
+    因此在圖中視為「欄任務 -> 列任務」的有向邊。
+    """
+    G = nx.DiGraph()
+    tasks = dsm.columns.tolist()
+    G.add_nodes_from(tasks)
+    for row_task in dsm.index:
+        for col_task in dsm.columns:
+            if dsm.at[row_task, col_task] == 1:
+                G.add_edge(col_task, row_task)
+    return G
+
+
+def assignLayer(G: nx.DiGraph) -> dict:
+    """回傳每個節點的層次，越早執行層次越小"""
+    try:
+        order = list(nx.topological_sort(G))
+    except nx.NetworkXUnfeasible:
+        # 若圖含有迴圈，先進行強連通分量縮減
+        sccs = list(nx.strongly_connected_components(G))
+        mapping = {}
+        for idx, comp in enumerate(sccs):
+            for node in comp:
+                mapping[node] = idx
+        condensed = nx.condensation(G, sccs)
+        comp_layer = assignLayer(condensed)
+        return {node: comp_layer[mapping[node]] for node in G.nodes}
+
+    layer = {node: 0 for node in G.nodes}
+    for node in order:
+        preds = list(G.predecessors(node))
+        if preds:
+            layer[node] = max(layer[p] for p in preds) + 1
+    return layer
