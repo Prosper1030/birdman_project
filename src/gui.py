@@ -3,10 +3,8 @@
 
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import pandas as pd
-
 from .dsm_processor import readDsm, buildGraph, computeLayersAndScc
-from .wbs_processor import readWbs, mergeByScc
+from .wbs_processor import readWbs, mergeByScc, validateIds
 
 
 class BirdmanApp:
@@ -46,6 +44,7 @@ class BirdmanApp:
             layers, scc_map = computeLayersAndScc(graph)
 
             wbs = readWbs(self.wbsPath.get())
+            validateIds(wbs, dsm)
 
             # 新增 Layer 與 SCC_ID 欄位並依層次排序
             wbs["Layer"] = wbs["Task ID"].map(layers).fillna(-1).astype(int)
@@ -54,7 +53,7 @@ class BirdmanApp:
 
             sorted_wbs.to_csv("sorted_wbs.csv", index=False, encoding="utf-8-sig")
 
-            merged = mergeByScc(sorted_wbs, "")
+            merged = mergeByScc(sorted_wbs)
             merged.to_csv("merged_wbs.csv", index=False, encoding="utf-8-sig")
 
             messagebox.showinfo('完成', '輸出檔已生成')
