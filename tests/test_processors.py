@@ -32,6 +32,18 @@ def test_validate_ids(tmp_path):
         validateIds(wbs, dsm)
 
 
+def test_validate_trf_negative(tmp_path):
+    """檢查 TRF 為負數時是否拋出例外"""
+    dsm_path = tmp_path / "dsm.csv"
+    df = pd.DataFrame([[0]], index=["A"], columns=["A"])
+    df.to_csv(dsm_path)
+    dsm = readDsm(dsm_path)
+
+    wbs = pd.DataFrame({"Task ID": ["A"], "TRF": [-1]})
+    with pytest.raises(ValueError):
+        validateIds(wbs, dsm)
+
+
 def test_merge_by_scc():
     data = {
         "Task ID": ["A24-001", "A24-002"],

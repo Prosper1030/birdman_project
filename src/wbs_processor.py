@@ -3,13 +3,22 @@ import pandas as pd
 import re
 
 
+def validateTrf(wbs: pd.DataFrame) -> None:
+    """檢查 TRF 欄位不可為負數"""
+    if "TRF" not in wbs.columns:
+        raise ValueError("WBS 缺少 TRF 欄位")
+    if (wbs["TRF"].astype(float) < 0).any():
+        raise ValueError("TRF 不能為負數")
+
+
 def readWbs(path: str) -> pd.DataFrame:
     """讀取 WBS CSV 並回傳資料框"""
     return pd.read_csv(path, encoding="utf-8-sig")
 
 
 def validateIds(wbs: pd.DataFrame, dsm: pd.DataFrame) -> None:
-    """確認 WBS 的 Task ID 是否皆存在於 DSM"""
+    """確認 WBS 的 Task ID 存在於 DSM，並檢查 TRF"""
+    validateTrf(wbs)
     if "Task ID" not in wbs.columns:
         raise ValueError("WBS 缺少 Task ID 欄位")
     dsm_ids = set(dsm.index.tolist()) | set(dsm.columns.tolist())
