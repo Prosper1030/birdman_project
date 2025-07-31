@@ -1,0 +1,55 @@
+import os
+import sys
+import pandas as pd
+import pytest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from src.dsm_processor import readDsm, buildGraph, computeLayersAndScc, reorderDsm
+from src.wbs_processor import readWbs, validateIds, mergeByScc
+
+
+def test_read_dsm_matrix_check(tmp_path):
+    path = tmp_path / "dsm.csv"
+    # 建立 2x3 非方陣資料
+    df = pd.DataFrame(
+        [[0, 1, 0], [0, 0, 1]], index=["A", "B"], columns=["A", "B", "C"]
+    )
+    df.to_csv(path, encoding="utf-8-sig")
+    with pytest.raises(ValueError):
+        readDsm(path)
+
+def test_validate_ids(tmp_path):
+    dsm_path = tmp_path / "dsm.csv"
+    df = pd.DataFrame([[0,1],[0,0]], index=["A","B"], columns=["A","B"])
+    df.to_csv(dsm_path)
+    dsm = readDsm(dsm_path)
+
+    wbs = pd.DataFrame({"Task ID":["A","C"], "TRF":[1,1]})
+    with pytest.raises(ValueError):
+        validateIds(wbs, dsm)
+
+
+def test_merge_by_scc():
+    data = {
+        "Task ID": ["A24-001", "A24-002"],
+        "TRF": [1, 2],
+        "M": [10, 20],
+        "Layer": [0, 0],
+        "SCC_ID": [0, 0],
+    }
+    wbs = pd.DataFrame(data)
+    merged = mergeByScc(wbs)
+    assert len(merged) == 1
+    new_id = merged.iloc[0]["Task ID"]
+    assert new_id.startswith("M24-")
+
+
+def test_reorder_dsm():
+    dsm = pd.DataFrame(
+        [[0, 1], [0, 0]], index=["A", "B"], columns=["A", "B"]
+    )
+    order = ["B", "A"]
+    reordered = reorderDsm(dsm, order)
+    assert list(reordered.index) == order
+    assert list(reordered.columns) == order

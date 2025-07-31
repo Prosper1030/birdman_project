@@ -52,3 +52,8 @@ def computeLayersAndScc(G: nx.DiGraph) -> tuple[dict, dict]:
             layer_map[node] = cond_layers[idx]
     return layer_map, scc_map
 
+
+def reorderDsm(dsm: pd.DataFrame, order: list[str]) -> pd.DataFrame:
+    """依指定順序重新排列 DSM 的列與欄"""
+    return dsm.loc[order, order]
+

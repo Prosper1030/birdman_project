@@ -114,6 +114,7 @@
 
 - 排序後的 WBS（含 SCC_ID 與 Layer）
 - 合併後的 WBS（含新 Task_ID、顏色標記、合併後時間）
+- 排序後的 DSM（`sorted_dsm.csv`）
 - 可視化 DSM 或簡單依賴圖（可選）
 
 ---
@@ -126,6 +127,9 @@
 
   - sorted_wbs.csv
   - merged_wbs.csv（含顏色）
+  - sorted_dsm.csv
+- 可於執行後隨時點擊按鈕匯出上述檔案
+- 介面中央可預覽資料並提供放大、縮小功能
 
 ---
 
