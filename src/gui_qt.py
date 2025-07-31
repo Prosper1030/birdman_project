@@ -5,22 +5,38 @@ PyQt5 進階 GUI，支援分頁切換與 DataFrame 表格預覽
 import sys
 import json
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QFileDialog, QMessageBox, QTabWidget, QLabel, QTableView, QFormLayout,
-    QLineEdit, QDialog, QCheckBox, QMenuBar, QMenu, QAction, QDialogButtonBox
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QFileDialog,
+    QMessageBox,
+    QTabWidget,
+    QLabel,
+    QTableView,
+    QFormLayout,
+    QLineEdit,
+    QDialog,
+    QCheckBox,
+    QAction,
+    QDialogButtonBox,
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import (
+    FigureCanvasQTAgg as FigureCanvas,
+)
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import qdarkstyle
 import pandas as pd
-from .dsm_processor import readDsm, reorderDsm, buildGraph, computeLayersAndScc, process_dsm
+from .dsm_processor import readDsm, process_dsm
 from .wbs_processor import readWbs, mergeByScc, validateIds
 from . import visualizer
 from pandas import DataFrame
 from PyQt5.QtCore import QAbstractTableModel
+
 
 class PandasModel(QAbstractTableModel):
     def __init__(self, df: DataFrame, dsm_mode=False):
@@ -73,29 +89,32 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle('k 係數參數設定')
         self.setModal(True)
-        
+
         layout = QVBoxLayout()
         form_layout = QFormLayout()
-        
+
         # 建立輸入框
-        self.trf_scale_input = QLineEdit(str(current_params.get('trf_scale', 1.0)))
-        self.trf_divisor_input = QLineEdit(str(current_params.get('trf_divisor', 10.0)))
+        self.trf_scale_input = QLineEdit(
+            str(current_params.get('trf_scale', 1.0)))
+        self.trf_divisor_input = QLineEdit(
+            str(current_params.get('trf_divisor', 10.0)))
         self.n_coef_input = QLineEdit(str(current_params.get('n_coef', 0.05)))
-        
+
         # Override 相關元件
         self.override_check = QCheckBox('直接覆蓋 k 值 (Override)')
-        self.override_input = QLineEdit(str(current_params.get('override', '')))
+        self.override_input = QLineEdit(
+            str(current_params.get('override', '')))
         self.override_input.setEnabled(False)
-        
+
         # 加入到表單佈局
         form_layout.addRow('轉換比例 (trf_scale):', self.trf_scale_input)
         form_layout.addRow('轉換除數 (trf_divisor):', self.trf_divisor_input)
         form_layout.addRow('數量係數 (n_coef):', self.n_coef_input)
         form_layout.addRow(self.override_check)
         form_layout.addRow('覆寫值:', self.override_input)
-        
+
         layout.addLayout(form_layout)
-        
+
         # 按鈕
         button_box = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
@@ -103,20 +122,20 @@ class SettingsDialog(QDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
-        
+
         self.setLayout(layout)
-        
+
         # 連接 override checkbox 的信號
         self.override_check.stateChanged.connect(
             lambda state: self.override_input.setEnabled(state == Qt.Checked)
         )
-        
+
         # 初始化 override 狀態
         if current_params.get('override') is not None:
             self.override_check.setChecked(True)
             self.override_input.setEnabled(True)
             self.override_input.setText(str(current_params['override']))
-    
+
     def get_settings(self):
         """獲取使用者輸入的設定值"""
         try:
@@ -127,12 +146,12 @@ class SettingsDialog(QDialog):
                 'n_coef': float(self.n_coef_input.text()),
                 'override': None
             }
-            
+
             if self.override_check.isChecked():
                 override_value = self.override_input.text().strip()
                 if override_value:
                     settings['override'] = float(override_value)
-            
+
             return settings
         except ValueError:
             return None
@@ -150,7 +169,7 @@ class BirdmanQtApp(QMainWindow):
         self.sorted_dsm = None
         self.is_dark_mode = False
         self.graph = None
-        
+
         # 預設的 k 參數值
         self.default_k_params = {
             'base': 1.0,  # 固定值
@@ -159,15 +178,16 @@ class BirdmanQtApp(QMainWindow):
             'n_coef': 0.05,
             'override': None
         }
-        
+
         # 嘗試從 config.json 讀取設定
         try:
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
-                self.k_params = config.get('merge_k_params', self.default_k_params)
+                self.k_params = config.get(
+                    'merge_k_params', self.default_k_params)
         except Exception:
             self.k_params = self.default_k_params
-        
+
         self.initUI()
 
     def initUI(self):
@@ -190,23 +210,23 @@ class BirdmanQtApp(QMainWindow):
         file_layout.addWidget(self.wbs_label)
         file_layout.addWidget(self.wbs_path_label)
         file_layout.addWidget(wbs_btn)
-        
+
         # 頂端選單列
         menubar = self.menuBar()
         settings_menu = menubar.addMenu('設定')
         view_menu = menubar.addMenu('視圖')
-        
+
         # k 係數參數設定動作
         k_params_action = QAction('k 係數參數設定...', self)
         k_params_action.triggered.connect(self.open_settings_dialog)
         settings_menu.addAction(k_params_action)
-        
+
         # 深色模式切換動作
         dark_mode_action = QAction('啟用深色模式', self)
         dark_mode_action.setCheckable(True)
         dark_mode_action.toggled.connect(self.toggle_dark_mode)
         view_menu.addAction(dark_mode_action)
-        
+
         run_btn = QPushButton('執行分析')
         run_btn.clicked.connect(self.runAnalysis)
         file_layout.addWidget(run_btn)
@@ -255,7 +275,11 @@ class BirdmanQtApp(QMainWindow):
         self.graph_figure = Figure(figsize=(6, 4))
         self.graph_canvas = FigureCanvas(self.graph_figure)
         # 只在 WBS 相關表格隱藏行號
-        for view in [self.raw_wbs_view, self.sorted_wbs_view, self.merged_wbs_view]:
+        for view in [
+            self.raw_wbs_view,
+            self.sorted_wbs_view,
+            self.merged_wbs_view,
+        ]:
             view.verticalHeader().setVisible(False)
         # DSM 表格顯示行號 (Task ID)
         self.raw_dsm_view.verticalHeader().setVisible(True)
@@ -274,18 +298,21 @@ class BirdmanQtApp(QMainWindow):
         self.tab_graph.layout().addWidget(self.graph_canvas)
 
     def chooseDsm(self):
-        path, _ = QFileDialog.getOpenFileName(self, '選擇 DSM 檔案', '', 'CSV Files (*.csv)')
+        path, _ = QFileDialog.getOpenFileName(
+            self, '選擇 DSM 檔案', '', 'CSV Files (*.csv)')
         if path:
             self.dsm_path = path
             self.dsm_path_label.setText(path)
             try:
                 dsm = readDsm(path)
-                self.raw_dsm_view.setModel(PandasModel(dsm.head(100), dsm_mode=True))
+                self.raw_dsm_view.setModel(
+                    PandasModel(dsm.head(100), dsm_mode=True))
             except Exception as e:
                 QMessageBox.critical(self, '錯誤', f'DSM 載入失敗：{e}')
 
     def chooseWbs(self):
-        path, _ = QFileDialog.getOpenFileName(self, '選擇 WBS 檔案', '', 'CSV Files (*.csv)')
+        path, _ = QFileDialog.getOpenFileName(
+            self, '選擇 WBS 檔案', '', 'CSV Files (*.csv)')
         if path:
             self.wbs_path = path
             self.wbs_path_label.setText(path)
@@ -301,15 +328,17 @@ class BirdmanQtApp(QMainWindow):
             dsm = readDsm(self.dsm_path)
             wbs = readWbs(self.wbs_path)
             # 預覽原始資料
-            self.raw_dsm_view.setModel(PandasModel(dsm.head(100), dsm_mode=True))
+            self.raw_dsm_view.setModel(
+                PandasModel(dsm.head(100), dsm_mode=True))
             wbs_with_no = self._add_no_column(wbs)
             self.raw_wbs_view.setModel(PandasModel(wbs_with_no.head(100)))
 
             validateIds(wbs, dsm)
 
             # 設定正確的圖表主題
-            plt.style.use('dark_background' if self.is_dark_mode else 'default')
-            
+            plt.style.use(
+                'dark_background' if self.is_dark_mode else 'default')
+
             sorted_dsm, sorted_wbs, graph = process_dsm(dsm, wbs)
             self.sorted_wbs = self._add_no_column(sorted_wbs)
             self.sorted_dsm = sorted_dsm
@@ -317,20 +346,24 @@ class BirdmanQtApp(QMainWindow):
 
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
-            
+
             viz_params = config.get('visualization_params', {})
 
             merged = mergeByScc(sorted_wbs, self.k_params)
             self.merged_wbs = self._add_no_column(merged)
 
             scc_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['SCC_ID']))
-            fig = visualizer.create_dependency_graph_figure(graph, scc_map, viz_params)
+            fig = visualizer.create_dependency_graph_figure(
+                graph, scc_map, viz_params)
             self.graph_canvas.figure = fig
             self.graph_canvas.draw()
             # 預覽
-            self.sorted_wbs_view.setModel(PandasModel(self.sorted_wbs.head(100)))
-            self.merged_wbs_view.setModel(PandasModel(self.merged_wbs.head(100)))
-            self.sorted_dsm_view.setModel(PandasModel(self.sorted_dsm.head(100), dsm_mode=True))
+            self.sorted_wbs_view.setModel(
+                PandasModel(self.sorted_wbs.head(100)))
+            self.merged_wbs_view.setModel(
+                PandasModel(self.merged_wbs.head(100)))
+            self.sorted_dsm_view.setModel(PandasModel(
+                self.sorted_dsm.head(100), dsm_mode=True))
             QMessageBox.information(self, '完成', '分析完成，可切換分頁預覽與匯出')
         except Exception as e:
             QMessageBox.critical(self, '錯誤', str(e))
@@ -354,7 +387,8 @@ class BirdmanQtApp(QMainWindow):
         if self.sorted_wbs is None:
             QMessageBox.warning(self, '警告', '請先執行分析')
             return
-        path, _ = QFileDialog.getSaveFileName(self, '匯出排序 WBS', '', 'CSV Files (*.csv)')
+        path, _ = QFileDialog.getSaveFileName(
+            self, '匯出排序 WBS', '', 'CSV Files (*.csv)')
         if path:
             self.sorted_wbs.to_csv(path, index=False, encoding='utf-8-sig')
             QMessageBox.information(self, '完成', f'已匯出 {path}')
@@ -363,7 +397,8 @@ class BirdmanQtApp(QMainWindow):
         if self.merged_wbs is None:
             QMessageBox.warning(self, '警告', '請先執行分析')
             return
-        path, _ = QFileDialog.getSaveFileName(self, '匯出合併 WBS', '', 'CSV Files (*.csv)')
+        path, _ = QFileDialog.getSaveFileName(
+            self, '匯出合併 WBS', '', 'CSV Files (*.csv)')
         if path:
             # 匯出時保留 No. 欄位
             self.merged_wbs.to_csv(path, encoding='utf-8-sig')
@@ -373,11 +408,12 @@ class BirdmanQtApp(QMainWindow):
         if self.sorted_dsm is None:
             QMessageBox.warning(self, '警告', '請先執行分析')
             return
-        path, _ = QFileDialog.getSaveFileName(self, '匯出排序 DSM', '', 'CSV Files (*.csv)')
+        path, _ = QFileDialog.getSaveFileName(
+            self, '匯出排序 DSM', '', 'CSV Files (*.csv)')
         if path:
             self.sorted_dsm.to_csv(path, encoding='utf-8-sig')
             QMessageBox.information(self, '完成', f'已匯出 {path}')
-    
+
     def open_settings_dialog(self):
         """開啟 k 係數參數設定對話框"""
         dialog = SettingsDialog(self.k_params, self)
@@ -387,7 +423,7 @@ class BirdmanQtApp(QMainWindow):
                 QMessageBox.critical(self, '錯誤', 'k 係數參數必須為數字！')
                 return
             self.k_params = settings
-            
+
             # 將新設定寫入 config.json
             try:
                 with open('config.json', 'r', encoding='utf-8') as f:
@@ -397,7 +433,7 @@ class BirdmanQtApp(QMainWindow):
                     json.dump(config, f, indent=2, ensure_ascii=False)
             except Exception as e:
                 QMessageBox.warning(self, '警告', f'無法保存設定：{e}')
-    
+
     def toggle_dark_mode(self, checked):
         """切換深色/淺色模式"""
         if checked:
@@ -408,34 +444,38 @@ class BirdmanQtApp(QMainWindow):
             self.setStyleSheet("")
             plt.style.use('default')
             self.is_dark_mode = False
-        
+
         # 重繪圖表
         self.redraw_graph()
-    
+
     def redraw_graph(self):
         """重新繪製依賴關係圖"""
         if not hasattr(self, 'graph') or self.graph is None:
             return
-            
+
         # 重新繪製圖表
         if hasattr(self, 'sorted_wbs') and self.sorted_wbs is not None:
             try:
                 with open('config.json', 'r', encoding='utf-8') as f:
                     config = json.load(f)
                 viz_params = config.get('visualization_params', {})
-                
-                scc_map = dict(zip(self.sorted_wbs['Task ID'], self.sorted_wbs['SCC_ID']))
-                fig = visualizer.create_dependency_graph_figure(self.graph, scc_map, viz_params)
+
+                scc_map = dict(
+                    zip(self.sorted_wbs['Task ID'], self.sorted_wbs['SCC_ID']))
+                fig = visualizer.create_dependency_graph_figure(
+                    self.graph, scc_map, viz_params)
                 self.graph_canvas.figure = fig
                 self.graph_canvas.draw()
             except Exception as e:
                 QMessageBox.warning(self, '警告', f'圖表重繪失敗：{e}')
+
 
 def main():
     app = QApplication(sys.argv)
     window = BirdmanQtApp()
     window.show()
     sys.exit(app.exec_())
+
 
 if __name__ == '__main__':
     main()

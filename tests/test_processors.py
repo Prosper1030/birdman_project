@@ -1,14 +1,16 @@
-import os
 import sys
-import pandas as pd
-import pytest
+from pathlib import Path
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-
-from src.dsm_processor import readDsm, buildGraph, computeLayersAndScc, reorderDsm
-
-from src.wbs_processor import readWbs, validateIds, mergeByScc, _extract_year
+from src.wbs_processor import (  # noqa: E402
+    validateIds,
+    mergeByScc,
+    _extract_year,
+)  # noqa: E402
+from src.dsm_processor import readDsm, reorderDsm  # noqa: E402
+import pandas as pd  # noqa: E402
+import pytest  # noqa: E402
 
 
 def test_read_dsm_matrix_check(tmp_path):
@@ -21,13 +23,14 @@ def test_read_dsm_matrix_check(tmp_path):
     with pytest.raises(ValueError):
         readDsm(path)
 
+
 def test_validate_ids(tmp_path):
     dsm_path = tmp_path / "dsm.csv"
-    df = pd.DataFrame([[0,1],[0,0]], index=["A","B"], columns=["A","B"])
+    df = pd.DataFrame([[0, 1], [0, 0]], index=["A", "B"], columns=["A", "B"])
     df.to_csv(dsm_path)
     dsm = readDsm(dsm_path)
 
-    wbs = pd.DataFrame({"Task ID":["A","C"], "TRF":[1,1]})
+    wbs = pd.DataFrame({"Task ID": ["A", "C"], "TRF": [1, 1]})
     with pytest.raises(ValueError):
         validateIds(wbs, dsm)
 
@@ -57,7 +60,6 @@ def test_merge_by_scc():
     assert len(merged) == 1
     new_id = merged.iloc[0]["Task ID"]
     assert new_id.startswith("M24-")
-
 
 
 def test_reorder_dsm():
@@ -97,4 +99,3 @@ def test_reorder_dsm_duplicate():
     order = ["A", "A"]
     with pytest.raises(ValueError):
         reorderDsm(dsm, order)
-

@@ -1,10 +1,13 @@
 """視覺化相關函式"""
 import networkx as nx
 from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
 
 
-def create_dependency_graph_figure(G: nx.DiGraph, sccMap: dict, vizParams: dict) -> Figure:
+def create_dependency_graph_figure(
+    G: nx.DiGraph,
+    sccMap: dict,
+    vizParams: dict,
+) -> Figure:
     """建立任務依賴關係圖
 
     依據 ``sccMap`` 提供的 SCC_ID 上色，未屬於任何 SCC 的節點使用
@@ -30,7 +33,8 @@ def create_dependency_graph_figure(G: nx.DiGraph, sccMap: dict, vizParams: dict)
                 colors.append(default_color)
 
     pos = nx.spring_layout(G)
-    nx.draw(G, pos, ax=ax, with_labels=True, node_color=colors, font_size=font_size)
+    nx.draw(G, pos, ax=ax, with_labels=True,
+            node_color=colors, font_size=font_size)
     ax.axis('off')
     fig.tight_layout()
     return fig

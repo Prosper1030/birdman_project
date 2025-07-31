@@ -1,9 +1,13 @@
 import argparse
 from pathlib import Path
 import json
-from src.dsm_processor import readDsm, buildGraph, computeLayersAndScc, reorderDsm
+from src.dsm_processor import (
+    readDsm,
+    buildGraph,
+    computeLayersAndScc,
+    reorderDsm,
+)
 from src.wbs_processor import readWbs, mergeByScc, validateIds
-
 
 
 def main():
@@ -18,13 +22,13 @@ def main():
 
     layers, scc_id = computeLayersAndScc(G)
 
-
     wbs = readWbs(args.wbs)
     validateIds(wbs, dsm)
 
     wbs["Layer"] = wbs["Task ID"].map(layers).fillna(-1).astype(int)
     wbs["SCC_ID"] = wbs["Task ID"].map(scc_id).fillna(-1).astype(int)
-    wbs_sorted = wbs.sort_values(by=["Layer", "Task ID"]).reset_index(drop=True)
+    wbs_sorted = wbs.sort_values(
+        by=["Layer", "Task ID"]).reset_index(drop=True)
 
     out_sorted = Path("sorted_wbs.csv")
     wbs_sorted.to_csv(out_sorted, index=False, encoding="utf-8-sig")
@@ -46,4 +50,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
