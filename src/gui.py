@@ -10,6 +10,7 @@ from .dsm_processor import (
     computeLayersAndScc,
     reorderDsm,
 )
+
 from .wbs_processor import readWbs, mergeByScc, validateIds
 
 
@@ -91,8 +92,9 @@ class BirdmanApp:
             self.sorted_wbs = sorted_wbs
             self.sorted_dsm = reorderDsm(dsm, sorted_wbs["Task ID"].tolist())
             self.merged_wbs = mergeByScc(sorted_wbs)
-
             self.preview(self.sorted_wbs)
+            self.merged_wbs.to_csv("merged_wbs.csv", index=False, encoding="utf-8-sig")
+
 
             messagebox.showinfo('完成', '分析完成，可點選下方按鈕匯出')
         except Exception as e:

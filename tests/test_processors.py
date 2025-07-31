@@ -5,7 +5,9 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+
 from src.dsm_processor import readDsm, buildGraph, computeLayersAndScc, reorderDsm
+
 from src.wbs_processor import readWbs, validateIds, mergeByScc
 
 
@@ -45,6 +47,7 @@ def test_merge_by_scc():
     assert new_id.startswith("M24-")
 
 
+
 def test_reorder_dsm():
     dsm = pd.DataFrame(
         [[0, 1], [0, 0]], index=["A", "B"], columns=["A", "B"]
@@ -53,3 +56,4 @@ def test_reorder_dsm():
     reordered = reorderDsm(dsm, order)
     assert list(reordered.index) == order
     assert list(reordered.columns) == order
+
