@@ -9,7 +9,7 @@ DSM 矩陣中，若某列某欄的值為 `1`，代表該列任務必須等待該
 ## 執行方式
 
 ```bash
-python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --year 25
+python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 ```
 
 
@@ -55,4 +55,12 @@ pip install -r requirements.txt
 ## 範例資料
 
 `sample_data/` 內含 DSM.csv 與 WBS.csv，可供測試。
+
+## 測試
+
+安裝套件後，可直接於專案根目錄執行 `pytest`，驗證主要功能是否正常。
+
+```bash
+pytest
+```
 
