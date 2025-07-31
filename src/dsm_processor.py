@@ -24,19 +24,8 @@ def buildGraph(dsm: pd.DataFrame) -> nx.DiGraph:
 
 
 def assignLayer(G: nx.DiGraph) -> dict:
-    """回傳每個節點的層次，越早執行層次越小"""
-    try:
-        order = list(nx.topological_sort(G))
-    except nx.NetworkXUnfeasible:
-        # 若圖含有迴圈，先進行強連通分量縮減
-        sccs = list(nx.strongly_connected_components(G))
-        mapping = {}
-        for idx, comp in enumerate(sccs):
-            for node in comp:
-                mapping[node] = idx
-        condensed = nx.condensation(G, sccs)
-        comp_layer = assignLayer(condensed)
-        return {node: comp_layer[mapping[node]] for node in G.nodes}
+    """依拓撲排序結果計算各節點層次"""
+    order = list(nx.topological_sort(G))
 
     layer = {node: 0 for node in G.nodes}
     for node in order:
@@ -44,3 +33,18 @@ def assignLayer(G: nx.DiGraph) -> dict:
         if preds:
             layer[node] = max(layer[p] for p in preds) + 1
     return layer
+
+
+def computeLayersAndScc(G: nx.DiGraph) -> tuple[dict, dict]:
+    """回傳節點層次與所屬 SCC_ID"""
+    sccs = list(nx.strongly_connected_components(G))
+    condensed = nx.condensation(G, sccs)
+    cond_layers = assignLayer(condensed)
+    layer_map = {}
+    scc_map = {}
+    for idx, comp in enumerate(sccs):
+        for node in comp:
+            scc_map[node] = idx
+            layer_map[node] = cond_layers[idx]
+    return layer_map, scc_map
+

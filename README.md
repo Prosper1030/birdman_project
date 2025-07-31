@@ -12,8 +12,9 @@ DSM 矩陣中，若某列某欄的值為 `1`，代表該列任務必須等待該
 python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --year 25
 ```
 
-完成後會在目前目錄生成 `sorted_wbs.csv`。
-=======
+
+完成後會在目前目錄生成 `sorted_wbs.csv` 與 `merged_wbs.csv`。
+
 此專案為鳥人間團隊開發的 DSM/WBS 處理工具，提供拓撲排序、強連通分量分析與任務合併等功能，並具備簡易 GUI。
 
 ## 主要功能
