@@ -267,6 +267,7 @@ class BirdmanQtApp(QMainWindow):
         self.tab_raw_wbs = QWidget()
         self.tab_sorted_wbs = QWidget()
         self.tab_merged_wbs = QWidget()
+        self.tab_merged_dsm = QWidget()
         self.tab_sorted_dsm = QWidget()
         self.tab_graph = QWidget()
         self.tab_cmp_result = QWidget()
@@ -275,6 +276,7 @@ class BirdmanQtApp(QMainWindow):
         self.tabs.addTab(self.tab_raw_wbs, '原始 WBS')
         self.tabs.addTab(self.tab_sorted_wbs, '排序 WBS')
         self.tabs.addTab(self.tab_merged_wbs, '合併 WBS')
+        self.tabs.addTab(self.tab_merged_dsm, '合併 DSM')
         self.tabs.addTab(self.tab_sorted_dsm, '排序 DSM')
         self.tabs.addTab(self.tab_graph, '依賴關係圖')
         self.tabs.addTab(self.tab_cmp_result, 'CPM 分析結果')
@@ -289,6 +291,8 @@ class BirdmanQtApp(QMainWindow):
         export_merged_btn.clicked.connect(self.exportMergedWbs)
         export_dsm_btn = QPushButton('匯出排序 DSM')
         export_dsm_btn.clicked.connect(self.exportSortedDsm)
+        export_merged_dsm_btn = QPushButton('匯出合併 DSM')
+        export_merged_dsm_btn.clicked.connect(self.exportMergedDsm)
         export_graph_btn = QPushButton('匯出依賴圖')
         export_graph_btn.clicked.connect(self.exportGraph)
         export_cmp_btn = QPushButton('匯出 CPM 結果')
@@ -300,6 +304,7 @@ class BirdmanQtApp(QMainWindow):
         export_layout.addWidget(export_sorted_btn)
         export_layout.addWidget(export_merged_btn)
         export_layout.addWidget(export_dsm_btn)
+        export_layout.addWidget(export_merged_dsm_btn)
         export_layout.addWidget(export_graph_btn)
         export_layout.addWidget(export_cmp_btn)
         main_layout.addLayout(export_layout)
@@ -313,6 +318,7 @@ class BirdmanQtApp(QMainWindow):
         self.sorted_wbs_view = QTableView()
         self.merged_wbs_view = QTableView()
         self.sorted_dsm_view = QTableView()
+        self.merged_dsm_view = QTableView()
         self.cmp_result_view = QTableView()
         # 依賴關係圖畫布及捲動區域
         self.graph_figure = Figure(figsize=(18, 20))  # 使用與 visualizer.py 相同的尺寸
@@ -352,6 +358,7 @@ class BirdmanQtApp(QMainWindow):
         # DSM 表格顯示行號 (Task ID)
         self.raw_dsm_view.verticalHeader().setVisible(True)
         self.sorted_dsm_view.verticalHeader().setVisible(True)
+        self.merged_dsm_view.verticalHeader().setVisible(True)
         self.tab_raw_dsm.setLayout(QVBoxLayout())
         self.tab_raw_dsm.layout().addWidget(self.raw_dsm_view)
         self.tab_raw_wbs.setLayout(QVBoxLayout())
@@ -360,6 +367,8 @@ class BirdmanQtApp(QMainWindow):
         self.tab_sorted_wbs.layout().addWidget(self.sorted_wbs_view)
         self.tab_merged_wbs.setLayout(QVBoxLayout())
         self.tab_merged_wbs.layout().addWidget(self.merged_wbs_view)
+        self.tab_merged_dsm.setLayout(QVBoxLayout())
+        self.tab_merged_dsm.layout().addWidget(self.merged_dsm_view)
         self.tab_sorted_dsm.setLayout(QVBoxLayout())
         self.tab_sorted_dsm.layout().addWidget(self.sorted_dsm_view)
         self.tab_graph.setLayout(QVBoxLayout())
@@ -464,6 +473,8 @@ class BirdmanQtApp(QMainWindow):
                 PandasModel(self.merged_wbs.head(100)))
             self.sorted_dsm_view.setModel(PandasModel(
                 self.sorted_dsm.head(100), dsm_mode=True))
+            self.merged_dsm_view.setModel(PandasModel(
+                self.merged_dsm.head(100), dsm_mode=True))
             QMessageBox.information(self, '完成', '分析完成，可切換分頁預覽與匯出')
         except Exception as e:  # pylint: disable=broad-except
             # 執行流程中可能發生多種錯誤，此處統一彙整顯示訊息
@@ -514,6 +525,16 @@ class BirdmanQtApp(QMainWindow):
             self, '匯出排序 DSM', '', 'CSV Files (*.csv)')
         if path:
             self.sorted_dsm.to_csv(path, encoding='utf-8-sig')
+            QMessageBox.information(self, '完成', f'已匯出 {path}')
+
+    def exportMergedDsm(self):
+        if self.merged_dsm is None:
+            QMessageBox.warning(self, '警告', '請先執行分析')
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, '匯出合併 DSM', '', 'CSV Files (*.csv)')
+        if path:
+            self.merged_dsm.to_csv(path, encoding='utf-8-sig')
             QMessageBox.information(self, '完成', f'已匯出 {path}')
 
     def exportGraph(self):
