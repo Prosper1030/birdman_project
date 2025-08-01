@@ -1,8 +1,9 @@
 """視覺化相關函式，使用分層佈局"""
-import networkx as nx
-from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
 from collections import defaultdict
+
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+import networkx as nx
 
 
 def layered_layout(G, layer_map):
@@ -42,7 +43,8 @@ def create_dependency_graph_figure(
             'Arial Unicode MS',
         ]
         plt.rcParams['axes.unicode_minus'] = False
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
+        # 不同環境下可能因字體名稱或 matplotlib 設定產生例外
         print(f"警告：設定中文字體時發生錯誤: {e}")
 
     fig = Figure(figsize=(18, 20), dpi=100)
