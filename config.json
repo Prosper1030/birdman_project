@@ -16,5 +16,12 @@
       "#9370DB"
     ],
     "font_size": 8
+  },
+  "cmp_params": {
+    "work_hours_per_day": 8,
+    "working_days_per_week": 5,
+    "default_duration_field": "Te_expert",
+    "project_start_date": null,
+    "time_unit": "hours"
   }
 }
