@@ -4,6 +4,7 @@ PyQt5 進階 GUI，支援分頁切換與 DataFrame 表格預覽
 """
 import sys
 import json
+
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -32,11 +33,12 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import qdarkstyle
 import pandas as pd
+from pandas import DataFrame
+from PyQt5.QtCore import QAbstractTableModel
+
 from .dsm_processor import readDsm, process_dsm
 from .wbs_processor import readWbs, mergeByScc, validateIds
 from . import visualizer
-from pandas import DataFrame
-from PyQt5.QtCore import QAbstractTableModel
 
 
 class PandasModel(QAbstractTableModel):
@@ -68,7 +70,8 @@ class PandasModel(QAbstractTableModel):
                 if float(value) == 1:
                     from PyQt5.QtGui import QColor
                     return QColor(255, 120, 120)
-            except Exception:
+            except (ValueError, TypeError):
+                # 轉型失敗時忽略，避免整體流程中斷
                 pass
         return None
 
@@ -186,7 +189,8 @@ class BirdmanQtApp(QMainWindow):
                 config = json.load(f)
                 self.k_params = config.get(
                     'merge_k_params', self.default_k_params)
-        except Exception:
+        except (OSError, json.JSONDecodeError):
+            # 檔案不存在或解析失敗時以預設值處理
             self.k_params = self.default_k_params
 
         self.initUI()
@@ -335,7 +339,7 @@ class BirdmanQtApp(QMainWindow):
                 dsm = readDsm(path)
                 self.raw_dsm_view.setModel(
                     PandasModel(dsm.head(100), dsm_mode=True))
-            except Exception as e:
+            except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, '錯誤', f'DSM 載入失敗：{e}')
 
     def chooseWbs(self):
@@ -348,7 +352,7 @@ class BirdmanQtApp(QMainWindow):
                 wbs = readWbs(path)
                 wbs = self._add_no_column(wbs)
                 self.raw_wbs_view.setModel(PandasModel(wbs.head(100)))
-            except Exception as e:
+            except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, '錯誤', f'WBS 載入失敗：{e}')
 
     def runAnalysis(self):
@@ -404,7 +408,8 @@ class BirdmanQtApp(QMainWindow):
             self.sorted_dsm_view.setModel(PandasModel(
                 self.sorted_dsm.head(100), dsm_mode=True))
             QMessageBox.information(self, '完成', '分析完成，可切換分頁預覽與匯出')
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
+            # 執行流程中可能發生多種錯誤，此處統一彙整顯示訊息
             QMessageBox.critical(self, '錯誤', str(e))
 
     def _add_no_column(self, df):
@@ -417,7 +422,8 @@ class BirdmanQtApp(QMainWindow):
                 as_num = pd.to_numeric(df[first_col], errors='coerce')
                 if as_num.notnull().all():
                     df = df.drop(columns=[first_col])
-            except Exception:
+            except (ValueError, TypeError):
+                # 轉型失敗時直接忽略
                 pass
         df.insert(0, 'No.', range(1, len(df) + 1))
         return df
@@ -483,7 +489,7 @@ class BirdmanQtApp(QMainWindow):
                                                dpi=300)
             
             QMessageBox.information(self, '完成', f'已匯出依賴關係圖至：{path}')
-        except Exception as e:
+        except (OSError, ValueError) as e:
             QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
 
     def open_settings_dialog(self):
@@ -503,7 +509,7 @@ class BirdmanQtApp(QMainWindow):
                 config['merge_k_params'] = self.k_params
                 with open('config.json', 'w', encoding='utf-8') as f:
                     json.dump(config, f, indent=2, ensure_ascii=False)
-            except Exception as e:
+            except (OSError, json.JSONDecodeError) as e:
                 QMessageBox.warning(self, '警告', f'無法保存設定：{e}')
 
     def toggle_dark_mode(self, checked):
@@ -549,7 +555,8 @@ class BirdmanQtApp(QMainWindow):
                         int(canvas_size[0] * 1.1),  # 稍微加大一點，留些邊距
                         int(canvas_size[1] * 1.1)
                     )
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
+                # 圖表重繪過程可能因設定檔或數據問題失敗
                 QMessageBox.warning(self, '警告', f'圖表重繪失敗：{e}')
 
 

@@ -1,7 +1,8 @@
 
-import pandas as pd
 import re
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
+import pandas as pd
 
 
 def validateTrf(wbs: pd.DataFrame) -> None:
