@@ -4,6 +4,7 @@ PyQt5 進階 GUI，支援分頁切換與 DataFrame 表格預覽
 """
 import sys
 import json
+import networkx as nx
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -28,8 +29,14 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
-)
-from matplotlib.figure import Figure
+)            forward_data = cpmForwardPass(self.merged_graph, durations_days)
+            project_end = max(ef for _, ef in forward_data.values())
+            backward_data = cpmBackwardPass(
+                self.merged_graph, durations_days, project_end
+            )
+            cpm_result = calculateSlack(
+                forward_data, backward_data, self.merged_graph
+            )atplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import qdarkstyle
 import pandas as pd
@@ -185,6 +192,8 @@ class BirdmanQtApp(QMainWindow):
         # CPM 分析相關資料
         self.cmp_result = None
         self.critical_path = None
+        self.merged_graph = None
+        self.merged_dsm = None
 
         # 預設的 k 參數值
         self.default_k_params = {
@@ -415,6 +424,18 @@ class BirdmanQtApp(QMainWindow):
             merged = mergeByScc(sorted_wbs, self.k_params)
             self.merged_wbs = self._add_no_column(merged)
 
+            # 建立合併後的 DSM
+            merged_tasks = set(merged['Task ID'])
+            merged_dsm = pd.DataFrame(0, index=list(merged_tasks), columns=list(merged_tasks))
+            
+            # 從原始 DSM 複製依賴關係到合併後的 DSM
+            for u, v in self.graph.edges():
+                if u in merged_tasks and v in merged_tasks:
+                    merged_dsm.at[v, u] = 1
+            
+            # 使用合併後的 DSM 重新進行處理
+            self.merged_dsm, merged_sorted_wbs, self.merged_graph = process_dsm(merged_dsm, merged)
+
             scc_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['SCC_ID']))
             layer_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['Layer']))
             fig = visualizer.create_dependency_graph_figure(
@@ -531,37 +552,54 @@ class BirdmanQtApp(QMainWindow):
 
     def runCmpAnalysis(self):
         """執行 CPM 分析"""
-        if self.sorted_wbs is None or self.graph is None:
+        if not hasattr(self, 'merged_graph') or not hasattr(self, 'merged_wbs'):
             QMessageBox.warning(self, '警告', '請先執行基本分析')
             return
 
         try:
+            # 檢查合併後的圖形是否有循環
+            cycles = list(nx.simple_cycles(self.merged_graph))
+            if cycles:
+                cycle_str = ' -> '.join(cycles[0] + [cycles[0][0]])
+                raise ValueError(f'發現循環依賴：{cycle_str}\n請先解決循環依賴問題再進行 CPM 分析')
+
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
             duration_field = cmp_params.get(
-                'default_duration_field', 'Te_expert'
+![1754030031503](image/gui_qt/1754030031503.png)![1754030033127](image/gui_qt/1754030033127.png)                'default_duration_field', 'Te_expert'
             )
             work_hours_per_day = cmp_params.get('work_hours_per_day', 8)
 
+            # 使用合併後的 WBS 進行 CPM 分析
             durations_hours = extractDurationFromWbs(
-                self.sorted_wbs.drop(columns=['No.']), duration_field)
+                self.merged_wbs.drop(columns=['No.']), duration_field)
             durations_days = {
                 tid: convertHoursToDays(hours, work_hours_per_day)
                 for tid, hours in durations_hours.items()
             }
 
-            forward_data = cpmForwardPass(self.graph, durations_days)
+            # 建立合併後的依賴圖
+            merged_tasks = set(self.merged_wbs['Task ID'])
+            merged_graph = nx.DiGraph()
+            merged_graph.add_nodes_from(merged_tasks)
+            
+            # 只保留合併後 WBS 中存在的任務之間的依賴關係
+            for u, v in self.graph.edges():
+                if u in merged_tasks and v in merged_tasks:
+                    merged_graph.add_edge(u, v)
+
+            forward_data = cpmForwardPass(merged_graph, durations_days)
             project_end = max(ef for _, ef in forward_data.values())
             backward_data = cpmBackwardPass(
-                self.graph, durations_days, project_end
+                merged_graph, durations_days, project_end
             )
             cpm_result = calculateSlack(
-                forward_data, backward_data, self.graph
+                forward_data, backward_data, merged_graph
             )
             self.critical_path = findCriticalPath(cpm_result)
 
-            wbs_with_cpm = self.sorted_wbs.copy()
+            wbs_with_cpm = self.merged_wbs.copy()
             for col in ['ES', 'EF', 'LS', 'LF', 'TF', 'FF', 'Critical']:
                 wbs_with_cpm[col] = wbs_with_cpm['Task ID'].map(
                     cpm_result[col].to_dict()).fillna(0)

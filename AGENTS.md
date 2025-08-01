@@ -1,19 +1,37 @@
-# AGENTS.md
+# 專案文件 (For AI Agents)
 
-## 0️⃣ 專案簡介
+## 專案概述
 
-`birdman_project` 是針對鳥人間團隊專案管理與任務工時計算的 Python 工具，主要功能包括：
+`birdman_project` 是一個專案管理工具，使用 Python 開發，主要功能包括：
 
-- 讀取 DSM（Dependency Structure Matrix）與 WBS（Work Breakdown Structure）
-- 自動拓撲排序與下三角化 DSM
-- 分層與強連通分量（SCC）分析
-- 任務合併與新 Task_ID 生成
-- 依據 TRF 與公式計算合併後工時
-- 輸出排序後與合併後的 WBS
-- 開發語言為 Python 3.10，採用現代化 PyQt5 GUI 介面
-- 支援深色/淺色主題切換
-- 提供互動式參數調整與依賴關係視覺化
-- 以 CSV 格式匯入匯出資料
+1. DSM（依賴結構矩陣）處理
+2. WBS（工作分解結構）處理
+3. 任務合併優化
+4. CPM（關鍵路徑）分析
+5. 視覺化呈現
+
+## 目前遇到的問題
+
+### 1. 合併後的依賴圖處理
+
+#### 1.1 問題描述
+
+- 在進行 CPM 分析時可能遇到循環依賴問題
+- 合併後的任務圖可能保留了不必要的依賴關係
+- 需要優化合併後的依賴關係處理邏輯
+
+#### 1.2 建議解決方向
+
+```python
+# 目前的邏輯
+merged_tasks = set(merged['Task ID'])
+merged_dsm = pd.DataFrame(0, index=list(merged_tasks), columns=list(merged_tasks))
+
+# 從原始 DSM 複製依賴關係
+for u, v in self.graph.edges():
+    if u in merged_tasks and v in merged_tasks:
+        merged_dsm.at[v, u] = 1
+```
 
 ---
 
