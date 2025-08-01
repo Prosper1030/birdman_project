@@ -21,6 +21,7 @@ from src.cpm_processor import (
     monteCarloSchedule,
 )
 import numpy as np
+from src.rcpsp_solver import solveRcpsp
 from src import visualizer
 from matplotlib.figure import Figure
 
@@ -112,6 +113,11 @@ def main():
         default=0.9,
         help="蒙地卡羅模擬信心水準，預設 0.9",
     )
+    parser.add_argument(
+        "--rcpsp-opt",
+        action="store_true",
+        help="使用 OR-Tools 求解 RCPSP",
+    )
     args = parser.parse_args()
 
     dsm = readDsm(args.dsm)
@@ -154,7 +160,22 @@ def main():
     out_merged = Path("merged_wbs.csv")
     merged.to_csv(out_merged, index=False, encoding="utf-8-sig")
     print(f"已輸出 {out_merged}")
-
+    if args.rcpsp_opt:
+        print("開始執行 RCPSP 排程...")
+        cmp_params = config.get("cmp_params", {})
+        duration_field = args.duration_field or cmp_params.get(
+            "default_duration_field", "Te_expert"
+        )
+        schedule = solveRcpsp(merged_graph, merged, duration_field)
+        merged["Start"] = merged["Task ID"].map(schedule).fillna(0)
+        merged["Finish"] = merged["Start"] + merged[duration_field].fillna(0)
+        out_rcpsp = Path("rcpsp_schedule.csv")
+        merged[["Task ID", "Start", "Finish"]].to_csv(
+            out_rcpsp,
+            index=False,
+            encoding="utf-8-sig",
+        )
+        print(f"最短完工時間：{schedule['ProjectEnd']:.1f} 小時")
     if args.export_graph:
         viz_params = config.get('visualization_params', {})
         scc_map = dict(zip(wbs_sorted['Task ID'], wbs_sorted['SCC_ID']))

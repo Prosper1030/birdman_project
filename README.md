@@ -44,8 +44,12 @@
    - 完整的時程資訊
    - 預設使用 `Te_newbie` 作為 CPM 計算工期欄位
    - 新增蒙地卡羅模擬，可評估工期分佈
+4. **RCPSP 排程**
+   - 透過 OR-Tools 求解資源受限排程
+   - 使用 --rcpsp-opt 取得優化結果
 
-4. **匯出功能**
+
+5. **匯出功能**
    - 支援 SVG/PNG 格式
    - 高品質圖表輸出
    - 分析結果 CSV 匯出
@@ -94,6 +98,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 若加上 `--cmp` 參數，會同時輸出 `cmp_analysis.csv`，並可使用 `--export-gantt` 匯出甘特圖、`--export-graph` 匯出依賴關係圖。工期欄位可透過 `--duration-field` 指定。
 若需評估工期分佈，可加入 `--monte-carlo 500` 執行 500 次模擬，信心水準可用 `--mc-confidence 0.9` 指定（預設為 0.9）。
 
+若需執行資源受限排程，可加入 `--rcpsp-opt`，將產生 `rcpsp_schedule.csv`。
 ### GUI（推薦 PyQt5 進階版）
 
 #### PyQt5 進階 GUI
