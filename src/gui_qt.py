@@ -1101,7 +1101,15 @@ class BirdmanQtApp(QMainWindow):
 
             # 設定 Y 軸標籤
             ax.set_yticks(y_positions)
-            ax.set_yticklabels(tasks, fontsize=10, fontweight='bold')
+            ax.set_yticklabels(
+                tasks,
+                fontsize=10,
+                fontweight='bold',
+                color=plt.rcParams['text.color'],
+            )
+
+            ax.tick_params(axis='x', colors=plt.rcParams['text.color'])
+            ax.tick_params(axis='y', colors=plt.rcParams['text.color'])
 
             # 加強網格線
             ax.grid(
@@ -1137,6 +1145,7 @@ class BirdmanQtApp(QMainWindow):
                         va='center',
                         fontsize=9,
                         alpha=0.7,
+                        color=plt.rcParams['text.color'],
                     )
 
             # 反轉 Y 軸
@@ -1292,6 +1301,8 @@ class BirdmanQtApp(QMainWindow):
 
         # 重繪圖表
         self.redraw_graph()
+        if self.gantt_results:
+            self.update_gantt_display()
 
     def redraw_graph(self):
         """重新繪製依賴關係圖"""

@@ -88,7 +88,7 @@ def create_dependency_graph_figure(
         node_size=2500,
         node_color=node_colors,
         font_size=viz_params.get('font_size', 9),
-        font_color='black',
+        font_color=plt.rcParams['text.color'],
         font_weight='bold',
         width=1.2,
         edge_color='gray',
