@@ -660,10 +660,30 @@ class BirdmanQtApp(QMainWindow):
             )
 
             # 計算並儲存合併後圖形的映射
-            self.merged_layer_map = {
-                node: data.get('layer', 0)
-                for node, data in self.merged_graph.nodes(data=True)
-            }
+            try:
+                source_nodes = [
+                    node for node, deg in self.merged_graph.in_degree()
+                    if deg == 0
+                ]
+                self.merged_layer_map = {}
+                for node in self.merged_graph.nodes():
+                    max_dist = 0
+                    for src in source_nodes:
+                        try:
+                            paths = nx.all_simple_paths(
+                                self.merged_graph, src, node
+                            )
+                            dist = max((len(p) - 1 for p in paths), default=-1)
+                            if dist > max_dist:
+                                max_dist = dist
+                        except nx.NetworkXNoPath:
+                            continue
+                    self.merged_layer_map[node] = max_dist
+            except Exception:  # pylint: disable=broad-except
+                self.merged_layer_map = {
+                    node: i for i, node in enumerate(self.merged_graph.nodes())
+                }
+
             self.merged_scc_map = {
                 node: i for i, node in enumerate(self.merged_graph.nodes())
             }
