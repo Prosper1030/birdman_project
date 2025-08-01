@@ -95,7 +95,7 @@ def create_dependency_graph_figure(
         font_color=plt.rcParams['text.color'],
         font_weight='bold',
         width=1.2,
-        edge_color=plt.rcParams['axes.edgecolor'],
+        edge_color=plt.rcParams['grid.color'],
         arrowsize=20,
         connectionstyle='arc3,rad=0.1'
     )
