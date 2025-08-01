@@ -5,6 +5,7 @@ PyQt5 進階 GUI，支援分頁切換與 DataFrame 表格預覽
 import sys
 import json
 import networkx as nx
+from functools import partial
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -240,6 +241,7 @@ class BirdmanQtApp(QMainWindow):
 
         # 頂端選單列
         menubar = self.menuBar()
+        file_menu = menubar.addMenu('檔案')
         settings_menu = menubar.addMenu('設定')
         view_menu = menubar.addMenu('視圖')
 
@@ -253,6 +255,67 @@ class BirdmanQtApp(QMainWindow):
         dark_mode_action.setCheckable(True)
         dark_mode_action.toggled.connect(self.toggle_dark_mode)
         view_menu.addAction(dark_mode_action)
+
+        # 檔案選單中的匯出子選單
+        export_wbs_menu = file_menu.addMenu('匯出合併後的 WBS')
+        export_wbs_csv = QAction('存成 CSV 檔案... (.csv)', self)
+        export_wbs_csv.triggered.connect(
+            partial(self.exportMergedWbs, 'csv')
+        )
+        export_wbs_menu.addAction(export_wbs_csv)
+        export_wbs_xlsx = QAction('存成 Excel 檔案... (.xlsx)', self)
+        export_wbs_xlsx.triggered.connect(
+            partial(self.exportMergedWbs, 'xlsx')
+        )
+        export_wbs_menu.addAction(export_wbs_xlsx)
+
+        export_dsm_menu = file_menu.addMenu('匯出合併後的 DSM')
+        export_dsm_csv = QAction('存成 CSV 檔案... (.csv)', self)
+        export_dsm_csv.triggered.connect(
+            partial(self.exportMergedDsm, 'csv')
+        )
+        export_dsm_menu.addAction(export_dsm_csv)
+        export_dsm_xlsx = QAction('存成 Excel 檔案... (.xlsx)', self)
+        export_dsm_xlsx.triggered.connect(
+            partial(self.exportMergedDsm, 'xlsx')
+        )
+        export_dsm_menu.addAction(export_dsm_xlsx)
+
+        export_gantt_menu = file_menu.addMenu('匯出甘特圖')
+        export_gantt_png = QAction('存成 PNG 圖片... (.png)', self)
+        export_gantt_png.triggered.connect(
+            partial(self.exportGanttChart, 'png')
+        )
+        export_gantt_menu.addAction(export_gantt_png)
+        export_gantt_svg = QAction('存成 SVG 圖片... (.svg)', self)
+        export_gantt_svg.triggered.connect(
+            partial(self.exportGanttChart, 'svg')
+        )
+        export_gantt_menu.addAction(export_gantt_svg)
+
+        export_graph_menu = file_menu.addMenu('匯出原始依賴關係圖')
+        export_graph_png = QAction('存成 PNG 圖片... (.png)', self)
+        export_graph_png.triggered.connect(
+            partial(self.exportGraph, 'png')
+        )
+        export_graph_menu.addAction(export_graph_png)
+        export_graph_svg = QAction('存成 SVG 圖片... (.svg)', self)
+        export_graph_svg.triggered.connect(
+            partial(self.exportGraph, 'svg')
+        )
+        export_graph_menu.addAction(export_graph_svg)
+
+        export_m_graph_menu = file_menu.addMenu('匯出合併後依賴關係圖')
+        export_m_graph_png = QAction('存成 PNG 圖片... (.png)', self)
+        export_m_graph_png.triggered.connect(
+            partial(self.exportMergedGraph, 'png')
+        )
+        export_m_graph_menu.addAction(export_m_graph_png)
+        export_m_graph_svg = QAction('存成 SVG 圖片... (.svg)', self)
+        export_m_graph_svg.triggered.connect(
+            partial(self.exportMergedGraph, 'svg')
+        )
+        export_m_graph_menu.addAction(export_m_graph_svg)
 
         run_btn = QPushButton('執行分析')
         run_btn.clicked.connect(self.runAnalysis)
@@ -298,32 +361,6 @@ class BirdmanQtApp(QMainWindow):
         self.tabs.addTab(self.tab_cmp_result, 'CPM 分析結果')
         self.tabs.addTab(self.tab_gantt_chart, '甘特圖')
         main_layout.addWidget(self.tabs)
-
-        # 匯出按鈕
-        export_layout = QHBoxLayout()
-        export_sorted_btn = QPushButton('匯出排序 WBS')
-        export_sorted_btn.clicked.connect(self.exportSortedWbs)
-        export_merged_btn = QPushButton('匯出合併 WBS')
-        export_merged_btn.clicked.connect(self.exportMergedWbs)
-        export_dsm_btn = QPushButton('匯出排序 DSM')
-        export_dsm_btn.clicked.connect(self.exportSortedDsm)
-        export_merged_dsm_btn = QPushButton('匯出合併 DSM')
-        export_merged_dsm_btn.clicked.connect(self.exportMergedDsm)
-        export_graph_btn = QPushButton('匯出依賴圖')
-        export_graph_btn.clicked.connect(self.exportGraph)
-        export_cmp_btn = QPushButton('匯出 CPM 結果')
-        export_cmp_btn.clicked.connect(self.exportCmpResult)
-        # 在 export_layout 中添加甘特圖匯出按鈕
-        export_gantt_btn = QPushButton('匯出甘特圖')
-        export_gantt_btn.clicked.connect(self.exportGanttChart)
-        export_layout.addWidget(export_gantt_btn)
-        export_layout.addWidget(export_sorted_btn)
-        export_layout.addWidget(export_merged_btn)
-        export_layout.addWidget(export_dsm_btn)
-        export_layout.addWidget(export_merged_dsm_btn)
-        export_layout.addWidget(export_graph_btn)
-        export_layout.addWidget(export_cmp_btn)
-        main_layout.addLayout(export_layout)
 
         main_widget.setLayout(main_layout)
         self.setCentralWidget(main_widget)
@@ -588,16 +625,30 @@ class BirdmanQtApp(QMainWindow):
             self.sorted_wbs.to_csv(path, index=False, encoding='utf-8-sig')
             QMessageBox.information(self, '完成', f'已匯出 {path}')
 
-    def exportMergedWbs(self):
+    def exportMergedWbs(self, fmt='csv'):
+        """匯出合併後的 WBS"""
         if self.merged_wbs is None:
             QMessageBox.warning(self, '警告', '請先執行分析')
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, '匯出合併 WBS', '', 'CSV Files (*.csv)')
-        if path:
-            # 匯出時保留 No. 欄位
-            self.merged_wbs.to_csv(path, encoding='utf-8-sig')
-            QMessageBox.information(self, '完成', f'已匯出 {path}')
+        if fmt == 'xlsx':
+            file_filter = 'Excel 檔案 (*.xlsx)'
+            path, _ = QFileDialog.getSaveFileName(
+                self, '匯出合併 WBS', '', file_filter)
+            if not path:
+                return
+            if not path.lower().endswith('.xlsx'):
+                path += '.xlsx'
+            self.merged_wbs.to_excel(path, index=False)
+        else:
+            file_filter = 'CSV Files (*.csv)'
+            path, _ = QFileDialog.getSaveFileName(
+                self, '匯出合併 WBS', '', file_filter)
+            if not path:
+                return
+            if not path.lower().endswith('.csv'):
+                path += '.csv'
+            self.merged_wbs.to_csv(path, encoding='utf-8-sig', index=False)
+        QMessageBox.information(self, '完成', f'已匯出 {path}')
 
     def exportSortedDsm(self):
         if self.sorted_dsm is None:
@@ -609,52 +660,78 @@ class BirdmanQtApp(QMainWindow):
             self.sorted_dsm.to_csv(path, encoding='utf-8-sig')
             QMessageBox.information(self, '完成', f'已匯出 {path}')
 
-    def exportMergedDsm(self):
+    def exportMergedDsm(self, fmt='csv'):
+        """匯出合併後的 DSM"""
         if self.merged_dsm is None:
             QMessageBox.warning(self, '警告', '請先執行分析')
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, '匯出合併 DSM', '', 'CSV Files (*.csv)')
-        if path:
-            self.merged_dsm.to_csv(path, encoding='utf-8-sig')
-            QMessageBox.information(self, '完成', f'已匯出 {path}')
+        if fmt == 'xlsx':
+            file_filter = 'Excel 檔案 (*.xlsx)'
+            path, _ = QFileDialog.getSaveFileName(
+                self, '匯出合併 DSM', '', file_filter)
+            if not path:
+                return
+            if not path.lower().endswith('.xlsx'):
+                path += '.xlsx'
+            self.merged_dsm.to_excel(path, index=False)
+        else:
+            file_filter = 'CSV Files (*.csv)'
+            path, _ = QFileDialog.getSaveFileName(
+                self, '匯出合併 DSM', '', file_filter)
+            if not path:
+                return
+            if not path.lower().endswith('.csv'):
+                path += '.csv'
+            self.merged_dsm.to_csv(path, encoding='utf-8-sig', index=False)
+        QMessageBox.information(self, '完成', f'已匯出 {path}')
 
-    def exportGraph(self):
-        """匯出依賴關係圖"""
+    def exportGraph(self, fmt='png'):
+        """匯出原始依賴關係圖"""
         if not hasattr(self, 'graph') or self.graph is None:
             QMessageBox.warning(self, '警告', '請先執行分析')
             return
 
-        # 設定檔案過濾器
-        file_filter = 'SVG 向量圖 (*.svg);;PNG 圖片 (*.png)'
-        path, selected_filter = QFileDialog.getSaveFileName(
+        file_filter = 'PNG 圖片 (*.png)' if fmt == 'png' else 'SVG 向量圖 (*.svg)'
+        path, _ = QFileDialog.getSaveFileName(
             self, '匯出依賴關係圖', '', file_filter)
-
         if not path:
-            return  # 使用者取消
+            return
 
         try:
-            # 根據選擇的過濾器決定檔案格式
-            if selected_filter == 'SVG 向量圖 (*.svg)':
-                if not path.lower().endswith('.svg'):
-                    path += '.svg'
-                self.graph_canvas.figure.savefig(
-                    path,
-                    format='svg',
-                    bbox_inches='tight',
-                    dpi=300,
-                )
-            else:  # PNG
-                if not path.lower().endswith('.png'):
-                    path += '.png'
-                self.graph_canvas.figure.savefig(
-                    path,
-                    format='png',
-                    bbox_inches='tight',
-                    dpi=300,
-                )
-
+            if not path.lower().endswith(f'.{fmt}'):
+                path += f'.{fmt}'
+            self.graph_canvas.figure.savefig(
+                path,
+                format=fmt,
+                bbox_inches='tight',
+                dpi=300,
+            )
             QMessageBox.information(self, '完成', f'已匯出依賴關係圖至：{path}')
+        except (OSError, ValueError) as e:
+            QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
+
+    def exportMergedGraph(self, fmt='png'):
+        """匯出合併後依賴關係圖"""
+        if not hasattr(self, 'merged_graph') or self.merged_graph is None:
+            QMessageBox.warning(self, '警告', '請先執行分析')
+            return
+
+        file_filter = 'PNG 圖片 (*.png)' if fmt == 'png' else 'SVG 向量圖 (*.svg)'
+        path, _ = QFileDialog.getSaveFileName(
+            self, '匯出合併後依賴關係圖', '', file_filter)
+        if not path:
+            return
+
+        try:
+            if not path.lower().endswith(f'.{fmt}'):
+                path += f'.{fmt}'
+            self.merged_graph_canvas.figure.savefig(
+                path,
+                format=fmt,
+                bbox_inches='tight',
+                dpi=300,
+            )
+            QMessageBox.information(self, '完成', f'已匯出合併後依賴圖至：{path}')
         except (OSError, ValueError) as e:
             QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
 
@@ -956,43 +1033,29 @@ class BirdmanQtApp(QMainWindow):
             except Exception as e:  # pylint: disable=broad-except
                 QMessageBox.warning(self, '警告', f'圖表重繪失敗：{e}')
 
-    def exportGanttChart(self):
+    def exportGanttChart(self, fmt='png'):
         """匯出甘特圖"""
         if not hasattr(self, 'gantt_figure') or self.gantt_figure is None:
             QMessageBox.warning(self, '警告', '請先執行 CPM 分析')
             return
 
-        # 設定檔案過濾器
-        file_filter = 'SVG 向量圖 (*.svg);;PNG 圖片 (*.png)'
-        path, selected_filter = QFileDialog.getSaveFileName(
+        file_filter = 'PNG 圖片 (*.png)' if fmt == 'png' else 'SVG 向量圖 (*.svg)'
+        path, _ = QFileDialog.getSaveFileName(
             self, '匯出甘特圖', '', file_filter)
 
         if not path:
             return
 
         try:
-            # 根據選擇的過濾器決定檔案格式
-            if selected_filter == 'SVG 向量圖 (*.svg)':
-                if not path.lower().endswith('.svg'):
-                    path += '.svg'
-                self.gantt_figure.savefig(
-                    path,
-                    format='svg',
-                    bbox_inches='tight',
-                    dpi=300,
-                    pad_inches=0.5
-                )
-            else:  # PNG
-                if not path.lower().endswith('.png'):
-                    path += '.png'
-                self.gantt_figure.savefig(
-                    path,
-                    format='png',
-                    bbox_inches='tight',
-                    dpi=300,
-                    pad_inches=0.5
-                )
-
+            if not path.lower().endswith(f'.{fmt}'):
+                path += f'.{fmt}'
+            self.gantt_figure.savefig(
+                path,
+                format=fmt,
+                bbox_inches='tight',
+                dpi=300,
+                pad_inches=0.5
+            )
             QMessageBox.information(self, '完成', f'已匯出甘特圖至：{path}')
         except (OSError, ValueError) as e:
             QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
