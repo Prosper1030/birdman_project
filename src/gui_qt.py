@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QDialog,
     QCheckBox,
+    QComboBox,
     QAction,
     QDialogButtonBox,
     QScrollArea,
@@ -192,6 +193,8 @@ class BirdmanQtApp(QMainWindow):
         self.critical_path = None
         self.merged_graph = None
         self.merged_dsm = None
+        # 儲存不同情境下的甘特圖資料
+        self.gantt_results = {}
 
         # 預設的 k 參數值
         self.default_k_params = {
@@ -258,6 +261,17 @@ class BirdmanQtApp(QMainWindow):
         cmp_btn = QPushButton('執行 CPM 分析')
         cmp_btn.clicked.connect(self.runCmpAnalysis)
         file_layout.addWidget(cmp_btn)
+
+        # 時間選擇器，供使用者挑選要分析的工期欄位
+        self.time_selection_combo = QComboBox()
+        self.time_selection_combo.addItems([
+            'Optimistic (O)',
+            'Pessimistic (P)',
+            'Most Likely (M)',
+            'Expected Time (TE)',
+            'All Scenarios',
+        ])
+        file_layout.addWidget(self.time_selection_combo)
 
         main_layout.addLayout(file_layout)
 
@@ -414,6 +428,12 @@ class BirdmanQtApp(QMainWindow):
         self.tab_cmp_result.setLayout(QVBoxLayout())
         self.tab_cmp_result.layout().addWidget(self.cmp_result_view)
         self.tab_gantt_chart.setLayout(QVBoxLayout())
+        # 甘特圖情境切換下拉選單
+        self.gantt_display_combo = QComboBox()
+        self.gantt_display_combo.currentIndexChanged.connect(
+            self.update_gantt_display
+        )
+        self.tab_gantt_chart.layout().addWidget(self.gantt_display_combo)
         self.gantt_figure = Figure(figsize=(16, 12), dpi=100)
         self.gantt_canvas = FigureCanvas(self.gantt_figure)
         self.gantt_canvas.setMinimumSize(1000, 800)
@@ -659,48 +679,66 @@ class BirdmanQtApp(QMainWindow):
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
-            duration_field = cmp_params.get(
-                'default_duration_field', 'Te_newbie'
-            )
+            base_field = cmp_params.get('default_duration_field', 'Te_newbie')
 
-            # 直接使用工時，不轉換為天數
-            durations_hours = extractDurationFromWbs(
-                self.merged_wbs.drop(columns=['No.']), duration_field
-            )
+            # 解析使用者選擇的情境
+            choice = self.time_selection_combo.currentText()
+            if choice == 'All Scenarios':
+                scenarios = ['O', 'P', 'M', 'Te']
+            else:
+                key = choice.split('(')[-1].split(')')[0]
+                scenarios = ['Te' if key.upper() == 'TE' else key]
 
-            forward_data = cpmForwardPass(self.merged_graph, durations_hours)
-            project_end = max(ef for _, ef in forward_data.values())
-            backward_data = cpmBackwardPass(
-                self.merged_graph,
-                durations_hours,
-                project_end,
-            )
-            cpm_result = calculateSlack(
-                forward_data,
-                backward_data,
-                self.merged_graph,
-            )
-            self.critical_path = findCriticalPath(cpm_result)
+            self.gantt_results = {}
 
-            wbs_with_cpm = self.merged_wbs.copy()
-            for col in ['ES', 'EF', 'LS', 'LF', 'TF', 'FF', 'Critical']:
-                wbs_with_cpm[col] = wbs_with_cpm['Task ID'].map(
-                    cpm_result[col].to_dict()).fillna(0)
+            for sc in scenarios:
+                parts = base_field.split('_', 1)
+                if len(parts) == 2:
+                    duration_field = f"{sc}_{parts[1]}"
+                else:
+                    duration_field = sc
 
-            self.cmp_result = wbs_with_cpm
-            self.cmp_result_view.setModel(
-                PandasModel(self.cmp_result.head(100))
-            )
+                durations_hours = extractDurationFromWbs(
+                    self.merged_wbs.drop(columns=['No.']), duration_field
+                )
 
-            self.drawGanttChart(cpm_result, durations_hours)
+                forward_data = cpmForwardPass(
+                    self.merged_graph,
+                    durations_hours,
+                )
+                project_end = max(ef for _, ef in forward_data.values())
+                backward_data = cpmBackwardPass(
+                    self.merged_graph,
+                    durations_hours,
+                    project_end,
+                )
+                cpm_result = calculateSlack(
+                    forward_data,
+                    backward_data,
+                    self.merged_graph,
+                )
+                wbs_with_cpm = self.merged_wbs.copy()
+                for col in ['ES', 'EF', 'LS', 'LF', 'TF', 'FF', 'Critical']:
+                    wbs_with_cpm[col] = wbs_with_cpm['Task ID'].map(
+                        cpm_result[col].to_dict()
+                    ).fillna(0)
 
-            QMessageBox.information(
-                self,
-                'CPM 分析完成',
-                f'專案總工時：{project_end:.1f} 小時\n'
-                f'關鍵路徑：{" → ".join(self.critical_path)}\n'
-                f'關鍵任務數量：{len(self.critical_path)} 個'
-            )
+                self.gantt_results[sc] = (
+                    cpm_result,
+                    durations_hours,
+                    wbs_with_cpm,
+                    project_end,
+                )
+
+            # 更新情境下拉選單並顯示第一個結果
+            self.gantt_display_combo.blockSignals(True)
+            self.gantt_display_combo.clear()
+            self.gantt_display_combo.addItems(list(self.gantt_results.keys()))
+            self.gantt_display_combo.blockSignals(False)
+            self.gantt_display_combo.setCurrentIndex(0)
+            self.update_gantt_display()
+
+            QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
         except Exception as e:  # pylint: disable=broad-except
             QMessageBox.critical(self, '錯誤', f'CPM 分析失敗：{e}')
 
@@ -803,11 +841,12 @@ class BirdmanQtApp(QMainWindow):
             container_layout.setContentsMargins(20, 40, 20, 40)  # 左、上、右、下邊距
             container_layout.addWidget(scroll_area)
 
-            # 更新分頁中的內容
-            if self.tab_gantt_chart.layout().count():
-                old_widget = self.tab_gantt_chart.layout().takeAt(0)
-                if old_widget.widget():
-                    old_widget.widget().deleteLater()
+            # 更新分頁中的內容，保留最上方的切換下拉選單
+            layout = self.tab_gantt_chart.layout()
+            if layout.count() > 1:
+                old_item = layout.takeAt(1)
+                if old_item.widget():
+                    old_item.widget().deleteLater()
 
             # 建立容器來包裝捲動區域
             container = QWidget()
@@ -819,6 +858,17 @@ class BirdmanQtApp(QMainWindow):
 
         except Exception as e:
             QMessageBox.warning(self, '警告', f'甘特圖繪製失敗：{e}')
+
+    def update_gantt_display(self):
+        """根據下拉選單切換甘特圖與結果顯示"""
+        key = self.gantt_display_combo.currentText()
+        if key not in self.gantt_results:
+            return
+        cpm_df, durations, wbs_df, project_end = self.gantt_results[key]
+        self.cmp_result = wbs_df
+        self.critical_path = findCriticalPath(cpm_df)
+        self.cmp_result_view.setModel(PandasModel(wbs_df.head(100)))
+        self.drawGanttChart(cpm_df, durations)
 
     def exportCmpResult(self):
         """匯出 CPM 分析結果"""
