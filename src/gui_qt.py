@@ -294,6 +294,10 @@ class BirdmanQtApp(QMainWindow):
         export_graph_btn.clicked.connect(self.exportGraph)
         export_cmp_btn = QPushButton('匯出 CPM 結果')
         export_cmp_btn.clicked.connect(self.exportCmpResult)
+        # 在 export_layout 中添加甘特圖匯出按鈕
+        export_gantt_btn = QPushButton('匯出甘特圖')
+        export_gantt_btn.clicked.connect(self.exportGanttChart)
+        export_layout.addWidget(export_gantt_btn)
         export_layout.addWidget(export_sorted_btn)
         export_layout.addWidget(export_merged_btn)
         export_layout.addWidget(export_dsm_btn)
@@ -364,8 +368,9 @@ class BirdmanQtApp(QMainWindow):
         self.tab_cmp_result.setLayout(QVBoxLayout())
         self.tab_cmp_result.layout().addWidget(self.cmp_result_view)
         self.tab_gantt_chart.setLayout(QVBoxLayout())
-        self.gantt_figure = Figure(figsize=(12, 8))
+        self.gantt_figure = Figure(figsize=(16, 12), dpi=100)
         self.gantt_canvas = FigureCanvas(self.gantt_figure)
+        self.gantt_canvas.setMinimumSize(1000, 800)
         self.tab_gantt_chart.layout().addWidget(self.gantt_canvas)
 
     def chooseDsm(self):
@@ -575,22 +580,17 @@ class BirdmanQtApp(QMainWindow):
             duration_field = cmp_params.get(
                 'default_duration_field', 'Te_expert'
             )
-            work_hours_per_day = cmp_params.get('work_hours_per_day', 8)
 
-            # 取得合併後 WBS 的工期
+            # 直接使用工時，不轉換為天數
             durations_hours = extractDurationFromWbs(
                 self.merged_wbs.drop(columns=['No.']), duration_field
             )
-            durations_days = {
-                tid: convertHoursToDays(hours, work_hours_per_day)
-                for tid, hours in durations_hours.items()
-            }
 
-            forward_data = cpmForwardPass(self.merged_graph, durations_days)
+            forward_data = cpmForwardPass(self.merged_graph, durations_hours)
             project_end = max(ef for _, ef in forward_data.values())
             backward_data = cpmBackwardPass(
                 self.merged_graph,
-                durations_days,
+                durations_hours,
                 project_end,
             )
             cpm_result = calculateSlack(
@@ -610,12 +610,12 @@ class BirdmanQtApp(QMainWindow):
                 PandasModel(self.cmp_result.head(100))
             )
 
-            self.drawGanttChart(cpm_result, durations_days)
+            self.drawGanttChart(cpm_result, durations_hours)
 
             QMessageBox.information(
                 self,
                 'CPM 分析完成',
-                f'專案總工期：{project_end:.1f} 天\n'
+                f'專案總工時：{project_end:.1f} 小時\n'
                 f'關鍵路徑：{" → ".join(self.critical_path)}\n'
                 f'關鍵任務數量：{len(self.critical_path)} 個'
             )
@@ -626,26 +626,100 @@ class BirdmanQtApp(QMainWindow):
         """繪製甘特圖"""
         try:
             self.gantt_figure.clear()
+            
+            # 創建子圖，並設定外邊距
             ax = self.gantt_figure.add_subplot(111)
+            
+            # 設定更大的外邊距
+            self.gantt_figure.subplots_adjust(
+                top=0.9,      # 上邊距
+                bottom=0.15,  # 下邊距
+                left=0.2,     # 左邊距
+                right=0.95    # 右邊距
+            )
+            
+            # 取得任務列表和相關數據
             tasks = cpmData.index.tolist()
             start_times = cpmData['ES'].tolist()
             task_durations = [durations.get(t, 0) for t in tasks]
-            colors = [
-                'red' if cpmData.at[t, 'Critical'] else 'lightblue'
-                for t in tasks
-            ]
+            
+            # 設定任務條的位置和顏色
             y_positions = range(len(tasks))
-            ax.barh(y_positions, task_durations, left=start_times,
-                    color=colors, alpha=0.7, height=0.6)
-            ax.set_yticks(list(y_positions))
-            ax.set_yticklabels(tasks, fontsize=8)
-            ax.set_xlabel('時間 (天)')
-            ax.set_title('專案甘特圖 (紅色為關鍵路徑)', fontsize=12)
-            ax.grid(True, axis='x', alpha=0.3)
+            colors = ['red' if cpmData.at[t, 'Critical'] else 'skyblue' for t in tasks]
+            
+            # 繪製任務條
+            bars = ax.barh(
+                y_positions, 
+                task_durations, 
+                left=start_times,
+                color=colors, 
+                alpha=0.8,
+                height=0.6,
+                edgecolor='black',
+                linewidth=1,
+                zorder=2
+            )
+            
+            # 設定 Y 軸標籤
+            ax.set_yticks(y_positions)
+            ax.set_yticklabels(tasks, fontsize=10, fontweight='bold')
+            
+            # 加強網格線
+            ax.grid(True, axis='x', linestyle='--', color='gray', alpha=0.3, zorder=1)
+            ax.set_axisbelow(True)
+            
+            # 設定標籤和標題
+            ax.set_xlabel('時間 (小時)', fontsize=11, fontweight='bold')
+            ax.set_title('專案甘特圖 (紅色為關鍵路徑)', fontsize=14, pad=20)
+            
+            # 在每個任務條上添加持續時間標籤
+            for i, (duration, start) in enumerate(zip(task_durations, start_times)):
+                if duration > 0:
+                    ax.text(
+                        start + duration + 2,
+                        i,
+                        f'{duration:.1f}h',
+                        va='center',
+                        fontsize=9,
+                        alpha=0.7
+                    )
+            
+            # 反轉 Y 軸
             ax.invert_yaxis()
-            self.gantt_figure.tight_layout()
+            
+            # 建立新的捲動區域，支援水平和垂直捲動
+            scroll_area = QScrollArea()
+            scroll_area.setWidget(self.gantt_canvas)
+            scroll_area.setWidgetResizable(True)
+            
+            # 確保水平和垂直捲動條都可見
+            scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+            scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+            
+            # 設定更大的視窗尺寸，增加上下空間
+            scroll_area.setMinimumHeight(1000)  # 增加最小高度
+            self.gantt_canvas.setMinimumSize(1200, max(1000, len(tasks) * 35))
+            
+            # 設定捲動區域的邊距
+            container_layout = QVBoxLayout()
+            container_layout.setContentsMargins(20, 40, 20, 40)  # 左、上、右、下邊距
+            container_layout.addWidget(scroll_area)
+            
+            # 更新分頁中的內容
+            if self.tab_gantt_chart.layout().count():
+                old_widget = self.tab_gantt_chart.layout().takeAt(0)
+                if old_widget.widget():
+                    old_widget.widget().deleteLater()
+            
+            # 建立容器來包裝捲動區域
+            container = QWidget()
+            container.setLayout(container_layout)
+            self.tab_gantt_chart.layout().addWidget(container)
+            
+            # 重繪圖表
             self.gantt_canvas.draw()
-        except Exception as e:  # pylint: disable=broad-except
+            
+        except Exception as e:
             QMessageBox.warning(self, '警告', f'甘特圖繪製失敗：{e}')
 
     def exportCmpResult(self):
@@ -698,24 +772,23 @@ class BirdmanQtApp(QMainWindow):
         if not hasattr(self, 'graph') or self.graph is None:
             return
 
-        # 重新繪製圖表
         if hasattr(self, 'sorted_wbs') and self.sorted_wbs is not None:
             try:
                 with open('config.json', 'r', encoding='utf-8') as f:
                     config = json.load(f)
                 viz_params = config.get('visualization_params', {})
 
-                scc_map = dict(
-                    zip(self.sorted_wbs['Task ID'], self.sorted_wbs['SCC_ID']))
-                layer_map = dict(
-                    zip(self.sorted_wbs['Task ID'], self.sorted_wbs['Layer']))
+                # 取得 SCC_ID 和 Layer 的映射
+                scc_map = dict(zip(self.sorted_wbs['Task ID'], self.sorted_wbs['SCC_ID']))
+                layer_map = dict(zip(self.sorted_wbs['Task ID'], self.sorted_wbs['Layer']))
+                
+                # 重新建立圖表
                 fig = visualizer.create_dependency_graph_figure(
                     self.graph, scc_map, layer_map, viz_params)
                 self.graph_canvas.figure = fig
-                self.graph_canvas.draw()
-
+                
                 # 更新圖表尺寸
-                self.graph_canvas.draw()  # 確保圖表已經繪製完成
+                self.graph_canvas.draw()
                 canvas_size = self.graph_canvas.get_width_height()
                 if canvas_size[0] > 0 and canvas_size[1] > 0:
                     self.graph_container.setMinimumSize(
@@ -723,9 +796,48 @@ class BirdmanQtApp(QMainWindow):
                         int(canvas_size[1] * 1.1)
                     )
             except Exception as e:  # pylint: disable=broad-except
-                # 圖表重繪過程可能因設定檔或數據問題失敗
                 QMessageBox.warning(self, '警告', f'圖表重繪失敗：{e}')
 
+    def exportGanttChart(self):
+        """匯出甘特圖"""
+        if not hasattr(self, 'gantt_figure') or self.gantt_figure is None:
+            QMessageBox.warning(self, '警告', '請先執行 CPM 分析')
+            return
+
+        # 設定檔案過濾器
+        file_filter = 'SVG 向量圖 (*.svg);;PNG 圖片 (*.png)'
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, '匯出甘特圖', '', file_filter)
+
+        if not path:
+            return
+
+        try:
+            # 根據選擇的過濾器決定檔案格式
+            if selected_filter == 'SVG 向量圖 (*.svg)':
+                if not path.lower().endswith('.svg'):
+                    path += '.svg'
+                self.gantt_figure.savefig(
+                    path,
+                    format='svg',
+                    bbox_inches='tight',
+                    dpi=300,
+                    pad_inches=0.5
+                )
+            else:  # PNG
+                if not path.lower().endswith('.png'):
+                    path += '.png'
+                self.gantt_figure.savefig(
+                    path,
+                    format='png',
+                    bbox_inches='tight',
+                    dpi=300,
+                    pad_inches=0.5
+                )
+
+            QMessageBox.information(self, '完成', f'已匯出甘特圖至：{path}')
+        except (OSError, ValueError) as e:
+            QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
 
 def main():
     app = QApplication(sys.argv)

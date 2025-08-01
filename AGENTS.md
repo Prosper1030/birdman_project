@@ -283,3 +283,49 @@ for u, v in self.graph.edges():
 （本章節可依需求隨時調整擴充）
 
 ---
+
+# Birdman Project AI 開發指南
+
+## 最新更新重點
+
+1. 甘特圖功能優化：
+
+   - 改進視窗縮放功能
+   - 優化捲動區域設定
+   - 增加外部邊距空間
+
+2. CPM 分析改進：
+   - 移除工時轉換天數邏輯
+   - 直接使用小時作為時間單位
+   - 優化時程計算邏輯
+
+## 需要注意的問題
+
+1. 甘特圖顯示：
+
+   ```python
+   # 設定捲動區域時需注意容器的層級關係
+   container_layout = QVBoxLayout()
+   container_layout.setContentsMargins(20, 40, 20, 40)
+   ```
+
+2. CPM 分析：
+   ```python
+   # 時間單位統一使用小時
+   durations_hours = extractDurationFromWbs(
+       self.merged_wbs.drop(columns=['No.']), duration_field
+   )
+   ```
+
+## 開發建議
+
+1. 使用 QScrollArea 時需注意：
+
+   - 設定適當的 MinimumSize
+   - 正確配置捲動條策略
+   - 處理好容器之間的層級關係
+
+2. 圖表繪製時：
+   - 使用 subplots_adjust 控制邊距
+   - 注意深色/淺色模式的切換
+   - 確保匯出時的圖表品質
