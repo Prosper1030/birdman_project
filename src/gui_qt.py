@@ -29,14 +29,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
-)            forward_data = cpmForwardPass(self.merged_graph, durations_days)
-            project_end = max(ef for _, ef in forward_data.values())
-            backward_data = cpmBackwardPass(
-                self.merged_graph, durations_days, project_end
-            )
-            cpm_result = calculateSlack(
-                forward_data, backward_data, self.merged_graph
-            )atplotlib.figure import Figure
+)
+from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import qdarkstyle
 import pandas as pd
