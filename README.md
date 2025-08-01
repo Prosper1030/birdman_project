@@ -165,10 +165,10 @@ pip install -r requirements.txt
 ## WBS.csv 欄位詳解
 
 - `TRF`：任務複雜度係數，數值不得為負。
-- `M`：專家評估的最可能工時。
+- `M_expert`：專家評估的最可能工時。
 - `O_expert`：專家的樂觀工時。
 - `P_expert`：專家的悲觀工時。
-- `Te_expert`：依 PERT 公式 `(O + 4*M + P) / 6` 計算的期望工時。
+- `Te_expert`：依 PERT 公式 `(O + 4*M_expert + P) / 6` 計算的期望工時。
 - `K_adj`：估算新手工時的調整係數。
 - `O_newbie`、`M_newbie`、`P_newbie`：將專家對應的時間乘以 `K_adj` 後得出的新手估算工時。
 - `Te_newbie`：根據新手時間以 PERT 公式計算出的期望工時，也是系統新的預設工時。
