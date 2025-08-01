@@ -197,6 +197,8 @@ class BirdmanQtApp(QMainWindow):
         self.merged_dsm = None
         # 儲存不同情境下的甘特圖資料
         self.gantt_results = {}
+        # 儲存目前顯示的 CPM 報告 DataFrame
+        self.current_display_cpm_df = None
 
         # 預設的 k 參數值
         self.default_k_params = {
@@ -343,6 +345,18 @@ class BirdmanQtApp(QMainWindow):
             partial(self.exportMergedGraph, 'svg')
         )
         export_m_graph_menu.addAction(export_m_graph_svg)
+
+        export_cpm_menu = export_menu.addMenu('匯出 CPM 分析結果')
+        export_cpm_csv = QAction('存成 CSV 檔案... (.csv)', self)
+        export_cpm_csv.triggered.connect(
+            partial(self.export_cpm_results, 'csv')
+        )
+        export_cpm_menu.addAction(export_cpm_csv)
+        export_cpm_xlsx = QAction('存成 Excel 檔案... (.xlsx)', self)
+        export_cpm_xlsx.triggered.connect(
+            partial(self.export_cpm_results, 'xlsx')
+        )
+        export_cpm_menu.addAction(export_cpm_xlsx)
 
         # 建立「CPM 分析參數」區塊
         step2_group = QGroupBox('CPM 分析參數 (CPM Analysis Parameters)')
@@ -675,6 +689,31 @@ class BirdmanQtApp(QMainWindow):
                 pass
         df.insert(0, 'No.', range(1, len(df) + 1))
         return df
+
+    def _create_cpm_display_df(self, full_results_df, role_key, time_key):
+        """產生精簡版 CPM 結果表"""
+        core_display_cols = [
+            'Task ID',
+            'Name',
+            'ES', 'EF', 'LS', 'LF',
+            'TF', 'FF', 'Critical'
+        ]
+
+        role_map = {
+            'novice': 'newbie',
+            'expert': 'expert'
+        }
+        role_suffix = role_map.get(role_key.lower(), role_key.lower())
+        time_column = f'{time_key}_{role_suffix}'
+
+        columns = core_display_cols.copy()
+        if time_column in full_results_df.columns:
+            insert_index = columns.index('Name') + 1
+            columns.insert(insert_index, time_column)
+
+        existing_cols = [c for c in columns if c in full_results_df.columns]
+        display_df = full_results_df[existing_cols].copy()
+        return display_df
 
     def exportSortedWbs(self):
         if self.sorted_wbs is None:
@@ -1018,9 +1057,15 @@ class BirdmanQtApp(QMainWindow):
             return
         cpm_df, durations, wbs_df, project_end = self.gantt_results[key]
         self.cmp_result = wbs_df
-        self.critical_path = findCriticalPath(cpm_df)
-        self.cmp_result_view.setModel(PandasModel(wbs_df.head(100)))
         role_selected = self.role_selection_combo.currentText()
+        role_key = 'novice' if '新手' in role_selected else 'expert'
+        self.current_display_cpm_df = self._create_cpm_display_df(
+            wbs_df, role_key, key
+        )
+        self.critical_path = findCriticalPath(cpm_df)
+        self.cmp_result_view.setModel(
+            PandasModel(self.current_display_cpm_df.head(100))
+        )
         role_text = '新手' if '新手' in role_selected else '專家'
         self.drawGanttChart(cpm_df, durations, role_text)
 
@@ -1034,6 +1079,32 @@ class BirdmanQtApp(QMainWindow):
         if path:
             self.cmp_result.to_csv(path, index=False, encoding='utf-8-sig')
             QMessageBox.information(self, '完成', f'已匯出 CPM 結果：{path}')
+
+    def export_cpm_results(self, fmt='csv'):
+        """匯出目前顯示的 CPM 精簡報告"""
+        if self.current_display_cpm_df is None:
+            QMessageBox.warning(self, '警告', '沒有可匯出的 CPM 結果')
+            return
+        if fmt == 'xlsx':
+            file_filter = 'Excel 檔案 (*.xlsx)'
+            path, _ = QFileDialog.getSaveFileName(
+                self, '匯出 CPM 分析結果', '', file_filter)
+            if not path:
+                return
+            if not path.lower().endswith('.xlsx'):
+                path += '.xlsx'
+            self.current_display_cpm_df.to_excel(path, index=False)
+        else:
+            file_filter = 'CSV Files (*.csv)'
+            path, _ = QFileDialog.getSaveFileName(
+                self, '匯出 CPM 分析結果', '', file_filter)
+            if not path:
+                return
+            if not path.lower().endswith('.csv'):
+                path += '.csv'
+            self.current_display_cpm_df.to_csv(
+                path, index=False, encoding='utf-8-sig')
+        QMessageBox.information(self, '完成', f'已匯出 {path}')
 
     def open_settings_dialog(self):
         """開啟 k 係數參數設定對話框"""
