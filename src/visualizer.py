@@ -84,12 +84,13 @@ def create_dependency_graph_figure(
             node_colors.append(default_color)
 
     # 1. 繪製節點
+    node_size = 2500
     nx.draw_networkx_nodes(
         G,
         pos,
         ax=ax,
         node_color=node_colors,
-        node_size=2500,
+        node_size=node_size,
     )
 
     # 2. 繪製邊線
@@ -99,9 +100,11 @@ def create_dependency_graph_figure(
         ax=ax,
         edge_color=plt.rcParams['grid.color'],
         arrows=True,
-        width=1.2,
+        arrowstyle='->',
         arrowsize=20,
+        width=1.2,
         connectionstyle='arc3,rad=0.1',
+        node_size=node_size,
     )
 
     # 3. 繪製標籤
