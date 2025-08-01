@@ -112,6 +112,7 @@ python -m src.gui_qt
    - 深色/淺色主題切換
    - 匯出原始與合併後依賴關係圖
    - 匯出甘特圖與 CPM 分析結果
+   - CPM 分析結果可匯出乾淨報告（CSV/Excel）
    - CPM 分析可切換 O、P、M、TE 或 All Scenarios
 
 3. **參數調整**
