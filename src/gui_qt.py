@@ -1538,7 +1538,10 @@ class BirdmanQtApp(QMainWindow):
             )
 
             project_end = schedule.pop("ProjectEnd", 0)
-            result_text = f"<b>RCPSP 排程結果 (總工期: {project_end:.2f} 小時):</b><br><br>"
+            result_text = (
+                f"<b>RCPSP 排程結果 (總工期: {project_end:.2f} 小時):"
+                "</b><br><br>"
+            )
             result_text += "<table border='1' style='width:100%'>"
             result_text += "<tr><th>任務 ID</th><th>開始時間 (小時)</th></tr>"
             for task, start_time in sorted(schedule.items()):

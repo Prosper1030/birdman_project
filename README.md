@@ -202,3 +202,8 @@ pip install -r requirements.txt
 ```bash
 pytest
 ```
+安裝完成後，也可執行 `flake8` 確保程式碼格式一致。
+
+```bash
+flake8
+```
