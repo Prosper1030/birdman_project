@@ -50,6 +50,10 @@ def create_dependency_graph_figure(
     fig = Figure(figsize=(18, 20), dpi=100)
     ax = fig.add_subplot(111)
 
+    # --- 依照當前主題設定背景色 ---
+    fig.patch.set_facecolor(plt.rcParams['figure.facecolor'])
+    ax.set_facecolor(plt.rcParams['axes.facecolor'])
+
     # --- 使用新的分層佈局 ---
     pos = layered_layout(G, layer_map)
 
@@ -91,11 +95,18 @@ def create_dependency_graph_figure(
         font_color=plt.rcParams['text.color'],
         font_weight='bold',
         width=1.2,
-        edge_color='gray',
+        edge_color=plt.rcParams['axes.edgecolor'],
         arrowsize=20,
         connectionstyle='arc3,rad=0.1'
     )
 
-    ax.set_title('任務依賴關係分層圖', fontsize=18, color=plt.rcParams['text.color'])
+    for spine in ax.spines.values():
+        spine.set_edgecolor(plt.rcParams['axes.edgecolor'])
+
+    ax.set_title(
+        '任務依賴關係分層圖',
+        fontsize=18,
+        color=plt.rcParams['axes.labelcolor'],
+    )
     fig.tight_layout()
     return fig

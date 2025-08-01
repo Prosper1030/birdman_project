@@ -1066,6 +1066,12 @@ class BirdmanQtApp(QMainWindow):
             # 創建子圖，並設定外邊距
             ax = self.gantt_figure.add_subplot(111)
 
+            # --- 依照當前主題設定背景色 ---
+            self.gantt_figure.patch.set_facecolor(
+                plt.rcParams['figure.facecolor']
+            )
+            ax.set_facecolor(plt.rcParams['axes.facecolor'])
+
             # 設定更大的外邊距
             self.gantt_figure.subplots_adjust(
                 top=0.9,      # 上邊距
@@ -1105,11 +1111,14 @@ class BirdmanQtApp(QMainWindow):
                 tasks,
                 fontsize=10,
                 fontweight='bold',
-                color=plt.rcParams['text.color'],
+                color=plt.rcParams['axes.labelcolor'],
             )
 
-            ax.tick_params(axis='x', colors=plt.rcParams['text.color'])
-            ax.tick_params(axis='y', colors=plt.rcParams['text.color'])
+            ax.tick_params(axis='x', colors=plt.rcParams['xtick.color'])
+            ax.tick_params(axis='y', colors=plt.rcParams['ytick.color'])
+
+            for spine in ax.spines.values():
+                spine.set_edgecolor(plt.rcParams['axes.edgecolor'])
 
             # 加強網格線
             ax.grid(
@@ -1124,14 +1133,16 @@ class BirdmanQtApp(QMainWindow):
 
             # 設定標籤和標題
             ax.set_xlabel(
-                '時間 (小時)', fontsize=11, fontweight='bold',
-                color=plt.rcParams['text.color']
+                '時間 (小時)',
+                fontsize=11,
+                fontweight='bold',
+                color=plt.rcParams['axes.labelcolor'],
             )
             ax.set_title(
                 f'專案甘特圖 - {roleText} (紅色為關鍵路徑)',
                 fontsize=14,
                 pad=20,
-                color=plt.rcParams['text.color']
+                color=plt.rcParams['axes.labelcolor'],
             )
             # 在每個任務條上添加持續時間標籤
             for i, (duration, start) in enumerate(
@@ -1298,6 +1309,14 @@ class BirdmanQtApp(QMainWindow):
             plt.style.use('default')
             self.is_dark_mode = False
             self.dark_mode_action.setText('啟用深色模式')
+
+        # --- 清除舊圖表 ---
+        if self.gantt_figure:
+            self.gantt_figure.clear()
+        if self.graph_figure:
+            self.graph_figure.clear()
+        if self.merged_graph_figure:
+            self.merged_graph_figure.clear()
 
         # 重繪圖表
         self.redraw_graph()
