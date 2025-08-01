@@ -333,3 +333,5 @@ for u, v in self.graph.edges():
 3. 其他開發規範：
    - CPM 分析預設以 `Te_newbie` 欄位計算工期
    - 每次修改程式碼後，請執行 `flake8` 確認格式
+   - 每次新增或修改功能時，必須同步更新 `README.md`
+   - 推送程式碼前請執行 `pytest` 與 `flake8`，確保測試與格式皆通過
