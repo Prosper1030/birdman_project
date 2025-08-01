@@ -497,6 +497,11 @@ class BirdmanQtApp(QMainWindow):
         return df
 
     def exportSortedWbs(self):
+        """匯出排序後 WBS 表格並保存為 CSV 檔案
+
+        此方法於完成分析後使用，點擊「匯出排序 WBS」按鈕時會呼叫。
+        若尚未進行分析，則先顯示警告提示使用者。
+        """
         if self.sorted_wbs is None:
             QMessageBox.warning(self, '警告', '請先執行分析')
             return
@@ -507,6 +512,11 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.information(self, '完成', f'已匯出 {path}')
 
     def exportMergedWbs(self):
+        """匯出合併後 WBS 表格至指定路徑
+
+        方法會將 `merged_wbs` DataFrame 以 CSV 格式輸出，
+        由「匯出合併 WBS」按鈕觸發。若分析尚未完成則會跳出警告。
+        """
         if self.merged_wbs is None:
             QMessageBox.warning(self, '警告', '請先執行分析')
             return
@@ -518,6 +528,11 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.information(self, '完成', f'已匯出 {path}')
 
     def exportSortedDsm(self):
+        """將排序後 DSM 內容輸出為 CSV 檔
+
+        按下「匯出排序 DSM」按鈕後執行，
+        未先分析則會提醒使用者必須先完成分析步驟。
+        """
         if self.sorted_dsm is None:
             QMessageBox.warning(self, '警告', '請先執行分析')
             return
