@@ -1,7 +1,9 @@
 import pandas as pd
 import networkx as nx
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
+import random
+import numpy as np
 
 
 def cpmForwardPass(
@@ -109,3 +111,58 @@ def extractDurationFromWbs(
     if durationField not in wbs.columns:
         raise KeyError(f"WBS 缺少 {durationField} 欄位")
     return dict(zip(wbs["Task ID"], wbs[durationField].astype(float)))
+
+
+def monteCarloSchedule(
+    G: nx.DiGraph,
+    oDurations: Dict[str, float],
+    mDurations: Dict[str, float],
+    pDurations: Dict[str, float],
+    nIterations: int = 100,
+    confidence: float = 0.9,
+) -> Dict[str, Any]:
+    """蒙地卡羅模擬計算專案完工時間
+
+    以三點估算法的 O、M、P 值為基礎，進行多次隨機抽樣後執行 CPM。
+
+    參數:
+        G: 依賴關係圖
+        oDurations: 樂觀工期
+        mDurations: 最可能工期
+        pDurations: 悲觀工期
+        nIterations: 模擬次數
+        confidence: 信心水準 (0~1)
+
+    回傳值:
+        包含平均工期、標準差、最短與最長工期，以及對應信心水準的工期
+    """
+
+    results: List[float] = []
+    for _ in range(max(1, nIterations)):
+        sampled: Dict[str, float] = {}
+        for task in G.nodes:
+            o = float(oDurations.get(task, 0))
+            m = float(mDurations.get(task, 0))
+            p = float(pDurations.get(task, 0))
+            sampled[task] = random.triangular(o, p, m)
+
+        forward = cpmForwardPass(G, sampled)
+        project_end = max(v[1] for v in forward.values())
+        results.append(project_end)
+
+    arr = np.array(results)
+    avg = float(arr.mean())
+    std = float(arr.std(ddof=1)) if len(arr) > 1 else 0.0
+    min_v = float(arr.min())
+    max_v = float(arr.max())
+    conf_v = float(np.quantile(arr, confidence))
+
+    return {
+        "average": avg,
+        "std": std,
+        "min": min_v,
+        "max": max_v,
+        "confidence": confidence,
+        "confidence_value": conf_v,
+        "samples": results,
+    }
