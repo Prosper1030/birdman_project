@@ -190,6 +190,14 @@ class BirdmanQtApp(QMainWindow):
         self.is_dark_mode = False
         self.graph = None
 
+        # 圖表相關物件初始化
+        self.graph_figure = None
+        self.graph_canvas = None
+        self.merged_graph_figure = None
+        self.merged_graph_canvas = None
+        self.gantt_figure = None
+        self.gantt_canvas = None
+
         # CPM 分析相關資料
         self.cmp_result = None
         self.critical_path = None
@@ -426,24 +434,22 @@ class BirdmanQtApp(QMainWindow):
 
         setup_layout.addWidget(self.preview_tabs)
         setup_layout.addWidget(self.full_analysis_button)
-        # 依賴關係圖畫布及捲動區域
-        self.graph_figure = Figure(figsize=(18, 20))  # 使用與 visualizer.py 相同的尺寸
-        self.graph_canvas = FigureCanvas(self.graph_figure)
+        # 依賴關係圖容器（Canvas 之後動態加入）
+        self.graph_container = QWidget()
+        self.graph_container_layout = QVBoxLayout(self.graph_container)
+        self.graph_container_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 合併後依賴圖畫布
-        self.merged_graph_figure = Figure(figsize=(18, 20))
-        self.merged_graph_canvas = FigureCanvas(self.merged_graph_figure)
+        # 合併後依賴圖容器
+        self.merged_graph_container = QWidget()
+        self.merged_graph_container_layout = QVBoxLayout(
+            self.merged_graph_container
+        )
+        self.merged_graph_container_layout.setContentsMargins(0, 0, 0, 0)
 
         # 建立外層容器（用於控制大小和捲動）
         self.graph_outer_container = QWidget()
         self.graph_outer_layout = QVBoxLayout(self.graph_outer_container)
         self.graph_outer_layout.setContentsMargins(0, 0, 0, 0)
-
-        # 建立內層容器（實際持有圖表）
-        self.graph_container = QWidget()
-        self.graph_container_layout = QVBoxLayout(self.graph_container)
-        self.graph_container_layout.setContentsMargins(0, 0, 0, 0)
-        self.graph_container_layout.addWidget(self.graph_canvas)
 
         # 合併後圖的容器與捲動區域
         self.merged_graph_outer_container = QWidget()
@@ -451,13 +457,6 @@ class BirdmanQtApp(QMainWindow):
             self.merged_graph_outer_container
         )
         self.merged_graph_outer_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.merged_graph_container = QWidget()
-        self.merged_graph_container_layout = QVBoxLayout(
-            self.merged_graph_container
-        )
-        self.merged_graph_container_layout.setContentsMargins(0, 0, 0, 0)
-        self.merged_graph_container_layout.addWidget(self.merged_graph_canvas)
 
         # 設定固定的參考尺寸
         self.graph_container.setMinimumSize(1000, 800)
@@ -537,10 +536,11 @@ class BirdmanQtApp(QMainWindow):
         gantt_top_layout.addWidget(self.total_hours_label)
         gantt_top_layout.addStretch()
         self.tab_gantt_chart.layout().addLayout(gantt_top_layout)
-        self.gantt_figure = Figure(figsize=(16, 12), dpi=100)
-        self.gantt_canvas = FigureCanvas(self.gantt_figure)
-        self.gantt_canvas.setMinimumSize(1000, 800)
-        self.tab_gantt_chart.layout().addWidget(self.gantt_canvas)
+
+        # 甘特圖容器
+        self.gantt_container = QWidget()
+        self.gantt_container.setLayout(QVBoxLayout())
+        self.tab_gantt_chart.layout().addWidget(self.gantt_container)
 
     def chooseDsm(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -634,11 +634,6 @@ class BirdmanQtApp(QMainWindow):
             self.sorted_dsm = sorted_dsm
             self.graph = graph  # 儲存圖形物件供後續使用
 
-            with open('config.json', 'r', encoding='utf-8') as f:
-                config = json.load(f)
-
-            viz_params = config.get('visualization_params', {})
-
             merged = mergeByScc(sorted_wbs, self.k_params)
             self.merged_wbs = self._add_no_column(merged)
 
@@ -664,11 +659,6 @@ class BirdmanQtApp(QMainWindow):
                 zip(sorted_wbs['Task ID'], sorted_wbs['Layer'])
             )
 
-            fig = visualizer.create_dependency_graph_figure(
-                graph, self.scc_map, self.layer_map, viz_params)
-            self.graph_canvas.figure = fig
-            self.graph_canvas.draw()
-
             # 計算並儲存合併後圖形的映射
             self.merged_layer_map = {
                 node: data.get('layer', 0)
@@ -678,32 +668,8 @@ class BirdmanQtApp(QMainWindow):
                 node: i for i, node in enumerate(self.merged_graph.nodes())
             }
 
-            merged_fig = visualizer.create_dependency_graph_figure(
-                self.merged_graph,
-                self.merged_scc_map,
-                self.merged_layer_map,
-                viz_params,
-            )
-            self.merged_graph_canvas.figure = merged_fig
-            self.merged_graph_canvas.draw()
-
-            # 更新圖表尺寸
-            self.graph_canvas.draw()  # 確保圖表已經繪製完成
-            canvas_size = self.graph_canvas.get_width_height()
-            if canvas_size[0] > 0 and canvas_size[1] > 0:
-                self.graph_container.setMinimumSize(
-                    int(canvas_size[0] * 1.1),  # 稍微加大一點，留些邊距
-                    int(canvas_size[1] * 1.1),
-                )
-
-            self.merged_graph_canvas.draw()
-            m_size = self.merged_graph_canvas.get_width_height()
-            if m_size[0] > 0 and m_size[1] > 0:
-                self.merged_graph_container.setMinimumSize(
-                    int(m_size[0] * 1.1),
-                    int(m_size[1] * 1.1),
-                )
-
+            # 重新繪製依賴關係圖
+            self.redraw_graph()
             # 預覽
             self.sorted_wbs_view.setModel(
                 PandasModel(self.sorted_wbs.head(100)))
@@ -1073,25 +1039,19 @@ class BirdmanQtApp(QMainWindow):
         QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
 
     def drawGanttChart(self, cpmData, durations, roleText, wbsDf):
-        """繪製甘特圖"""
+        """繪製甘特圖並回傳 Figure"""
         try:
-            self.gantt_figure.clear()
+            fig = Figure(figsize=(16, 12), dpi=100)
+            ax = fig.add_subplot(111)
 
-            # 創建子圖，並設定外邊距
-            ax = self.gantt_figure.add_subplot(111)
-
-            # --- 依照當前主題設定背景色 ---
-            self.gantt_figure.patch.set_facecolor(
-                plt.rcParams['figure.facecolor']
-            )
+            fig.patch.set_facecolor(plt.rcParams['figure.facecolor'])
             ax.set_facecolor(plt.rcParams['axes.facecolor'])
 
-            # 設定更大的外邊距
-            self.gantt_figure.subplots_adjust(
-                top=0.9,      # 上邊距
-                bottom=0.15,  # 下邊距
-                left=0.2,     # 左邊距
-                right=0.95    # 右邊距
+            fig.subplots_adjust(
+                top=0.9,
+                bottom=0.15,
+                left=0.2,
+                right=0.95,
             )
 
             # 取得任務列表和相關數據
@@ -1176,41 +1136,10 @@ class BirdmanQtApp(QMainWindow):
             # 反轉 Y 軸
             ax.invert_yaxis()
 
-            # 建立新的捲動區域，支援水平和垂直捲動
-            scroll_area = QScrollArea()
-            scroll_area.setWidget(self.gantt_canvas)
-            scroll_area.setWidgetResizable(True)
-
-            # 確保水平和垂直捲動條都可見
-            scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-            scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-
-            # 設定更大的視窗尺寸，增加上下空間
-            scroll_area.setMinimumHeight(1000)  # 增加最小高度
-            self.gantt_canvas.setMinimumSize(1200, max(1000, len(tasks) * 35))
-
-            # 設定捲動區域的邊距
-            container_layout = QVBoxLayout()
-            container_layout.setContentsMargins(20, 40, 20, 40)  # 左、上、右、下邊距
-            container_layout.addWidget(scroll_area)
-
-            # 更新分頁中的內容，保留最上方的切換下拉選單
-            layout = self.tab_gantt_chart.layout()
-            if layout.count() > 1:
-                old_item = layout.takeAt(1)
-                if old_item.widget():
-                    old_item.widget().deleteLater()
-
-            # 建立容器來包裝捲動區域
-            container = QWidget()
-            container.setLayout(container_layout)
-            self.tab_gantt_chart.layout().addWidget(container)
-
-            # 重繪圖表
-            self.gantt_canvas.draw()
-
+            return fig
         except Exception as e:
             QMessageBox.warning(self, '警告', f'甘特圖繪製失敗：{e}')
+            return Figure()
 
     def update_gantt_display(self):
         """根據下拉選單切換甘特圖與結果顯示"""
@@ -1244,7 +1173,37 @@ class BirdmanQtApp(QMainWindow):
         )
         role_text = '新手' if role_key == 'novice' else '專家'
         self.total_hours_label.setText(f'總工時：{project_end:.1f} 小時')
-        self.drawGanttChart(cpm_df, durations, role_text, wbs_df)
+
+        # 先清除舊的圖表
+        layout = self.gantt_container.layout()
+        for i in reversed(range(layout.count())):
+            old_widget = layout.itemAt(i).widget()
+            if old_widget:
+                old_widget.setParent(None)
+
+        # 重新產生甘特圖並加入佈局
+        self.gantt_figure = self.drawGanttChart(
+            cpm_df, durations, role_text, wbs_df
+        )
+        self.gantt_canvas = FigureCanvas(self.gantt_figure)
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(self.gantt_canvas)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        scroll_area.setMinimumHeight(1000)
+        self.gantt_canvas.setMinimumSize(
+            1200,
+            max(1000, len(wbs_df) * 35)
+        )
+
+        container_layout = QVBoxLayout()
+        container_layout.setContentsMargins(20, 40, 20, 40)
+        container_layout.addWidget(scroll_area)
+        container = QWidget()
+        container.setLayout(container_layout)
+        self.gantt_container.layout().addWidget(container)
+        self.gantt_canvas.draw()
 
     def update_cpm_display(self):
         """切換 CPM 結果顯示並同步甘特圖"""
@@ -1348,16 +1307,30 @@ class BirdmanQtApp(QMainWindow):
                     config = json.load(f)
                 viz_params = config.get('visualization_params', {})
 
+                # 清除舊的 Canvas
+                for i in reversed(range(self.graph_container_layout.count())):
+                    old_widget = self.graph_container_layout.itemAt(i).widget()
+                    if old_widget:
+                        old_widget.setParent(None)
+
+                for i in reversed(
+                    range(self.merged_graph_container_layout.count())
+                ):
+                    old_widget = (
+                        self.merged_graph_container_layout.itemAt(i).widget()
+                    )
+                    if old_widget:
+                        old_widget.setParent(None)
+
                 # 重新建立原始圖
-                fig = visualizer.create_dependency_graph_figure(
+                self.graph_figure = visualizer.create_dependency_graph_figure(
                     self.graph,
                     self.scc_map,
                     self.layer_map,
                     viz_params,
                 )
-                self.graph_canvas.figure = fig
-
-                # 更新圖表尺寸
+                self.graph_canvas = FigureCanvas(self.graph_figure)
+                self.graph_container_layout.addWidget(self.graph_canvas)
                 self.graph_canvas.draw()
                 canvas_size = self.graph_canvas.get_width_height()
                 if canvas_size[0] > 0 and canvas_size[1] > 0:
@@ -1368,13 +1341,20 @@ class BirdmanQtApp(QMainWindow):
 
                 # 重新建立合併後圖
                 if self.merged_graph is not None:
-                    merged_fig = visualizer.create_dependency_graph_figure(
-                        self.merged_graph,
-                        self.merged_scc_map,
-                        self.merged_layer_map,
-                        viz_params,
+                    self.merged_graph_figure = (
+                        visualizer.create_dependency_graph_figure(
+                            self.merged_graph,
+                            self.merged_scc_map,
+                            self.merged_layer_map,
+                            viz_params,
+                        )
                     )
-                    self.merged_graph_canvas.figure = merged_fig
+                    self.merged_graph_canvas = FigureCanvas(
+                        self.merged_graph_figure
+                    )
+                    self.merged_graph_container_layout.addWidget(
+                        self.merged_graph_canvas
+                    )
                     self.merged_graph_canvas.draw()
                     m_size = self.merged_graph_canvas.get_width_height()
                     if m_size[0] > 0 and m_size[1] > 0:
