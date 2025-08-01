@@ -244,24 +244,18 @@ class BirdmanQtApp(QMainWindow):
         results_layout.addWidget(
             QLabel('點擊「開始分析」後，結果將會顯示於此'))
 
-        # 檔案與按鈕區
-        self.load_buttons_layout = QHBoxLayout()
+        # 檔案路徑顯示區
+        self.path_layout = QHBoxLayout()
 
         self.dsm_label = QLabel('DSM 檔案:')
         self.dsm_path_label = QLabel('')
-        dsm_btn = QPushButton('選擇')
-        dsm_btn.clicked.connect(self.chooseDsm)
-        self.load_buttons_layout.addWidget(self.dsm_label)
-        self.load_buttons_layout.addWidget(self.dsm_path_label)
-        self.load_buttons_layout.addWidget(dsm_btn)
+        self.path_layout.addWidget(self.dsm_label)
+        self.path_layout.addWidget(self.dsm_path_label)
 
         self.wbs_label = QLabel('WBS 檔案:')
         self.wbs_path_label = QLabel('')
-        wbs_btn = QPushButton('選擇')
-        wbs_btn.clicked.connect(self.chooseWbs)
-        self.load_buttons_layout.addWidget(self.wbs_label)
-        self.load_buttons_layout.addWidget(self.wbs_path_label)
-        self.load_buttons_layout.addWidget(wbs_btn)
+        self.path_layout.addWidget(self.wbs_label)
+        self.path_layout.addWidget(self.wbs_path_label)
 
         # 頂端選單列
         menubar = self.menuBar()
@@ -280,8 +274,17 @@ class BirdmanQtApp(QMainWindow):
         dark_mode_action.toggled.connect(self.toggle_dark_mode)
         view_menu.addAction(dark_mode_action)
 
-        # 檔案選單中的匯出子選單
-        export_wbs_menu = file_menu.addMenu('匯出合併後的 WBS')
+        # 檔案選單 - 匯入與匯出
+        import_menu = file_menu.addMenu('匯入')
+        import_wbs_action = QAction('匯入 WBS 檔案...', self)
+        import_wbs_action.triggered.connect(self.chooseWbs)
+        import_menu.addAction(import_wbs_action)
+        import_dsm_action = QAction('匯入 DSM 檔案...', self)
+        import_dsm_action.triggered.connect(self.chooseDsm)
+        import_menu.addAction(import_dsm_action)
+
+        export_menu = file_menu.addMenu('匯出')
+        export_wbs_menu = export_menu.addMenu('匯出合併後的 WBS')
         export_wbs_csv = QAction('存成 CSV 檔案... (.csv)', self)
         export_wbs_csv.triggered.connect(
             partial(self.exportMergedWbs, 'csv')
@@ -293,7 +296,7 @@ class BirdmanQtApp(QMainWindow):
         )
         export_wbs_menu.addAction(export_wbs_xlsx)
 
-        export_dsm_menu = file_menu.addMenu('匯出合併後的 DSM')
+        export_dsm_menu = export_menu.addMenu('匯出合併後的 DSM')
         export_dsm_csv = QAction('存成 CSV 檔案... (.csv)', self)
         export_dsm_csv.triggered.connect(
             partial(self.exportMergedDsm, 'csv')
@@ -305,7 +308,7 @@ class BirdmanQtApp(QMainWindow):
         )
         export_dsm_menu.addAction(export_dsm_xlsx)
 
-        export_gantt_menu = file_menu.addMenu('匯出甘特圖')
+        export_gantt_menu = export_menu.addMenu('匯出甘特圖')
         export_gantt_png = QAction('存成 PNG 圖片... (.png)', self)
         export_gantt_png.triggered.connect(
             partial(self.exportGanttChart, 'png')
@@ -317,7 +320,7 @@ class BirdmanQtApp(QMainWindow):
         )
         export_gantt_menu.addAction(export_gantt_svg)
 
-        export_graph_menu = file_menu.addMenu('匯出原始依賴關係圖')
+        export_graph_menu = export_menu.addMenu('匯出原始依賴關係圖')
         export_graph_png = QAction('存成 PNG 圖片... (.png)', self)
         export_graph_png.triggered.connect(
             partial(self.exportGraph, 'png')
@@ -329,7 +332,7 @@ class BirdmanQtApp(QMainWindow):
         )
         export_graph_menu.addAction(export_graph_svg)
 
-        export_m_graph_menu = file_menu.addMenu('匯出合併後依賴關係圖')
+        export_m_graph_menu = export_menu.addMenu('匯出合併後依賴關係圖')
         export_m_graph_png = QAction('存成 PNG 圖片... (.png)', self)
         export_m_graph_png.triggered.connect(
             partial(self.exportMergedGraph, 'png')
@@ -341,19 +344,15 @@ class BirdmanQtApp(QMainWindow):
         )
         export_m_graph_menu.addAction(export_m_graph_svg)
 
-        # 建立「步驟 1：載入檔案」區塊
-        step1_group = QGroupBox('步驟 1：載入檔案 (Step 1: Load Files)')
-        step1_layout = QVBoxLayout()
-        step1_layout.addLayout(self.load_buttons_layout)
-        step1_group.setLayout(step1_layout)
-
-        # 建立「步驟 2：設定分析參數」區塊
-        step2_group = QGroupBox(
-            '步驟 2：設定分析參數 (Step 2: Set Analysis Parameters)')
+        # 建立「CPM 分析參數」區塊
+        step2_group = QGroupBox('CPM 分析參數 (CPM Analysis Parameters)')
         step2_layout = QHBoxLayout()
-        k_params_btn = QPushButton('k 係數設定')
-        k_params_btn.clicked.connect(self.open_settings_dialog)
-        step2_layout.addWidget(k_params_btn)
+        self.role_selection_combo = QComboBox()
+        self.role_selection_combo.addItems([
+            '新手 (Novice)',
+            '專家 (Expert)',
+        ])
+        step2_layout.addWidget(self.role_selection_combo)
 
         self.time_selection_combo = QComboBox()
         self.time_selection_combo.addItems([
@@ -369,7 +368,7 @@ class BirdmanQtApp(QMainWindow):
         self.full_analysis_button = QPushButton('執行完整分析 (Run Full Analysis)')
         self.full_analysis_button.clicked.connect(self.run_full_analysis)
 
-        setup_layout.addWidget(step1_group)
+        setup_layout.addLayout(self.path_layout)
         setup_layout.addWidget(step2_group)
 
         # 分析結果分頁集合
@@ -819,6 +818,14 @@ class BirdmanQtApp(QMainWindow):
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
             base_field = cmp_params.get('default_duration_field', 'Te_newbie')
+
+            role_choice = self.role_selection_combo.currentText()
+            role_suffix = 'newbie' if '新手' in role_choice else 'expert'
+            parts_role = base_field.split('_', 1)
+            if len(parts_role) == 2:
+                base_field = f"{parts_role[0]}_{role_suffix}"
+            else:
+                base_field = f"{base_field}_{role_suffix}"
 
             # 解析使用者選擇的情境
             choice = self.time_selection_combo.currentText()
