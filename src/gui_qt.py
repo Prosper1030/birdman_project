@@ -38,6 +38,14 @@ from PyQt5.QtCore import QAbstractTableModel
 
 from .dsm_processor import readDsm, process_dsm
 from .wbs_processor import readWbs, mergeByScc, validateIds
+from .cpm_processor import (
+    cpmForwardPass,
+    cpmBackwardPass,
+    calculateSlack,
+    findCriticalPath,
+    extractDurationFromWbs,
+    convertHoursToDays,
+)
 from . import visualizer
 
 
@@ -174,6 +182,10 @@ class BirdmanQtApp(QMainWindow):
         self.is_dark_mode = False
         self.graph = None
 
+        # CPM 分析相關資料
+        self.cmp_result = None
+        self.critical_path = None
+
         # 預設的 k 參數值
         self.default_k_params = {
             'base': 1.0,  # 固定值
@@ -236,6 +248,10 @@ class BirdmanQtApp(QMainWindow):
         run_btn.clicked.connect(self.runAnalysis)
         file_layout.addWidget(run_btn)
 
+        cmp_btn = QPushButton('執行 CPM 分析')
+        cmp_btn.clicked.connect(self.runCmpAnalysis)
+        file_layout.addWidget(cmp_btn)
+
         main_layout.addLayout(file_layout)
 
         # 分頁
@@ -246,12 +262,16 @@ class BirdmanQtApp(QMainWindow):
         self.tab_merged_wbs = QWidget()
         self.tab_sorted_dsm = QWidget()
         self.tab_graph = QWidget()
+        self.tab_cmp_result = QWidget()
+        self.tab_gantt_chart = QWidget()
         self.tabs.addTab(self.tab_raw_dsm, '原始 DSM')
         self.tabs.addTab(self.tab_raw_wbs, '原始 WBS')
         self.tabs.addTab(self.tab_sorted_wbs, '排序 WBS')
         self.tabs.addTab(self.tab_merged_wbs, '合併 WBS')
         self.tabs.addTab(self.tab_sorted_dsm, '排序 DSM')
         self.tabs.addTab(self.tab_graph, '依賴關係圖')
+        self.tabs.addTab(self.tab_cmp_result, 'CPM 分析結果')
+        self.tabs.addTab(self.tab_gantt_chart, '甘特圖')
         main_layout.addWidget(self.tabs)
 
         # 匯出按鈕
@@ -264,10 +284,13 @@ class BirdmanQtApp(QMainWindow):
         export_dsm_btn.clicked.connect(self.exportSortedDsm)
         export_graph_btn = QPushButton('匯出依賴圖')
         export_graph_btn.clicked.connect(self.exportGraph)
+        export_cmp_btn = QPushButton('匯出 CPM 結果')
+        export_cmp_btn.clicked.connect(self.exportCmpResult)
         export_layout.addWidget(export_sorted_btn)
         export_layout.addWidget(export_merged_btn)
         export_layout.addWidget(export_dsm_btn)
         export_layout.addWidget(export_graph_btn)
+        export_layout.addWidget(export_cmp_btn)
         main_layout.addLayout(export_layout)
 
         main_widget.setLayout(main_layout)
@@ -279,6 +302,7 @@ class BirdmanQtApp(QMainWindow):
         self.sorted_wbs_view = QTableView()
         self.merged_wbs_view = QTableView()
         self.sorted_dsm_view = QTableView()
+        self.cmp_result_view = QTableView()
         # 依賴關係圖畫布及捲動區域
         self.graph_figure = Figure(figsize=(18, 20))  # 使用與 visualizer.py 相同的尺寸
         self.graph_canvas = FigureCanvas(self.graph_figure)
@@ -311,6 +335,7 @@ class BirdmanQtApp(QMainWindow):
             self.raw_wbs_view,
             self.sorted_wbs_view,
             self.merged_wbs_view,
+            self.cmp_result_view,
         ]:
             view.verticalHeader().setVisible(False)
         # DSM 表格顯示行號 (Task ID)
@@ -328,6 +353,12 @@ class BirdmanQtApp(QMainWindow):
         self.tab_sorted_dsm.layout().addWidget(self.sorted_dsm_view)
         self.tab_graph.setLayout(QVBoxLayout())
         self.tab_graph.layout().addWidget(self.graph_outer_container)
+        self.tab_cmp_result.setLayout(QVBoxLayout())
+        self.tab_cmp_result.layout().addWidget(self.cmp_result_view)
+        self.tab_gantt_chart.setLayout(QVBoxLayout())
+        self.gantt_figure = Figure(figsize=(12, 8))
+        self.gantt_canvas = FigureCanvas(self.gantt_figure)
+        self.tab_gantt_chart.layout().addWidget(self.gantt_canvas)
 
     def chooseDsm(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -497,6 +528,97 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.information(self, '完成', f'已匯出依賴關係圖至：{path}')
         except (OSError, ValueError) as e:
             QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
+
+    def runCmpAnalysis(self):
+        """執行 CPM 分析"""
+        if self.sorted_wbs is None or self.graph is None:
+            QMessageBox.warning(self, '警告', '請先執行基本分析')
+            return
+
+        try:
+            with open('config.json', 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            cmp_params = config.get('cmp_params', {})
+            duration_field = cmp_params.get(
+                'default_duration_field', 'Te_expert'
+            )
+            work_hours_per_day = cmp_params.get('work_hours_per_day', 8)
+
+            durations_hours = extractDurationFromWbs(
+                self.sorted_wbs.drop(columns=['No.']), duration_field)
+            durations_days = {
+                tid: convertHoursToDays(hours, work_hours_per_day)
+                for tid, hours in durations_hours.items()
+            }
+
+            forward_data = cpmForwardPass(self.graph, durations_days)
+            project_end = max(ef for _, ef in forward_data.values())
+            backward_data = cpmBackwardPass(
+                self.graph, durations_days, project_end
+            )
+            cpm_result = calculateSlack(
+                forward_data, backward_data, self.graph
+            )
+            self.critical_path = findCriticalPath(cpm_result)
+
+            wbs_with_cpm = self.sorted_wbs.copy()
+            for col in ['ES', 'EF', 'LS', 'LF', 'TF', 'FF', 'Critical']:
+                wbs_with_cpm[col] = wbs_with_cpm['Task ID'].map(
+                    cpm_result[col].to_dict()).fillna(0)
+
+            self.cmp_result = wbs_with_cpm
+            self.cmp_result_view.setModel(
+                PandasModel(self.cmp_result.head(100))
+            )
+
+            self.drawGanttChart(cpm_result, durations_days)
+
+            QMessageBox.information(
+                self,
+                'CPM 分析完成',
+                f'專案總工期：{project_end:.1f} 天\n'
+                f'關鍵路徑：{" → ".join(self.critical_path)}\n'
+                f'關鍵任務數量：{len(self.critical_path)} 個'
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            QMessageBox.critical(self, '錯誤', f'CPM 分析失敗：{e}')
+
+    def drawGanttChart(self, cpmData, durations):
+        """繪製甘特圖"""
+        try:
+            self.gantt_figure.clear()
+            ax = self.gantt_figure.add_subplot(111)
+            tasks = cpmData.index.tolist()
+            start_times = cpmData['ES'].tolist()
+            task_durations = [durations.get(t, 0) for t in tasks]
+            colors = [
+                'red' if cpmData.at[t, 'Critical'] else 'lightblue'
+                for t in tasks
+            ]
+            y_positions = range(len(tasks))
+            ax.barh(y_positions, task_durations, left=start_times,
+                    color=colors, alpha=0.7, height=0.6)
+            ax.set_yticks(list(y_positions))
+            ax.set_yticklabels(tasks, fontsize=8)
+            ax.set_xlabel('時間 (天)')
+            ax.set_title('專案甘特圖 (紅色為關鍵路徑)', fontsize=12)
+            ax.grid(True, axis='x', alpha=0.3)
+            ax.invert_yaxis()
+            self.gantt_figure.tight_layout()
+            self.gantt_canvas.draw()
+        except Exception as e:  # pylint: disable=broad-except
+            QMessageBox.warning(self, '警告', f'甘特圖繪製失敗：{e}')
+
+    def exportCmpResult(self):
+        """匯出 CPM 分析結果"""
+        if self.cmp_result is None:
+            QMessageBox.warning(self, '警告', '請先執行 CPM 分析')
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, '匯出 CPM 分析結果', '', 'CSV Files (*.csv)')
+        if path:
+            self.cmp_result.to_csv(path, index=False, encoding='utf-8-sig')
+            QMessageBox.information(self, '完成', f'已匯出 CPM 結果：{path}')
 
     def open_settings_dialog(self):
         """開啟 k 係數參數設定對話框"""
