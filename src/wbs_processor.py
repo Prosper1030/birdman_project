@@ -50,7 +50,7 @@ def mergeByScc(
     自訂計算係數的相關參數。
     """
     time_cols = [
-        "M",
+        "M_expert",
         "O_expert",
         "P_expert",
         "Te_expert",

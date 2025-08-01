@@ -894,7 +894,7 @@ class BirdmanQtApp(QMainWindow):
         if success:
             self.runCmpAnalysis()
 
-    def drawGanttChart(self, cpmData, durations):
+    def drawGanttChart(self, cpmData, durations, roleText):
         """繪製甘特圖"""
         try:
             self.gantt_figure.clear()
@@ -953,7 +953,7 @@ class BirdmanQtApp(QMainWindow):
             # 設定標籤和標題
             ax.set_xlabel('時間 (小時)', fontsize=11, fontweight='bold')
             ax.set_title(
-                '專案甘特圖 (紅色為關鍵路徑)',
+                f'專案甘特圖 - {roleText} (紅色為關鍵路徑)',
                 fontsize=14,
                 pad=20,
             )
@@ -1020,7 +1020,9 @@ class BirdmanQtApp(QMainWindow):
         self.cmp_result = wbs_df
         self.critical_path = findCriticalPath(cpm_df)
         self.cmp_result_view.setModel(PandasModel(wbs_df.head(100)))
-        self.drawGanttChart(cpm_df, durations)
+        role_selected = self.role_selection_combo.currentText()
+        role_text = '新手' if '新手' in role_selected else '專家'
+        self.drawGanttChart(cpm_df, durations, role_text)
 
     def exportCmpResult(self):
         """匯出 CPM 分析結果"""
