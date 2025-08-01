@@ -63,7 +63,8 @@ def calculateSlack(
             "LF": lf,
             "TF": tf,
             "FF": ff,
-            "Critical": tf == 0,
+            # 以容許誤差判定是否為關鍵任務，避免浮點數誤差
+            "Critical": abs(tf) < 1e-9,
         })
     df = pd.DataFrame(records).set_index("Task ID")
     return df
