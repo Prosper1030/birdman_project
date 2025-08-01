@@ -282,30 +282,30 @@ class BirdmanQtApp(QMainWindow):
         # 依賴關係圖畫布及捲動區域
         self.graph_figure = Figure(figsize=(18, 20))  # 使用與 visualizer.py 相同的尺寸
         self.graph_canvas = FigureCanvas(self.graph_figure)
-        
+
         # 建立外層容器（用於控制大小和捲動）
         self.graph_outer_container = QWidget()
         self.graph_outer_layout = QVBoxLayout(self.graph_outer_container)
         self.graph_outer_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         # 建立內層容器（實際持有圖表）
         self.graph_container = QWidget()
         self.graph_container_layout = QVBoxLayout(self.graph_container)
         self.graph_container_layout.setContentsMargins(0, 0, 0, 0)
         self.graph_container_layout.addWidget(self.graph_canvas)
-        
+
         # 設定固定的參考尺寸
         self.graph_container.setMinimumSize(1000, 800)
-        
+
         # 建立捲動區域
         self.scroll_area = QScrollArea(self.graph_outer_container)
         self.scroll_area.setWidget(self.graph_container)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
+
         self.graph_outer_layout.addWidget(self.scroll_area)
-        
+
         # 只在 WBS 相關表格隱藏行號
         for view in [
             self.raw_wbs_view,
@@ -390,7 +390,7 @@ class BirdmanQtApp(QMainWindow):
                 graph, scc_map, layer_map, viz_params)
             self.graph_canvas.figure = fig
             self.graph_canvas.draw()
-            
+
             # 更新圖表尺寸
             self.graph_canvas.draw()  # 確保圖表已經繪製完成
             canvas_size = self.graph_canvas.get_width_height()
@@ -399,7 +399,7 @@ class BirdmanQtApp(QMainWindow):
                     int(canvas_size[0] * 1.1),  # 稍微加大一點，留些邊距
                     int(canvas_size[1] * 1.1)
                 )
-            
+
             # 預覽
             self.sorted_wbs_view.setModel(
                 PandasModel(self.sorted_wbs.head(100)))
@@ -469,7 +469,7 @@ class BirdmanQtApp(QMainWindow):
         file_filter = 'SVG 向量圖 (*.svg);;PNG 圖片 (*.png)'
         path, selected_filter = QFileDialog.getSaveFileName(
             self, '匯出依賴關係圖', '', file_filter)
-        
+
         if not path:
             return  # 使用者取消
 
@@ -478,16 +478,22 @@ class BirdmanQtApp(QMainWindow):
             if selected_filter == 'SVG 向量圖 (*.svg)':
                 if not path.lower().endswith('.svg'):
                     path += '.svg'
-                self.graph_canvas.figure.savefig(path, format='svg', 
-                                               bbox_inches='tight',
-                                               dpi=300)
+                self.graph_canvas.figure.savefig(
+                    path,
+                    format='svg',
+                    bbox_inches='tight',
+                    dpi=300,
+                )
             else:  # PNG
                 if not path.lower().endswith('.png'):
                     path += '.png'
-                self.graph_canvas.figure.savefig(path, format='png',
-                                               bbox_inches='tight',
-                                               dpi=300)
-            
+                self.graph_canvas.figure.savefig(
+                    path,
+                    format='png',
+                    bbox_inches='tight',
+                    dpi=300,
+                )
+
             QMessageBox.information(self, '完成', f'已匯出依賴關係圖至：{path}')
         except (OSError, ValueError) as e:
             QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
@@ -546,7 +552,7 @@ class BirdmanQtApp(QMainWindow):
                     self.graph, scc_map, layer_map, viz_params)
                 self.graph_canvas.figure = fig
                 self.graph_canvas.draw()
-                
+
                 # 更新圖表尺寸
                 self.graph_canvas.draw()  # 確保圖表已經繪製完成
                 canvas_size = self.graph_canvas.get_width_height()
