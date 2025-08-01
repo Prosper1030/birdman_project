@@ -83,21 +83,35 @@ def create_dependency_graph_figure(
         else:
             node_colors.append(default_color)
 
-    # 繪製圖形
-    nx.draw(
+    # 1. 繪製節點
+    nx.draw_networkx_nodes(
         G,
         pos,
         ax=ax,
-        with_labels=True,
-        node_size=2500,
         node_color=node_colors,
+        node_size=2500,
+    )
+
+    # 2. 繪製邊線
+    nx.draw_networkx_edges(
+        G,
+        pos,
+        ax=ax,
+        edge_color=plt.rcParams['grid.color'],
+        arrows=True,
+        width=1.2,
+        arrowsize=20,
+        connectionstyle='arc3,rad=0.1',
+    )
+
+    # 3. 繪製標籤
+    nx.draw_networkx_labels(
+        G,
+        pos,
+        ax=ax,
         font_size=viz_params.get('font_size', 9),
         font_color=plt.rcParams['text.color'],
         font_weight='bold',
-        width=1.2,
-        edge_color=plt.rcParams['grid.color'],
-        arrowsize=20,
-        connectionstyle='arc3,rad=0.1'
     )
 
     for spine in ax.spines.values():
