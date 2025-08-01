@@ -42,6 +42,7 @@
    - 甘特圖視覺化
    - 完整的時程資訊
    - 預設使用 `Te_newbie` 作為 CPM 計算工期欄位
+   - 新增蒙地卡羅模擬，可評估工期分佈
 
 4. **匯出功能**
    - 支援 SVG/PNG 格式
@@ -90,6 +91,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 ```
 執行後會在目前目錄產生 `sorted_wbs.csv`、`merged_wbs.csv` 及 `sorted_dsm.csv`。
 若加上 `--cmp` 參數，會同時輸出 `cmp_analysis.csv`，並可使用 `--export-gantt` 匯出甘特圖、`--export-graph` 匯出依賴關係圖。工期欄位可透過 `--duration-field` 指定。
+若需評估工期分佈，可加入 `--monte-carlo 500` 執行 500 次模擬，信心水準可用 `--mc-confidence 0.9` 指定（預設為 0.9）。
 
 ### GUI（推薦 PyQt5 進階版）
 

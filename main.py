@@ -18,7 +18,9 @@ from src.cpm_processor import (
     calculateSlack,
     findCriticalPath,
     extractDurationFromWbs,
+    monteCarloSchedule,
 )
+import numpy as np
 from src import visualizer
 from matplotlib.figure import Figure
 
@@ -95,6 +97,20 @@ def main():
         "--duration-field",
         metavar="FIELD",
         help="指定 CPM 工期欄位，預設為設定檔值"
+    )
+    parser.add_argument(
+        "--monte-carlo",
+        metavar="N",
+        type=int,
+        default=0,
+        help="執行蒙地卡羅模擬的次數",
+    )
+    parser.add_argument(
+        "--mc-confidence",
+        metavar="P",
+        type=float,
+        default=0.9,
+        help="蒙地卡羅模擬信心水準，預設 0.9",
     )
     args = parser.parse_args()
 
@@ -189,6 +205,51 @@ def main():
         if args.export_gantt:
             save_gantt_chart(cpm_result, durations_hours, args.export_gantt)
             print(f"已匯出甘特圖至 {args.export_gantt}")
+
+        if args.monte_carlo > 0:
+            base = duration_field.replace("Te_", "")
+            o_field = f"O_{base}"
+            m_field = f"M_{base}"
+            p_field = f"P_{base}"
+            if (
+                o_field in merged.columns
+                and m_field in merged.columns
+                and p_field in merged.columns
+            ):
+                o_dur = extractDurationFromWbs(merged, o_field)
+                m_dur = extractDurationFromWbs(merged, m_field)
+                p_dur = extractDurationFromWbs(merged, p_field)
+                mc_result = monteCarloSchedule(
+                    merged_graph,
+                    o_dur,
+                    m_dur,
+                    p_dur,
+                    args.monte_carlo,
+                    args.mc_confidence,
+                )
+                conf_pct = int(args.mc_confidence * 100)
+                sample_arr = np.array(mc_result["samples"])
+                prob = float(
+                    np.mean(sample_arr <= mc_result["confidence_value"]) * 100
+                )
+                print("蒙地卡羅模擬結果：")
+                print(
+                    f"平均工期 {mc_result['average']:.1f}h，"
+                    f"標準差 {mc_result['std']:.1f}h"
+                )
+                print(
+                    f"最短 {mc_result['min']:.1f}h，"
+                    f"最長 {mc_result['max']:.1f}h"
+                )
+                print(
+                    f"{conf_pct}% 信心水準下工期 {mc_result['confidence_value']:.1f}h"
+                )
+                print(
+                    f"完工時間在 {mc_result['confidence_value']:.1f}h 以內的"
+                    f"機率約 {prob:.1f}%"
+                )
+            else:
+                print("缺少 O/M/P 欄位，無法執行蒙地卡羅模擬")
 
 
 if __name__ == "__main__":
