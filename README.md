@@ -97,6 +97,7 @@ python -m src.gui_qt
    - 支援選擇 DSM/WBS 檔案
    - 即時預覽資料內容
    - CSV 格式匯出結果
+   - 匯出合併後 DSM（CSV 與 Excel）
 
 2. **視覺化功能**
 
@@ -106,11 +107,14 @@ python -m src.gui_qt
    - 可匯出高品質 SVG/PNG 格式圖表
    - DSM 中的依賴關係以紅色醒目標示
    - 深色/淺色主題切換
+   - 匯出原始與合併後依賴關係圖
+   - 匯出甘特圖與 CPM 分析結果
+   - CPM 分析可切換 O、P、M、TE 或 All Scenarios
 
 3. **參數調整**
    - k 係數參數設定對話框
    - 支援 Override 功能
-   - 設定值自動保存
+   - 設定值自動保存至 config.json
 
 功能：
 
@@ -139,16 +143,25 @@ pip install -r requirements.txt
 此檔記錄執行流程所需的設定，主要區塊包括：
 
 1. **cmp_params**
-   - `default_duration_field`：CPM 分析預設使用的工期欄位，若未額外指定即採用此欄位。預設值已更新為 `"Te_newbie"`。
+   - `work_hours_per_day`：每日工作小時數。
+   - `working_days_per_week`：每週工作天數。
+   - `default_duration_field`：CPM 分析預設使用的工期欄位，若未額外指定即採用此欄位，預設為 `"Te_newbie"`。
+   - `project_start_date`：專案開始日期，可為空值。
+   - `time_unit`：時間單位，預設為 `"hours"`。
 2. **merge_k_params**
    - `override`：直接覆寫合併計算的 k 值。
    - `base`：基礎係數，固定為 1.0。
    - `trf_scale`：TRF 轉換比例，用於調整估算幅度。
    - `trf_divisor`：TRF 除數，平滑複雜度對 k 值的影響。
    - `n_coef`：數量係數，根據合併任務數量調整權重。
+3. **visualization_params**
+   - `node_color`：一般節點顏色。
+   - `scc_color_palette`：SCC 群組顏色陣列。
+   - `font_size`：字型大小。
 
 ## WBS.csv 欄位詳解
 
+- `TRF`：任務複雜度係數，數值不得為負。
 - `M`：專家評估的最可能工時。
 - `O_expert`：專家的樂觀工時。
 - `P_expert`：專家的悲觀工時。
