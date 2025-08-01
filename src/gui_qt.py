@@ -221,23 +221,46 @@ class BirdmanQtApp(QMainWindow):
     def initUI(self):
         main_widget = QWidget()
         main_layout = QVBoxLayout()
-        file_layout = QHBoxLayout()
+
+        # 建立主分頁容器
+        self.main_tabs = QTabWidget()
+        self.tab_setup = QWidget()
+        self.tab_results_main = QWidget()
+        self.main_tabs.addTab(self.tab_setup, '1. 設定與輸入 (Setup & Input)')
+        self.main_tabs.addTab(
+            self.tab_results_main, '2. 分析結果 (Analysis Results)')
+        main_layout.addWidget(self.main_tabs)
+
+        setup_layout = QVBoxLayout()
+        self.tab_setup.setLayout(setup_layout)
+
+        results_layout = QVBoxLayout()
+        self.tab_results_main.setLayout(results_layout)
+
+        # 初始將結果分頁禁用
+        self.main_tabs.setTabEnabled(1, False)
+
+        results_layout.addWidget(
+            QLabel('點擊「開始分析」後，結果將會顯示於此'))
+
+        # 檔案與按鈕區
+        self.load_buttons_layout = QHBoxLayout()
 
         self.dsm_label = QLabel('DSM 檔案:')
         self.dsm_path_label = QLabel('')
         dsm_btn = QPushButton('選擇')
         dsm_btn.clicked.connect(self.chooseDsm)
-        file_layout.addWidget(self.dsm_label)
-        file_layout.addWidget(self.dsm_path_label)
-        file_layout.addWidget(dsm_btn)
+        self.load_buttons_layout.addWidget(self.dsm_label)
+        self.load_buttons_layout.addWidget(self.dsm_path_label)
+        self.load_buttons_layout.addWidget(dsm_btn)
 
         self.wbs_label = QLabel('WBS 檔案:')
         self.wbs_path_label = QLabel('')
         wbs_btn = QPushButton('選擇')
         wbs_btn.clicked.connect(self.chooseWbs)
-        file_layout.addWidget(self.wbs_label)
-        file_layout.addWidget(self.wbs_path_label)
-        file_layout.addWidget(wbs_btn)
+        self.load_buttons_layout.addWidget(self.wbs_label)
+        self.load_buttons_layout.addWidget(self.wbs_path_label)
+        self.load_buttons_layout.addWidget(wbs_btn)
 
         # 頂端選單列
         menubar = self.menuBar()
@@ -317,15 +340,12 @@ class BirdmanQtApp(QMainWindow):
         )
         export_m_graph_menu.addAction(export_m_graph_svg)
 
-        run_btn = QPushButton('執行分析')
-        run_btn.clicked.connect(self.runAnalysis)
-        file_layout.addWidget(run_btn)
+        # 設定與 CPM 相關元件
+        self.settings_layout = QHBoxLayout()
+        k_params_btn = QPushButton('k 係數設定')
+        k_params_btn.clicked.connect(self.open_settings_dialog)
+        self.settings_layout.addWidget(k_params_btn)
 
-        cmp_btn = QPushButton('執行 CPM 分析')
-        cmp_btn.clicked.connect(self.runCmpAnalysis)
-        file_layout.addWidget(cmp_btn)
-
-        # 時間選擇器，供使用者挑選要分析的工期欄位
         self.time_selection_combo = QComboBox()
         self.time_selection_combo.addItems([
             'Optimistic (O)',
@@ -334,12 +354,20 @@ class BirdmanQtApp(QMainWindow):
             'Expected Time (TE)',
             'All Scenarios',
         ])
-        file_layout.addWidget(self.time_selection_combo)
+        self.settings_layout.addWidget(self.time_selection_combo)
 
-        main_layout.addLayout(file_layout)
+        cmp_btn = QPushButton('執行 CPM 分析')
+        cmp_btn.clicked.connect(self.runCmpAnalysis)
+        self.settings_layout.addWidget(cmp_btn)
 
-        # 分頁
-        self.tabs = QTabWidget()
+        self.analyze_button = QPushButton('開始分析')
+        self.analyze_button.clicked.connect(self.runAnalysis)
+
+        setup_layout.addLayout(self.load_buttons_layout)
+        setup_layout.addLayout(self.settings_layout)
+
+        # 分析結果分頁集合
+        self.tabs_results = QTabWidget()
         self.tab_raw_dsm = QWidget()
         self.tab_raw_wbs = QWidget()
         self.tab_sorted_wbs = QWidget()
@@ -350,17 +378,17 @@ class BirdmanQtApp(QMainWindow):
         self.tab_merged_graph = QWidget()
         self.tab_cmp_result = QWidget()
         self.tab_gantt_chart = QWidget()
-        self.tabs.addTab(self.tab_raw_dsm, '原始 DSM')
-        self.tabs.addTab(self.tab_raw_wbs, '原始 WBS')
-        self.tabs.addTab(self.tab_sorted_wbs, '排序 WBS')
-        self.tabs.addTab(self.tab_merged_wbs, '合併 WBS')
-        self.tabs.addTab(self.tab_merged_dsm, '合併 DSM')
-        self.tabs.addTab(self.tab_sorted_dsm, '排序 DSM')
-        self.tabs.addTab(self.tab_graph, '依賴關係圖')
-        self.tabs.addTab(self.tab_merged_graph, '合併後依賴圖')
-        self.tabs.addTab(self.tab_cmp_result, 'CPM 分析結果')
-        self.tabs.addTab(self.tab_gantt_chart, '甘特圖')
-        main_layout.addWidget(self.tabs)
+        self.tabs_results.addTab(self.tab_raw_dsm, '原始 DSM')
+        self.tabs_results.addTab(self.tab_raw_wbs, '原始 WBS')
+        self.tabs_results.addTab(self.tab_sorted_wbs, '排序 WBS')
+        self.tabs_results.addTab(self.tab_merged_wbs, '合併 WBS')
+        self.tabs_results.addTab(self.tab_merged_dsm, '合併 DSM')
+        self.tabs_results.addTab(self.tab_sorted_dsm, '排序 DSM')
+        self.tabs_results.addTab(self.tab_graph, '依賴關係圖')
+        self.tabs_results.addTab(self.tab_merged_graph, '合併後依賴圖')
+        self.tabs_results.addTab(self.tab_cmp_result, 'CPM 分析結果')
+        self.tabs_results.addTab(self.tab_gantt_chart, '甘特圖')
+        results_layout.addWidget(self.tabs_results)
 
         main_widget.setLayout(main_layout)
         self.setCentralWidget(main_widget)
@@ -373,6 +401,23 @@ class BirdmanQtApp(QMainWindow):
         self.sorted_dsm_view = QTableView()
         self.merged_dsm_view = QTableView()
         self.cmp_result_view = QTableView()
+        # 預覽用表格
+        self.dsm_preview = QTableView()
+        self.wbs_preview = QTableView()
+
+        # 預覽分頁
+        self.preview_tabs = QTabWidget()
+        self.wbs_preview_tab = QWidget()
+        self.dsm_preview_tab = QWidget()
+        self.preview_tabs.addTab(self.wbs_preview_tab, 'WBS Preview')
+        self.preview_tabs.addTab(self.dsm_preview_tab, 'DSM Preview')
+        self.wbs_preview_tab.setLayout(QVBoxLayout())
+        self.wbs_preview_tab.layout().addWidget(self.wbs_preview)
+        self.dsm_preview_tab.setLayout(QVBoxLayout())
+        self.dsm_preview_tab.layout().addWidget(self.dsm_preview)
+
+        setup_layout.addWidget(self.preview_tabs)
+        setup_layout.addWidget(self.analyze_button)
         # 依賴關係圖畫布及捲動區域
         self.graph_figure = Figure(figsize=(18, 20))  # 使用與 visualizer.py 相同的尺寸
         self.graph_canvas = FigureCanvas(self.graph_figure)
@@ -484,8 +529,9 @@ class BirdmanQtApp(QMainWindow):
             self.dsm_path_label.setText(path)
             try:
                 dsm = readDsm(path)
-                self.raw_dsm_view.setModel(
-                    PandasModel(dsm.head(100), dsm_mode=True))
+                model = PandasModel(dsm.head(100), dsm_mode=True)
+                self.raw_dsm_view.setModel(model)
+                self.dsm_preview.setModel(model)
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, '錯誤', f'DSM 載入失敗：{e}')
 
@@ -498,7 +544,9 @@ class BirdmanQtApp(QMainWindow):
             try:
                 wbs = readWbs(path)
                 wbs = self._add_no_column(wbs)
-                self.raw_wbs_view.setModel(PandasModel(wbs.head(100)))
+                model = PandasModel(wbs.head(100))
+                self.raw_wbs_view.setModel(model)
+                self.wbs_preview.setModel(model)
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, '錯誤', f'WBS 載入失敗：{e}')
 
@@ -507,10 +555,13 @@ class BirdmanQtApp(QMainWindow):
             dsm = readDsm(self.dsm_path)
             wbs = readWbs(self.wbs_path)
             # 預覽原始資料
-            self.raw_dsm_view.setModel(
-                PandasModel(dsm.head(100), dsm_mode=True))
+            model_dsm = PandasModel(dsm.head(100), dsm_mode=True)
+            self.raw_dsm_view.setModel(model_dsm)
+            self.dsm_preview.setModel(model_dsm)
             wbs_with_no = self._add_no_column(wbs)
-            self.raw_wbs_view.setModel(PandasModel(wbs_with_no.head(100)))
+            model_wbs = PandasModel(wbs_with_no.head(100))
+            self.raw_wbs_view.setModel(model_wbs)
+            self.wbs_preview.setModel(model_wbs)
 
             validateIds(wbs, dsm)
 
@@ -594,6 +645,9 @@ class BirdmanQtApp(QMainWindow):
                 self.sorted_dsm.head(100), dsm_mode=True))
             self.merged_dsm_view.setModel(PandasModel(
                 self.merged_dsm.head(100), dsm_mode=True))
+            # 啟用結果分頁並自動切換
+            self.main_tabs.setTabEnabled(1, True)
+            self.main_tabs.setCurrentIndex(1)
             QMessageBox.information(self, '完成', '分析完成，可切換分頁預覽與匯出')
         except Exception as e:  # pylint: disable=broad-except
             # 執行流程中可能發生多種錯誤，此處統一彙整顯示訊息
