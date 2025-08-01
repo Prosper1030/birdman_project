@@ -8,7 +8,6 @@ from src.dsm_processor import (
     computeLayersAndScc,
     reorderDsm,
     create_merged_graph,
-    process_dsm,
 )
 from src.wbs_processor import readWbs, mergeByScc, validateIds
 from src.cpm_processor import (
