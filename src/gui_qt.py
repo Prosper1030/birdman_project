@@ -263,7 +263,7 @@ class BirdmanQtApp(QMainWindow):
         menubar = self.menuBar()
         file_menu = menubar.addMenu('檔案')
         settings_menu = menubar.addMenu('設定')
-        view_menu = menubar.addMenu('視圖')
+        theme_menu = menubar.addMenu('主題')
 
         # k 係數參數設定動作
         k_params_action = QAction('k 係數參數設定...', self)
@@ -271,10 +271,10 @@ class BirdmanQtApp(QMainWindow):
         settings_menu.addAction(k_params_action)
 
         # 深色模式切換動作
-        dark_mode_action = QAction('啟用深色模式', self)
-        dark_mode_action.setCheckable(True)
-        dark_mode_action.toggled.connect(self.toggle_dark_mode)
-        view_menu.addAction(dark_mode_action)
+        self.dark_mode_action = QAction('啟用深色模式', self)
+        self.dark_mode_action.setCheckable(True)
+        self.dark_mode_action.toggled.connect(self.toggle_dark_mode)
+        theme_menu.addAction(self.dark_mode_action)
 
         # 檔案選單 - 匯入與匯出
         import_menu = file_menu.addMenu('匯入')
@@ -527,6 +527,14 @@ class BirdmanQtApp(QMainWindow):
             self.merged_graph_outer_container
         )
         self.tab_cmp_result.setLayout(QVBoxLayout())
+        cpm_top_layout = QHBoxLayout()
+        cpm_top_layout.addStretch()
+        self.cpm_display_combo = QComboBox()
+        self.cpm_display_combo.currentIndexChanged.connect(
+            self.update_cpm_display
+        )
+        cpm_top_layout.addWidget(self.cpm_display_combo)
+        self.tab_cmp_result.layout().addLayout(cpm_top_layout)
         self.tab_cmp_result.layout().addWidget(self.cmp_result_view)
         self.tab_gantt_chart.setLayout(QVBoxLayout())
         # 甘特圖情境切換下拉選單
@@ -534,7 +542,12 @@ class BirdmanQtApp(QMainWindow):
         self.gantt_display_combo.currentIndexChanged.connect(
             self.update_gantt_display
         )
-        self.tab_gantt_chart.layout().addWidget(self.gantt_display_combo)
+        gantt_top_layout = QHBoxLayout()
+        gantt_top_layout.addWidget(self.gantt_display_combo)
+        self.total_hours_label = QLabel('總工時：0 小時')
+        gantt_top_layout.addWidget(self.total_hours_label)
+        gantt_top_layout.addStretch()
+        self.tab_gantt_chart.layout().addLayout(gantt_top_layout)
         self.gantt_figure = Figure(figsize=(16, 12), dpi=100)
         self.gantt_canvas = FigureCanvas(self.gantt_figure)
         self.gantt_canvas.setMinimumSize(1000, 800)
@@ -916,11 +929,17 @@ class BirdmanQtApp(QMainWindow):
                 )
 
             # 更新情境下拉選單並顯示第一個結果
+            keys = list(self.gantt_results.keys())
             self.gantt_display_combo.blockSignals(True)
+            self.cpm_display_combo.blockSignals(True)
             self.gantt_display_combo.clear()
-            self.gantt_display_combo.addItems(list(self.gantt_results.keys()))
+            self.cpm_display_combo.clear()
+            self.gantt_display_combo.addItems(keys)
+            self.cpm_display_combo.addItems(keys)
             self.gantt_display_combo.blockSignals(False)
+            self.cpm_display_combo.blockSignals(False)
             self.gantt_display_combo.setCurrentIndex(0)
+            self.cpm_display_combo.setCurrentIndex(0)
             self.update_gantt_display()
 
             QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
@@ -933,7 +952,7 @@ class BirdmanQtApp(QMainWindow):
         if success:
             self.runCmpAnalysis()
 
-    def drawGanttChart(self, cpmData, durations, roleText):
+    def drawGanttChart(self, cpmData, durations, roleText, wbsDf):
         """繪製甘特圖"""
         try:
             self.gantt_figure.clear()
@@ -950,8 +969,8 @@ class BirdmanQtApp(QMainWindow):
             )
 
             # 取得任務列表和相關數據
-            tasks = cpmData.index.tolist()
-            start_times = cpmData['ES'].tolist()
+            tasks = wbsDf['Task ID'].tolist()
+            start_times = [cpmData.at[t, 'ES'] for t in tasks]
             task_durations = [durations.get(t, 0) for t in tasks]
 
             # 設定任務條的位置和顏色
@@ -1053,6 +1072,11 @@ class BirdmanQtApp(QMainWindow):
     def update_gantt_display(self):
         """根據下拉選單切換甘特圖與結果顯示"""
         key = self.gantt_display_combo.currentText()
+        if hasattr(self, 'cpm_display_combo'):
+            self.cpm_display_combo.blockSignals(True)
+            if self.cpm_display_combo.currentText() != key:
+                self.cpm_display_combo.setCurrentText(key)
+            self.cpm_display_combo.blockSignals(False)
         if key not in self.gantt_results:
             return
         cpm_df, durations, wbs_df, project_end = self.gantt_results[key]
@@ -1067,7 +1091,16 @@ class BirdmanQtApp(QMainWindow):
             PandasModel(self.current_display_cpm_df.head(100))
         )
         role_text = '新手' if '新手' in role_selected else '專家'
-        self.drawGanttChart(cpm_df, durations, role_text)
+        self.total_hours_label.setText(f'總工時：{project_end:.1f} 小時')
+        self.drawGanttChart(cpm_df, durations, role_text, wbs_df)
+
+    def update_cpm_display(self):
+        """切換 CPM 結果顯示並同步甘特圖"""
+        index = self.cpm_display_combo.currentIndex()
+        if index != self.gantt_display_combo.currentIndex():
+            self.gantt_display_combo.setCurrentIndex(index)
+        else:
+            self.update_gantt_display()
 
     def exportCmpResult(self):
         """匯出 CPM 分析結果"""
@@ -1132,10 +1165,12 @@ class BirdmanQtApp(QMainWindow):
             self.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
             plt.style.use('dark_background')
             self.is_dark_mode = True
+            self.dark_mode_action.setText('啟用淺色模式')
         else:
             self.setStyleSheet("")
             plt.style.use('default')
             self.is_dark_mode = False
+            self.dark_mode_action.setText('啟用深色模式')
 
         # 重繪圖表
         self.redraw_graph()

@@ -72,7 +72,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 - GUI 可在 DSM 分頁正確顯示 Task ID 行表頭
 - 依賴性視覺化：新分頁展示任務間依賴圖及 SCC 群組
 - k 係數參數設定：透過對話框調整合併演算法參數
-- 深色模式支援：可切換介面主題，包含圖表樣式
+- 主題選單支援深色/淺色切換
 
 ## 使用方式
 
@@ -114,6 +114,8 @@ python -m src.gui_qt
    - 匯出甘特圖與 CPM 分析結果
    - CPM 分析結果可匯出乾淨報告（CSV/Excel）
    - CPM 分析可切換 O、P、M、TE 或 All Scenarios
+   - CPM 分析結果分頁具備情境切換選單
+   - 甘特圖上方顯示總工時並依 CPM 結果排序任務
 
 3. **參數調整**
    - k 係數參數設定對話框
