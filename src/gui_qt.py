@@ -428,7 +428,11 @@ class BirdmanQtApp(QMainWindow):
             # 依映射產生合併後的 DSM
             merged_dsm = buildMergedDsm(self.graph, task_mapping)
             # 根據合併後的 DSM 重新計算層次與圖形
-            self.merged_dsm, merged_sorted_wbs, self.merged_graph = process_dsm(
+            (
+                self.merged_dsm,
+                merged_sorted_wbs,
+                self.merged_graph,
+            ) = process_dsm(
                 merged_dsm,
                 merged,
             )
@@ -549,7 +553,9 @@ class BirdmanQtApp(QMainWindow):
 
     def runCmpAnalysis(self):
         """執行 CPM 分析"""
-        if not hasattr(self, 'merged_graph') or not hasattr(self, 'merged_wbs'):
+        if not (
+            hasattr(self, 'merged_graph') and hasattr(self, 'merged_wbs')
+        ):
             QMessageBox.warning(self, '警告', '請先執行基本分析')
             return
 
@@ -557,15 +563,18 @@ class BirdmanQtApp(QMainWindow):
             # 檢查合併後的圖是否存在循環
             cycles = list(nx.simple_cycles(self.merged_graph))
             if cycles:
-                cycle_str = ' -> '.join(cycles[0] + [cycles[0][0]])
+                cycle_str = " -> ".join(cycles[0] + [cycles[0][0]])
                 raise ValueError(
-                    f'發現循環依賴：{cycle_str}\n請先解決循環依賴問題再進行 CPM 分析'
+                    f"發現循環依賴：{cycle_str}\n"
+                    "請先解決循環依賴問題再進行 CPM 分析"
                 )
 
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
-            duration_field = cmp_params.get('default_duration_field', 'Te_expert')
+            duration_field = cmp_params.get(
+                'default_duration_field', 'Te_expert'
+            )
             work_hours_per_day = cmp_params.get('work_hours_per_day', 8)
 
             # 取得合併後 WBS 的工期
