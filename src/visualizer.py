@@ -53,9 +53,10 @@ def create_dependency_graph_figure(
     # --- 使用新的分層佈局 ---
     pos = layered_layout(G, layer_map)
 
-    # 根據 SCC_ID 為節點上色
+    # 依節點類型設定顏色
     palette = viz_params.get('scc_color_palette', [])
     default_color = viz_params.get('node_color', 'skyblue')
+    merged_color = viz_params.get('merged_node_color', 'lightcoral')
     node_colors = []
 
     scc_counts = defaultdict(int)
@@ -64,12 +65,17 @@ def create_dependency_graph_figure(
             scc_counts[scc_id] += 1
 
     for node in G.nodes():
+        # 合併後節點的 Task ID 會包含 "M"，以特殊顏色顯示
+        if isinstance(node, str) and node.startswith('M'):
+            node_colors.append(merged_color)
+            continue
+
         scc_id = scc_map.get(node, -1)
         if scc_id != -1 and scc_counts[scc_id] > 1:
             if palette:
                 node_colors.append(palette[scc_id % len(palette)])
             else:
-                node_colors.append('orange')    # 備用顏色
+                node_colors.append('orange')  # 備用顏色
         else:
             node_colors.append(default_color)
 

@@ -27,7 +27,6 @@ from PyQt5.QtWidgets import (
     QAction,
     QDialogButtonBox,
     QScrollArea,
-    QGroupBox,
 )
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import (
@@ -358,32 +357,12 @@ class BirdmanQtApp(QMainWindow):
         )
         export_cpm_menu.addAction(export_cpm_xlsx)
 
-        # 建立「CPM 分析參數」區塊
-        step2_group = QGroupBox('CPM 分析參數 (CPM Analysis Parameters)')
-        step2_layout = QHBoxLayout()
-        self.role_selection_combo = QComboBox()
-        self.role_selection_combo.addItems([
-            '新手 (Novice)',
-            '專家 (Expert)',
-        ])
-        step2_layout.addWidget(self.role_selection_combo)
-
-        self.time_selection_combo = QComboBox()
-        self.time_selection_combo.addItems([
-            'Optimistic (O)',
-            'Pessimistic (P)',
-            'Most Likely (M)',
-            'Expected Time (TE)',
-            'All Scenarios',
-        ])
-        step2_layout.addWidget(self.time_selection_combo)
-        step2_group.setLayout(step2_layout)
-
+        # 執行分析按鈕
         self.full_analysis_button = QPushButton('執行完整分析 (Run Full Analysis)')
         self.full_analysis_button.clicked.connect(self.run_full_analysis)
 
         setup_layout.addLayout(self.path_layout)
-        setup_layout.addWidget(step2_group)
+        setup_layout.addWidget(self.full_analysis_button)
 
         # 分析結果分頁集合
         self.tabs_results = QTabWidget()
@@ -947,10 +926,94 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.critical(self, '錯誤', f'CPM 分析失敗：{e}')
 
     def run_full_analysis(self):
-        """依序執行基本分析與 CPM 分析"""
+        """執行所有情境的 CPM 分析"""
         success = self.runAnalysis()
-        if success:
-            self.runCmpAnalysis()
+        if not success:
+            return
+
+        try:
+            with open('config.json', 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            cmp_params = config.get('cmp_params', {})
+            base_field = cmp_params.get('default_duration_field', 'Te_newbie')
+        except Exception as e:  # pylint: disable=broad-except
+            QMessageBox.critical(self, '錯誤', f'設定檔讀取失敗：{e}')
+            return
+
+        roles = {
+            '新手': 'newbie',
+            '專家': 'expert',
+        }
+        time_types = {
+            '樂觀時間': 'O',
+            '悲觀時間': 'P',
+            '最可能時間': 'M',
+            '期望時間': 'Te',
+        }
+
+        self.gantt_results = {}
+
+        for role_text, role_key in roles.items():
+            # 依角色調整基準欄位名稱
+            parts_role = base_field.split('_', 1)
+            if len(parts_role) == 2:
+                _ = f"{parts_role[0]}_{role_key}"
+            else:
+                _ = f"{base_field}_{role_key}"
+
+            for time_text, time_key in time_types.items():
+                duration_field = f"{time_key}_{role_key}"
+
+                durations_hours = extractDurationFromWbs(
+                    self.merged_wbs.drop(columns=['No.']), duration_field
+                )
+                forward_data = cpmForwardPass(
+                    self.merged_graph,
+                    durations_hours,
+                )
+                project_end = max(ef for _, ef in forward_data.values())
+                backward_data = cpmBackwardPass(
+                    self.merged_graph,
+                    durations_hours,
+                    project_end,
+                )
+                cpm_result = calculateSlack(
+                    forward_data,
+                    backward_data,
+                    self.merged_graph,
+                )
+
+                wbs_with_cpm = self.merged_wbs.copy()
+                for col in ['ES', 'EF', 'LS', 'LF', 'TF', 'FF', 'Critical']:
+                    wbs_with_cpm[col] = wbs_with_cpm['Task ID'].map(
+                        cpm_result[col].to_dict()
+                    ).fillna(0)
+
+                key = f"{role_text} - {time_text} ({duration_field})"
+                self.gantt_results[key] = (
+                    cpm_result,
+                    durations_hours,
+                    wbs_with_cpm,
+                    project_end,
+                )
+
+        keys = list(self.gantt_results.keys())
+        self.gantt_display_combo.blockSignals(True)
+        self.cpm_display_combo.blockSignals(True)
+        self.gantt_display_combo.clear()
+        self.cpm_display_combo.clear()
+        self.gantt_display_combo.addItems(keys)
+        self.cpm_display_combo.addItems(keys)
+        self.gantt_display_combo.blockSignals(False)
+        self.cpm_display_combo.blockSignals(False)
+
+        default_key = '新手 - 期望時間 (Te_newbie)'
+        default_index = keys.index(default_key) if default_key in keys else 0
+        self.gantt_display_combo.setCurrentIndex(default_index)
+        self.cpm_display_combo.setCurrentIndex(default_index)
+        self.update_gantt_display()
+
+        QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
 
     def drawGanttChart(self, cpmData, durations, roleText, wbsDf):
         """繪製甘特圖"""
@@ -1081,16 +1144,25 @@ class BirdmanQtApp(QMainWindow):
             return
         cpm_df, durations, wbs_df, project_end = self.gantt_results[key]
         self.cmp_result = wbs_df
-        role_selected = self.role_selection_combo.currentText()
-        role_key = 'novice' if '新手' in role_selected else 'expert'
+
+        role_key = 'novice' if '新手' in key else 'expert'
+        if '(O_' in key:
+            time_key = 'O'
+        elif '(P_' in key:
+            time_key = 'P'
+        elif '(M_' in key:
+            time_key = 'M'
+        else:
+            time_key = 'Te'
+
         self.current_display_cpm_df = self._create_cpm_display_df(
-            wbs_df, role_key, key
+            wbs_df, role_key, time_key
         )
         self.critical_path = findCriticalPath(cpm_df)
         self.cmp_result_view.setModel(
             PandasModel(self.current_display_cpm_df.head(100))
         )
-        role_text = '新手' if '新手' in role_selected else '專家'
+        role_text = '新手' if role_key == 'novice' else '專家'
         self.total_hours_label.setText(f'總工時：{project_end:.1f} 小時')
         self.drawGanttChart(cpm_df, durations, role_text, wbs_df)
 
