@@ -539,7 +539,9 @@ class BirdmanQtApp(QMainWindow):
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
-            duration_field = cmp_params.get('default_duration_field', 'Te_expert')
+            duration_field = cmp_params.get(
+                'default_duration_field', 'Te_expert'
+            )
             work_hours_per_day = cmp_params.get('work_hours_per_day', 8)
 
             durations_hours = extractDurationFromWbs(
@@ -551,8 +553,12 @@ class BirdmanQtApp(QMainWindow):
 
             forward_data = cpmForwardPass(self.graph, durations_days)
             project_end = max(ef for _, ef in forward_data.values())
-            backward_data = cpmBackwardPass(self.graph, durations_days, project_end)
-            cpm_result = calculateSlack(forward_data, backward_data, self.graph)
+            backward_data = cpmBackwardPass(
+                self.graph, durations_days, project_end
+            )
+            cpm_result = calculateSlack(
+                forward_data, backward_data, self.graph
+            )
             self.critical_path = findCriticalPath(cpm_result)
 
             wbs_with_cpm = self.sorted_wbs.copy()
@@ -561,7 +567,9 @@ class BirdmanQtApp(QMainWindow):
                     cpm_result[col].to_dict()).fillna(0)
 
             self.cmp_result = wbs_with_cpm
-            self.cmp_result_view.setModel(PandasModel(self.cmp_result.head(100)))
+            self.cmp_result_view.setModel(
+                PandasModel(self.cmp_result.head(100))
+            )
 
             self.drawGanttChart(cpm_result, durations_days)
 
