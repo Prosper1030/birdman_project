@@ -51,7 +51,7 @@ def test_merge_by_scc():
     data = {
         "Task ID": ["A24-001", "A24-002"],
         "TRF": [1, 2],
-        "M": [10, 20],
+        "M_expert": [10, 20],
         "Layer": [0, 0],
         "SCC_ID": [0, 0],
     }

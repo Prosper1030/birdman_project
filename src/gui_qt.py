@@ -352,6 +352,9 @@ class BirdmanQtApp(QMainWindow):
             '新手 (Novice)',
             '專家 (Expert)',
         ])
+        self.role_selection_combo.currentIndexChanged.connect(
+            self.update_gantt_display
+        )
         step2_layout.addWidget(self.role_selection_combo)
 
         self.time_selection_combo = QComboBox()
@@ -952,8 +955,10 @@ class BirdmanQtApp(QMainWindow):
 
             # 設定標籤和標題
             ax.set_xlabel('時間 (小時)', fontsize=11, fontweight='bold')
+            role_text = self.role_selection_combo.currentText()
+            role_label = '新手' if '新手' in role_text else '專家'
             ax.set_title(
-                '專案甘特圖 (紅色為關鍵路徑)',
+                f'專案甘特圖 - {role_label} (紅色為關鍵路徑)',
                 fontsize=14,
                 pad=20,
             )
