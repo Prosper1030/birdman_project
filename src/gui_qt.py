@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QDialog,
     QCheckBox,
+    QComboBox,
     QAction,
     QDialogButtonBox,
     QScrollArea,
@@ -192,6 +193,8 @@ class BirdmanQtApp(QMainWindow):
         self.critical_path = None
         self.merged_graph = None
         self.merged_dsm = None
+        # 儲存不同情境下的甘特圖資料
+        self.gantt_results = {}
 
         # 預設的 k 參數值
         self.default_k_params = {
@@ -259,6 +262,17 @@ class BirdmanQtApp(QMainWindow):
         cmp_btn.clicked.connect(self.runCmpAnalysis)
         file_layout.addWidget(cmp_btn)
 
+        # 時間選擇器，供使用者挑選要分析的工期欄位
+        self.time_selection_combo = QComboBox()
+        self.time_selection_combo.addItems([
+            'Optimistic (O)',
+            'Pessimistic (P)',
+            'Most Likely (M)',
+            'Expected Time (TE)',
+            'All Scenarios',
+        ])
+        file_layout.addWidget(self.time_selection_combo)
+
         main_layout.addLayout(file_layout)
 
         # 分頁
@@ -270,6 +284,7 @@ class BirdmanQtApp(QMainWindow):
         self.tab_merged_dsm = QWidget()
         self.tab_sorted_dsm = QWidget()
         self.tab_graph = QWidget()
+        self.tab_merged_graph = QWidget()
         self.tab_cmp_result = QWidget()
         self.tab_gantt_chart = QWidget()
         self.tabs.addTab(self.tab_raw_dsm, '原始 DSM')
@@ -279,6 +294,7 @@ class BirdmanQtApp(QMainWindow):
         self.tabs.addTab(self.tab_merged_dsm, '合併 DSM')
         self.tabs.addTab(self.tab_sorted_dsm, '排序 DSM')
         self.tabs.addTab(self.tab_graph, '依賴關係圖')
+        self.tabs.addTab(self.tab_merged_graph, '合併後依賴圖')
         self.tabs.addTab(self.tab_cmp_result, 'CPM 分析結果')
         self.tabs.addTab(self.tab_gantt_chart, '甘特圖')
         main_layout.addWidget(self.tabs)
@@ -324,6 +340,10 @@ class BirdmanQtApp(QMainWindow):
         self.graph_figure = Figure(figsize=(18, 20))  # 使用與 visualizer.py 相同的尺寸
         self.graph_canvas = FigureCanvas(self.graph_figure)
 
+        # 合併後依賴圖畫布
+        self.merged_graph_figure = Figure(figsize=(18, 20))
+        self.merged_graph_canvas = FigureCanvas(self.merged_graph_figure)
+
         # 建立外層容器（用於控制大小和捲動）
         self.graph_outer_container = QWidget()
         self.graph_outer_layout = QVBoxLayout(self.graph_outer_container)
@@ -335,8 +355,23 @@ class BirdmanQtApp(QMainWindow):
         self.graph_container_layout.setContentsMargins(0, 0, 0, 0)
         self.graph_container_layout.addWidget(self.graph_canvas)
 
+        # 合併後圖的容器與捲動區域
+        self.merged_graph_outer_container = QWidget()
+        self.merged_graph_outer_layout = QVBoxLayout(
+            self.merged_graph_outer_container
+        )
+        self.merged_graph_outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.merged_graph_container = QWidget()
+        self.merged_graph_container_layout = QVBoxLayout(
+            self.merged_graph_container
+        )
+        self.merged_graph_container_layout.setContentsMargins(0, 0, 0, 0)
+        self.merged_graph_container_layout.addWidget(self.merged_graph_canvas)
+
         # 設定固定的參考尺寸
         self.graph_container.setMinimumSize(1000, 800)
+        self.merged_graph_container.setMinimumSize(1000, 800)
 
         # 建立捲動區域
         self.scroll_area = QScrollArea(self.graph_outer_container)
@@ -345,7 +380,20 @@ class BirdmanQtApp(QMainWindow):
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
+        self.merged_scroll_area = QScrollArea(
+            self.merged_graph_outer_container
+        )
+        self.merged_scroll_area.setWidget(self.merged_graph_container)
+        self.merged_scroll_area.setWidgetResizable(True)
+        self.merged_scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarAsNeeded
+        )
+        self.merged_scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarAsNeeded
+        )
+
         self.graph_outer_layout.addWidget(self.scroll_area)
+        self.merged_graph_outer_layout.addWidget(self.merged_scroll_area)
 
         # 只在 WBS 相關表格隱藏行號
         for view in [
@@ -373,9 +421,19 @@ class BirdmanQtApp(QMainWindow):
         self.tab_sorted_dsm.layout().addWidget(self.sorted_dsm_view)
         self.tab_graph.setLayout(QVBoxLayout())
         self.tab_graph.layout().addWidget(self.graph_outer_container)
+        self.tab_merged_graph.setLayout(QVBoxLayout())
+        self.tab_merged_graph.layout().addWidget(
+            self.merged_graph_outer_container
+        )
         self.tab_cmp_result.setLayout(QVBoxLayout())
         self.tab_cmp_result.layout().addWidget(self.cmp_result_view)
         self.tab_gantt_chart.setLayout(QVBoxLayout())
+        # 甘特圖情境切換下拉選單
+        self.gantt_display_combo = QComboBox()
+        self.gantt_display_combo.currentIndexChanged.connect(
+            self.update_gantt_display
+        )
+        self.tab_gantt_chart.layout().addWidget(self.gantt_display_combo)
         self.gantt_figure = Figure(figsize=(16, 12), dpi=100)
         self.gantt_canvas = FigureCanvas(self.gantt_figure)
         self.gantt_canvas.setMinimumSize(1000, 800)
@@ -450,12 +508,28 @@ class BirdmanQtApp(QMainWindow):
                 merged,
             )
 
+            merged_scc_map = dict(
+                zip(merged_sorted_wbs['Task ID'], merged_sorted_wbs['SCC_ID'])
+            )
+            merged_layer_map = dict(
+                zip(merged_sorted_wbs['Task ID'], merged_sorted_wbs['Layer'])
+            )
+
             scc_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['SCC_ID']))
             layer_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['Layer']))
             fig = visualizer.create_dependency_graph_figure(
                 graph, scc_map, layer_map, viz_params)
             self.graph_canvas.figure = fig
             self.graph_canvas.draw()
+
+            merged_fig = visualizer.create_dependency_graph_figure(
+                self.merged_graph,
+                merged_scc_map,
+                merged_layer_map,
+                viz_params,
+            )
+            self.merged_graph_canvas.figure = merged_fig
+            self.merged_graph_canvas.draw()
 
             # 更新圖表尺寸
             self.graph_canvas.draw()  # 確保圖表已經繪製完成
@@ -464,6 +538,14 @@ class BirdmanQtApp(QMainWindow):
                 self.graph_container.setMinimumSize(
                     int(canvas_size[0] * 1.1),  # 稍微加大一點，留些邊距
                     int(canvas_size[1] * 1.1),
+                )
+
+            self.merged_graph_canvas.draw()
+            m_size = self.merged_graph_canvas.get_width_height()
+            if m_size[0] > 0 and m_size[1] > 0:
+                self.merged_graph_container.setMinimumSize(
+                    int(m_size[0] * 1.1),
+                    int(m_size[1] * 1.1),
                 )
 
             # 預覽
@@ -597,48 +679,66 @@ class BirdmanQtApp(QMainWindow):
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
-            duration_field = cmp_params.get(
-                'default_duration_field', 'Te_newbie'
-            )
+            base_field = cmp_params.get('default_duration_field', 'Te_newbie')
 
-            # 直接使用工時，不轉換為天數
-            durations_hours = extractDurationFromWbs(
-                self.merged_wbs.drop(columns=['No.']), duration_field
-            )
+            # 解析使用者選擇的情境
+            choice = self.time_selection_combo.currentText()
+            if choice == 'All Scenarios':
+                scenarios = ['O', 'P', 'M', 'Te']
+            else:
+                key = choice.split('(')[-1].split(')')[0]
+                scenarios = ['Te' if key.upper() == 'TE' else key]
 
-            forward_data = cpmForwardPass(self.merged_graph, durations_hours)
-            project_end = max(ef for _, ef in forward_data.values())
-            backward_data = cpmBackwardPass(
-                self.merged_graph,
-                durations_hours,
-                project_end,
-            )
-            cpm_result = calculateSlack(
-                forward_data,
-                backward_data,
-                self.merged_graph,
-            )
-            self.critical_path = findCriticalPath(cpm_result)
+            self.gantt_results = {}
 
-            wbs_with_cpm = self.merged_wbs.copy()
-            for col in ['ES', 'EF', 'LS', 'LF', 'TF', 'FF', 'Critical']:
-                wbs_with_cpm[col] = wbs_with_cpm['Task ID'].map(
-                    cpm_result[col].to_dict()).fillna(0)
+            for sc in scenarios:
+                parts = base_field.split('_', 1)
+                if len(parts) == 2:
+                    duration_field = f"{sc}_{parts[1]}"
+                else:
+                    duration_field = sc
 
-            self.cmp_result = wbs_with_cpm
-            self.cmp_result_view.setModel(
-                PandasModel(self.cmp_result.head(100))
-            )
+                durations_hours = extractDurationFromWbs(
+                    self.merged_wbs.drop(columns=['No.']), duration_field
+                )
 
-            self.drawGanttChart(cpm_result, durations_hours)
+                forward_data = cpmForwardPass(
+                    self.merged_graph,
+                    durations_hours,
+                )
+                project_end = max(ef for _, ef in forward_data.values())
+                backward_data = cpmBackwardPass(
+                    self.merged_graph,
+                    durations_hours,
+                    project_end,
+                )
+                cpm_result = calculateSlack(
+                    forward_data,
+                    backward_data,
+                    self.merged_graph,
+                )
+                wbs_with_cpm = self.merged_wbs.copy()
+                for col in ['ES', 'EF', 'LS', 'LF', 'TF', 'FF', 'Critical']:
+                    wbs_with_cpm[col] = wbs_with_cpm['Task ID'].map(
+                        cpm_result[col].to_dict()
+                    ).fillna(0)
 
-            QMessageBox.information(
-                self,
-                'CPM 分析完成',
-                f'專案總工時：{project_end:.1f} 小時\n'
-                f'關鍵路徑：{" → ".join(self.critical_path)}\n'
-                f'關鍵任務數量：{len(self.critical_path)} 個'
-            )
+                self.gantt_results[sc] = (
+                    cpm_result,
+                    durations_hours,
+                    wbs_with_cpm,
+                    project_end,
+                )
+
+            # 更新情境下拉選單並顯示第一個結果
+            self.gantt_display_combo.blockSignals(True)
+            self.gantt_display_combo.clear()
+            self.gantt_display_combo.addItems(list(self.gantt_results.keys()))
+            self.gantt_display_combo.blockSignals(False)
+            self.gantt_display_combo.setCurrentIndex(0)
+            self.update_gantt_display()
+
+            QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
         except Exception as e:  # pylint: disable=broad-except
             QMessageBox.critical(self, '錯誤', f'CPM 分析失敗：{e}')
 
@@ -741,11 +841,12 @@ class BirdmanQtApp(QMainWindow):
             container_layout.setContentsMargins(20, 40, 20, 40)  # 左、上、右、下邊距
             container_layout.addWidget(scroll_area)
 
-            # 更新分頁中的內容
-            if self.tab_gantt_chart.layout().count():
-                old_widget = self.tab_gantt_chart.layout().takeAt(0)
-                if old_widget.widget():
-                    old_widget.widget().deleteLater()
+            # 更新分頁中的內容，保留最上方的切換下拉選單
+            layout = self.tab_gantt_chart.layout()
+            if layout.count() > 1:
+                old_item = layout.takeAt(1)
+                if old_item.widget():
+                    old_item.widget().deleteLater()
 
             # 建立容器來包裝捲動區域
             container = QWidget()
@@ -757,6 +858,17 @@ class BirdmanQtApp(QMainWindow):
 
         except Exception as e:
             QMessageBox.warning(self, '警告', f'甘特圖繪製失敗：{e}')
+
+    def update_gantt_display(self):
+        """根據下拉選單切換甘特圖與結果顯示"""
+        key = self.gantt_display_combo.currentText()
+        if key not in self.gantt_results:
+            return
+        cpm_df, durations, wbs_df, project_end = self.gantt_results[key]
+        self.cmp_result = wbs_df
+        self.critical_path = findCriticalPath(cpm_df)
+        self.cmp_result_view.setModel(PandasModel(wbs_df.head(100)))
+        self.drawGanttChart(cpm_df, durations)
 
     def exportCmpResult(self):
         """匯出 CPM 分析結果"""
