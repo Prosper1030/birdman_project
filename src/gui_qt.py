@@ -4,6 +4,7 @@ PyQt5 進階 GUI，支援分頁切換與 DataFrame 表格預覽
 """
 import sys
 import json
+import os
 import networkx as nx
 from functools import partial
 
@@ -283,6 +284,9 @@ class BirdmanQtApp(QMainWindow):
         import_dsm_action = QAction('匯入 DSM 檔案...', self)
         import_dsm_action.triggered.connect(self.chooseDsm)
         import_menu.addAction(import_dsm_action)
+        import_folder_action = QAction('匯入資料夾...', self)
+        import_folder_action.triggered.connect(self.import_from_folder)
+        import_menu.addAction(import_folder_action)
 
         export_menu = file_menu.addMenu('匯出')
         export_wbs_menu = export_menu.addMenu('匯出合併後的 WBS')
@@ -560,6 +564,45 @@ class BirdmanQtApp(QMainWindow):
                 self.wbs_preview.setModel(model)
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, '錯誤', f'WBS 載入失敗：{e}')
+
+    def import_from_folder(self):
+        """從資料夾匯入 WBS 與 DSM"""
+        folder = QFileDialog.getExistingDirectory(self, '選擇資料夾', '')
+        if not folder:
+            return
+        files = os.listdir(folder)
+        wbs_files = [f for f in files if 'wbs' in f.lower()]
+        dsm_files = [f for f in files if 'dsm' in f.lower()]
+        if len(wbs_files) != 1 or len(dsm_files) != 1:
+            QMessageBox.warning(
+                self,
+                '錯誤',
+                '請選擇一個剛好包含一份 WBS 和一份 DSM 檔案的資料夾。'
+            )
+            return
+        wbs_path = os.path.join(folder, wbs_files[0])
+        dsm_path = os.path.join(folder, dsm_files[0])
+        try:
+            wbs = readWbs(wbs_path)
+            wbs_display = self._add_no_column(wbs)
+            dsm = readDsm(dsm_path)
+        except (OSError, pd.errors.ParserError, ValueError):
+            QMessageBox.critical(
+                self,
+                '錯誤',
+                '資料夾中的 WBS 或 DSM 檔案格式不正確，請檢查檔案內容。'
+            )
+            return
+        self.wbs_path = wbs_path
+        self.dsm_path = dsm_path
+        self.wbs_path_label.setText(wbs_path)
+        self.dsm_path_label.setText(dsm_path)
+        model_wbs = PandasModel(wbs_display.head(100))
+        self.raw_wbs_view.setModel(model_wbs)
+        self.wbs_preview.setModel(model_wbs)
+        model_dsm = PandasModel(dsm.head(100), dsm_mode=True)
+        self.raw_dsm_view.setModel(model_dsm)
+        self.dsm_preview.setModel(model_dsm)
 
     def runAnalysis(self):
         try:
@@ -1065,20 +1108,23 @@ class BirdmanQtApp(QMainWindow):
                 True,
                 axis='x',
                 linestyle='--',
-                color='gray',
+                color=plt.rcParams['grid.color'],
                 alpha=0.3,
                 zorder=1,
             )
             ax.set_axisbelow(True)
 
             # 設定標籤和標題
-            ax.set_xlabel('時間 (小時)', fontsize=11, fontweight='bold')
+            ax.set_xlabel(
+                '時間 (小時)', fontsize=11, fontweight='bold',
+                color=plt.rcParams['text.color']
+            )
             ax.set_title(
                 f'專案甘特圖 - {roleText} (紅色為關鍵路徑)',
                 fontsize=14,
                 pad=20,
+                color=plt.rcParams['text.color']
             )
-
             # 在每個任務條上添加持續時間標籤
             for i, (duration, start) in enumerate(
                 zip(task_durations, start_times)

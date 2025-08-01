@@ -96,6 +96,6 @@ def create_dependency_graph_figure(
         connectionstyle='arc3,rad=0.1'
     )
 
-    ax.set_title("任務依賴關係分層圖", fontsize=18)
+    ax.set_title('任務依賴關係分層圖', fontsize=18, color=plt.rcParams['text.color'])
     fig.tight_layout()
     return fig
