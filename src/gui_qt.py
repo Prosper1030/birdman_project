@@ -43,7 +43,12 @@ import pandas as pd
 from pandas import DataFrame
 from PyQt5.QtCore import QAbstractTableModel
 
-from .dsm_processor import readDsm, process_dsm
+from .dsm_processor import (
+    readDsm,
+    process_dsm,
+    buildTaskMapping,
+    buildMergedDsm,
+)
 from .wbs_processor import readWbs, mergeByScc, validateIds
 from .cpm_processor import (
     cpmForwardPass,
@@ -424,17 +429,15 @@ class BirdmanQtApp(QMainWindow):
             merged = mergeByScc(sorted_wbs, self.k_params)
             self.merged_wbs = self._add_no_column(merged)
 
-            # 建立合併後的 DSM
-            merged_tasks = set(merged['Task ID'])
-            merged_dsm = pd.DataFrame(0, index=list(merged_tasks), columns=list(merged_tasks))
-            
-            # 從原始 DSM 複製依賴關係到合併後的 DSM
-            for u, v in self.graph.edges():
-                if u in merged_tasks and v in merged_tasks:
-                    merged_dsm.at[v, u] = 1
-            
-            # 使用合併後的 DSM 重新進行處理
-            self.merged_dsm, merged_sorted_wbs, self.merged_graph = process_dsm(merged_dsm, merged)
+            # 建立原始 Task ID 到合併後 Task ID 的對應
+            task_mapping = buildTaskMapping(sorted_wbs, merged)
+            # 依映射產生合併後的 DSM
+            merged_dsm = buildMergedDsm(self.graph, task_mapping)
+            # 根據合併後的 DSM 重新計算層次與圖形
+            self.merged_dsm, merged_sorted_wbs, self.merged_graph = process_dsm(
+                merged_dsm,
+                merged,
+            )
 
             scc_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['SCC_ID']))
             layer_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['Layer']))
@@ -557,45 +560,40 @@ class BirdmanQtApp(QMainWindow):
             return
 
         try:
-            # 檢查合併後的圖形是否有循環
+            # 檢查合併後的圖是否存在循環
             cycles = list(nx.simple_cycles(self.merged_graph))
             if cycles:
                 cycle_str = ' -> '.join(cycles[0] + [cycles[0][0]])
-                raise ValueError(f'發現循環依賴：{cycle_str}\n請先解決循環依賴問題再進行 CPM 分析')
+                raise ValueError(
+                    f'發現循環依賴：{cycle_str}\n請先解決循環依賴問題再進行 CPM 分析'
+                )
 
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
-            duration_field = cmp_params.get(
-![1754030031503](image/gui_qt/1754030031503.png)![1754030033127](image/gui_qt/1754030033127.png)                'default_duration_field', 'Te_expert'
-            )
+            duration_field = cmp_params.get('default_duration_field', 'Te_expert')
             work_hours_per_day = cmp_params.get('work_hours_per_day', 8)
 
-            # 使用合併後的 WBS 進行 CPM 分析
+            # 取得合併後 WBS 的工期
             durations_hours = extractDurationFromWbs(
-                self.merged_wbs.drop(columns=['No.']), duration_field)
+                self.merged_wbs.drop(columns=['No.']), duration_field
+            )
             durations_days = {
                 tid: convertHoursToDays(hours, work_hours_per_day)
                 for tid, hours in durations_hours.items()
             }
 
-            # 建立合併後的依賴圖
-            merged_tasks = set(self.merged_wbs['Task ID'])
-            merged_graph = nx.DiGraph()
-            merged_graph.add_nodes_from(merged_tasks)
-            
-            # 只保留合併後 WBS 中存在的任務之間的依賴關係
-            for u, v in self.graph.edges():
-                if u in merged_tasks and v in merged_tasks:
-                    merged_graph.add_edge(u, v)
-
-            forward_data = cpmForwardPass(merged_graph, durations_days)
+            forward_data = cpmForwardPass(self.merged_graph, durations_days)
             project_end = max(ef for _, ef in forward_data.values())
             backward_data = cpmBackwardPass(
-                merged_graph, durations_days, project_end
+                self.merged_graph,
+                durations_days,
+                project_end,
             )
             cpm_result = calculateSlack(
-                forward_data, backward_data, merged_graph
+                forward_data,
+                backward_data,
+                self.merged_graph,
             )
             self.critical_path = findCriticalPath(cpm_result)
 
