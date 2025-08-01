@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
     QAction,
     QDialogButtonBox,
     QScrollArea,
+    QGroupBox,
 )
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import (
@@ -340,11 +341,19 @@ class BirdmanQtApp(QMainWindow):
         )
         export_m_graph_menu.addAction(export_m_graph_svg)
 
-        # 設定與 CPM 相關元件
-        self.settings_layout = QHBoxLayout()
+        # 建立「步驟 1：載入檔案」區塊
+        step1_group = QGroupBox('步驟 1：載入檔案 (Step 1: Load Files)')
+        step1_layout = QVBoxLayout()
+        step1_layout.addLayout(self.load_buttons_layout)
+        step1_group.setLayout(step1_layout)
+
+        # 建立「步驟 2：設定分析參數」區塊
+        step2_group = QGroupBox(
+            '步驟 2：設定分析參數 (Step 2: Set Analysis Parameters)')
+        step2_layout = QHBoxLayout()
         k_params_btn = QPushButton('k 係數設定')
         k_params_btn.clicked.connect(self.open_settings_dialog)
-        self.settings_layout.addWidget(k_params_btn)
+        step2_layout.addWidget(k_params_btn)
 
         self.time_selection_combo = QComboBox()
         self.time_selection_combo.addItems([
@@ -354,17 +363,14 @@ class BirdmanQtApp(QMainWindow):
             'Expected Time (TE)',
             'All Scenarios',
         ])
-        self.settings_layout.addWidget(self.time_selection_combo)
+        step2_layout.addWidget(self.time_selection_combo)
+        step2_group.setLayout(step2_layout)
 
-        cmp_btn = QPushButton('執行 CPM 分析')
-        cmp_btn.clicked.connect(self.runCmpAnalysis)
-        self.settings_layout.addWidget(cmp_btn)
+        self.full_analysis_button = QPushButton('執行完整分析 (Run Full Analysis)')
+        self.full_analysis_button.clicked.connect(self.run_full_analysis)
 
-        self.analyze_button = QPushButton('開始分析')
-        self.analyze_button.clicked.connect(self.runAnalysis)
-
-        setup_layout.addLayout(self.load_buttons_layout)
-        setup_layout.addLayout(self.settings_layout)
+        setup_layout.addWidget(step1_group)
+        setup_layout.addWidget(step2_group)
 
         # 分析結果分頁集合
         self.tabs_results = QTabWidget()
@@ -417,7 +423,7 @@ class BirdmanQtApp(QMainWindow):
         self.dsm_preview_tab.layout().addWidget(self.dsm_preview)
 
         setup_layout.addWidget(self.preview_tabs)
-        setup_layout.addWidget(self.analyze_button)
+        setup_layout.addWidget(self.full_analysis_button)
         # 依賴關係圖畫布及捲動區域
         self.graph_figure = Figure(figsize=(18, 20))  # 使用與 visualizer.py 相同的尺寸
         self.graph_canvas = FigureCanvas(self.graph_figure)
@@ -649,9 +655,11 @@ class BirdmanQtApp(QMainWindow):
             self.main_tabs.setTabEnabled(1, True)
             self.main_tabs.setCurrentIndex(1)
             QMessageBox.information(self, '完成', '分析完成，可切換分頁預覽與匯出')
+            return True
         except Exception as e:  # pylint: disable=broad-except
             # 執行流程中可能發生多種錯誤，此處統一彙整顯示訊息
             QMessageBox.critical(self, '錯誤', str(e))
+            return False
 
     def _add_no_column(self, df):
         # 僅針對 WBS 及其衍生表格加 No. 欄，且不覆蓋 Task ID
@@ -872,6 +880,12 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
         except Exception as e:  # pylint: disable=broad-except
             QMessageBox.critical(self, '錯誤', f'CPM 分析失敗：{e}')
+
+    def run_full_analysis(self):
+        """依序執行基本分析與 CPM 分析"""
+        success = self.runAnalysis()
+        if success:
+            self.runCmpAnalysis()
 
     def drawGanttChart(self, cpmData, durations):
         """繪製甘特圖"""
