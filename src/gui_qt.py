@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (
     QAction,
     QDialogButtonBox,
     QScrollArea,
+    QTextEdit,
 )
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import (
@@ -53,7 +54,9 @@ from .cpm_processor import (
     calculateSlack,
     findCriticalPath,
     extractDurationFromWbs,
+    monteCarloSchedule,
 )
+from .rcpsp_solver import solveRcpsp
 from . import visualizer
 
 
@@ -394,6 +397,7 @@ class BirdmanQtApp(QMainWindow):
         self.tab_merged_graph = QWidget()
         self.tab_cmp_result = QWidget()
         self.tab_gantt_chart = QWidget()
+        self.tab_advanced_analysis = QWidget()  # 新增進階分析分頁
         self.tabs_results.addTab(self.tab_raw_dsm, '原始 DSM')
         self.tabs_results.addTab(self.tab_raw_wbs, '原始 WBS')
         self.tabs_results.addTab(self.tab_sorted_wbs, '排序 WBS')
@@ -404,6 +408,7 @@ class BirdmanQtApp(QMainWindow):
         self.tabs_results.addTab(self.tab_merged_graph, '合併後依賴圖')
         self.tabs_results.addTab(self.tab_cmp_result, 'CPM 分析結果')
         self.tabs_results.addTab(self.tab_gantt_chart, '甘特圖')
+        self.tabs_results.addTab(self.tab_advanced_analysis, '進階分析')
         results_layout.addWidget(self.tabs_results)
 
         main_widget.setLayout(main_layout)
@@ -525,6 +530,51 @@ class BirdmanQtApp(QMainWindow):
         self.tab_cmp_result.layout().addLayout(cpm_top_layout)
         self.tab_cmp_result.layout().addWidget(self.cmp_result_view)
         self.tab_gantt_chart.setLayout(QVBoxLayout())
+        self.tab_advanced_analysis.setLayout(QVBoxLayout())
+
+        # --- 蒙地卡羅模擬區塊 ---
+        mc_group = QWidget()
+        mc_layout = QVBoxLayout()
+        mc_group.setLayout(mc_layout)
+
+        mc_title = QLabel("<h3>蒙地卡羅模擬 (Monte Carlo Simulation)</h3>")
+        mc_layout.addWidget(mc_title)
+
+        mc_form_layout = QFormLayout()
+        self.mc_iterations_input = QLineEdit("1000")
+        self.mc_confidence_input = QLineEdit("0.95")
+        mc_form_layout.addRow("模擬次數 (Iterations):", self.mc_iterations_input)
+        mc_form_layout.addRow("信心水準 (Confidence):", self.mc_confidence_input)
+        mc_layout.addLayout(mc_form_layout)
+
+        self.run_mc_button = QPushButton("執行蒙地卡羅模擬")
+        mc_layout.addWidget(self.run_mc_button)
+
+        self.mc_results_label = QLabel("模擬結果將顯示於此")
+        self.mc_results_label.setWordWrap(True)
+        mc_layout.addWidget(self.mc_results_label)
+
+        mc_layout.addStretch()
+        self.tab_advanced_analysis.layout().addWidget(mc_group)
+
+        # --- RCPSP 排程區塊 ---
+        rcpsp_group = QWidget()
+        rcpsp_layout = QVBoxLayout()
+        rcpsp_group.setLayout(rcpsp_layout)
+
+        rcpsp_title = QLabel("<h3>RCPSP 資源排程 (RCPSP Resource Scheduling)</h3>")
+        rcpsp_layout.addWidget(rcpsp_title)
+
+        self.run_rcpsp_button = QPushButton("執行 RCPSP 資源排程")
+        rcpsp_layout.addWidget(self.run_rcpsp_button)
+
+        rcpsp_layout.addStretch()
+        self.tab_advanced_analysis.layout().addWidget(rcpsp_group)
+
+        # --- 按鈕連接 ---
+        self.run_mc_button.clicked.connect(self.run_monte_carlo_simulation)
+        self.run_rcpsp_button.clicked.connect(self.run_rcpsp_optimization)
+
         # 甘特圖情境切換下拉選單
         self.gantt_display_combo = QComboBox()
         self.gantt_display_combo.currentIndexChanged.connect(
@@ -1411,6 +1461,107 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.information(self, '完成', f'已匯出甘特圖至：{path}')
         except (OSError, ValueError) as e:
             QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
+
+    def run_monte_carlo_simulation(self):
+        """執行蒙地卡羅模擬"""
+        if self.merged_graph is None or self.merged_wbs is None:
+            QMessageBox.warning(self, '警告', '請先執行完整分析')
+            return
+
+        try:
+            iterations = int(self.mc_iterations_input.text())
+            confidence = float(self.mc_confidence_input.text())
+            if not (0 < confidence < 1):
+                raise ValueError("信心水準必須介於 0 和 1 之間")
+        except ValueError as e:
+            QMessageBox.critical(self, '輸入錯誤', f'參數無效：{e}')
+            return
+
+        # 預設使用 newbie 的 O/M/P
+        base_fields = ["O_newbie", "M_newbie", "P_newbie"]
+        if not all(f in self.merged_wbs.columns for f in base_fields):
+            QMessageBox.critical(
+                self, '錯誤', '合併後的 WBS 缺少 O/M/P_newbie 欄位，無法執行模擬'
+            )
+            return
+
+        try:
+            o_dur = extractDurationFromWbs(self.merged_wbs, base_fields[0])
+            m_dur = extractDurationFromWbs(self.merged_wbs, base_fields[1])
+            p_dur = extractDurationFromWbs(self.merged_wbs, base_fields[2])
+
+            result = monteCarloSchedule(
+                self.merged_graph, o_dur, m_dur, p_dur, iterations, confidence
+            )
+
+            conf_pct = int(confidence * 100)
+            result_text = (
+                f"<b>蒙地卡羅模擬結果 (基於 O/M/P_newbie):</b><br>"
+                f"平均完工時間: {result['average']:.2f} 小時<br>"
+                f"標準差: {result['std']:.2f} 小時<br>"
+                f"最短完工時間: {result['min']:.2f} 小時<br>"
+                f"最長完工時間: {result['max']:.2f} 小時<br>"
+                f"<b>{conf_pct}% 信心水準下，專案可在 "
+                f"{result['confidence_value']:.2f} 小時內完成。</b>"
+            )
+            self.mc_results_label.setText(result_text)
+
+        except Exception as e:
+            QMessageBox.critical(self, '模擬失敗', f'執行蒙地卡羅模擬時發生錯誤：{e}')
+
+    def run_rcpsp_optimization(self):
+        """執行 RCPSP 資源排程"""
+        if self.merged_graph is None or self.merged_wbs is None:
+            QMessageBox.warning(self, '警告', '請先執行完整分析')
+            return
+
+        try:
+            with open('config.json', 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            cmp_params = config.get('cmp_params', {})
+            duration_field = cmp_params.get(
+                'default_duration_field', 'Te_newbie'
+            )
+
+            if duration_field not in self.merged_wbs.columns:
+                raise ValueError(f"WBS 缺少工期欄位 {duration_field}")
+            if "Category" not in self.merged_wbs.columns:
+                QMessageBox.warning(
+                    self, '警告', 'WBS 缺少 "Category" 欄位，將不考慮資源限制'
+                )
+
+            schedule = solveRcpsp(
+                self.merged_graph,
+                self.merged_wbs,
+                durationField=duration_field,
+                resourceField="Category",
+            )
+
+            project_end = schedule.pop("ProjectEnd", 0)
+            result_text = f"<b>RCPSP 排程結果 (總工期: {project_end:.2f} 小時):</b><br><br>"
+            result_text += "<table border='1' style='width:100%'>"
+            result_text += "<tr><th>任務 ID</th><th>開始時間 (小時)</th></tr>"
+            for task, start_time in sorted(schedule.items()):
+                result_text += f"<tr><td>{task}</td><td>{start_time}</td></tr>"
+            result_text += "</table>"
+
+            # 使用一個可捲動的對話框來顯示結果
+            dialog = QDialog(self)
+            dialog.setWindowTitle("RCPSP 排程結果")
+            layout = QVBoxLayout()
+            text_edit = QTextEdit()
+            text_edit.setHtml(result_text)
+            text_edit.setReadOnly(True)
+            layout.addWidget(text_edit)
+            button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+            button_box.accepted.connect(dialog.accept)
+            layout.addWidget(button_box)
+            dialog.setLayout(layout)
+            dialog.resize(400, 300)
+            dialog.exec_()
+
+        except Exception as e:
+            QMessageBox.critical(self, '排程失敗', f'執行 RCPSP 排程時發生錯誤：{e}')
 
 
 def main():
