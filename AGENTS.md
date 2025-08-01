@@ -329,3 +329,7 @@ for u, v in self.graph.edges():
    - 使用 subplots_adjust 控制邊距
    - 注意深色/淺色模式的切換
    - 確保匯出時的圖表品質
+
+3. 其他開發規範：
+   - CPM 分析預設以 `Te_newbie` 欄位計算工期
+   - 每次修改程式碼後，請執行 `flake8` 確認格式

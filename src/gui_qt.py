@@ -598,7 +598,7 @@ class BirdmanQtApp(QMainWindow):
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
             duration_field = cmp_params.get(
-                'default_duration_field', 'Te_expert'
+                'default_duration_field', 'Te_newbie'
             )
 
             # 直接使用工時，不轉換為天數
@@ -659,14 +659,11 @@ class BirdmanQtApp(QMainWindow):
             )
 
             # 取得任務列表和相關數據
-
             tasks = cpmData.index.tolist()
             start_times = cpmData['ES'].tolist()
             task_durations = [durations.get(t, 0) for t in tasks]
 
-
             # 設定任務條的位置和顏色
-
             y_positions = range(len(tasks))
             colors = [
                 'red' if cpmData.at[t, 'Critical'] else 'skyblue'
@@ -708,7 +705,6 @@ class BirdmanQtApp(QMainWindow):
                 fontsize=14,
                 pad=20,
             )
-
 
             # 在每個任務條上添加持續時間標籤
             for i, (duration, start) in enumerate(

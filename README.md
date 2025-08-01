@@ -31,6 +31,7 @@
    - 關鍵路徑識別
    - 甘特圖視覺化
    - 完整的時程資訊
+   - 預設使用 `Te_newbie` 作為 CPM 計算工期欄位
 
 4. **匯出功能**
    - 支援 SVG/PNG 格式
@@ -132,6 +133,29 @@ pip install -r requirements.txt
 ```
 
 執行此指令會同時安裝 `networkx` 等必要套件。
+
+## 系統設定 (config.json)
+
+此檔記錄執行流程所需的設定，主要區塊包括：
+
+1. **cmp_params**
+   - `default_duration_field`：CPM 分析預設使用的工期欄位，若未額外指定即採用此欄位。預設值已更新為 `"Te_newbie"`。
+2. **merge_k_params**
+   - `override`：直接覆寫合併計算的 k 值。
+   - `base`：基礎係數，固定為 1.0。
+   - `trf_scale`：TRF 轉換比例，用於調整估算幅度。
+   - `trf_divisor`：TRF 除數，平滑複雜度對 k 值的影響。
+   - `n_coef`：數量係數，根據合併任務數量調整權重。
+
+## WBS.csv 欄位詳解
+
+- `M`：專家評估的最可能工時。
+- `O_expert`：專家的樂觀工時。
+- `P_expert`：專家的悲觀工時。
+- `Te_expert`：依 PERT 公式 `(O + 4*M + P) / 6` 計算的期望工時。
+- `K_adj`：估算新手工時的調整係數。
+- `O_newbie`、`M_newbie`、`P_newbie`：將專家對應的時間乘以 `K_adj` 後得出的新手估算工時。
+- `Te_newbie`：根據新手時間以 PERT 公式計算出的期望工時，也是系統新的預設工時。
 
 ## 範例資料
 
