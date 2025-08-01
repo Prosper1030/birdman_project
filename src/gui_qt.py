@@ -50,7 +50,6 @@ from .cpm_processor import (
     calculateSlack,
     findCriticalPath,
     extractDurationFromWbs,
-    convertHoursToDays,
 )
 from . import visualizer
 
@@ -626,10 +625,10 @@ class BirdmanQtApp(QMainWindow):
         """繪製甘特圖"""
         try:
             self.gantt_figure.clear()
-            
+
             # 創建子圖，並設定外邊距
             ax = self.gantt_figure.add_subplot(111)
-            
+
             # 設定更大的外邊距
             self.gantt_figure.subplots_adjust(
                 top=0.9,      # 上邊距
@@ -637,43 +636,55 @@ class BirdmanQtApp(QMainWindow):
                 left=0.2,     # 左邊距
                 right=0.95    # 右邊距
             )
-            
-            # 取得任務列表和相關數據
+
+            # 取得任務列表與相關數據
             tasks = cpmData.index.tolist()
             start_times = cpmData['ES'].tolist()
             task_durations = [durations.get(t, 0) for t in tasks]
-            
-            # 設定任務條的位置和顏色
+
+            # 設定任務條的位置與顏色
             y_positions = range(len(tasks))
-            colors = ['red' if cpmData.at[t, 'Critical'] else 'skyblue' for t in tasks]
-            
+            colors = [
+                'red' if cpmData.at[t, 'Critical'] else 'skyblue'
+                for t in tasks
+            ]
+
             # 繪製任務條
-            bars = ax.barh(
-                y_positions, 
-                task_durations, 
+            ax.barh(
+                y_positions,
+                task_durations,
                 left=start_times,
-                color=colors, 
+                color=colors,
                 alpha=0.8,
                 height=0.6,
                 edgecolor='black',
                 linewidth=1,
-                zorder=2
+                zorder=2,
             )
-            
+
             # 設定 Y 軸標籤
             ax.set_yticks(y_positions)
             ax.set_yticklabels(tasks, fontsize=10, fontweight='bold')
-            
+
             # 加強網格線
-            ax.grid(True, axis='x', linestyle='--', color='gray', alpha=0.3, zorder=1)
+            ax.grid(
+                True,
+                axis='x',
+                linestyle='--',
+                color='gray',
+                alpha=0.3,
+                zorder=1,
+            )
             ax.set_axisbelow(True)
-            
+
             # 設定標籤和標題
             ax.set_xlabel('時間 (小時)', fontsize=11, fontweight='bold')
             ax.set_title('專案甘特圖 (紅色為關鍵路徑)', fontsize=14, pad=20)
-            
+
             # 在每個任務條上添加持續時間標籤
-            for i, (duration, start) in enumerate(zip(task_durations, start_times)):
+            for i, (duration, start) in enumerate(
+                zip(task_durations, start_times)
+            ):
                 if duration > 0:
                     ax.text(
                         start + duration + 2,
@@ -683,42 +694,42 @@ class BirdmanQtApp(QMainWindow):
                         fontsize=9,
                         alpha=0.7
                     )
-            
+
             # 反轉 Y 軸
             ax.invert_yaxis()
-            
+
             # 建立新的捲動區域，支援水平和垂直捲動
             scroll_area = QScrollArea()
             scroll_area.setWidget(self.gantt_canvas)
             scroll_area.setWidgetResizable(True)
-            
+
             # 確保水平和垂直捲動條都可見
             scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
             scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-            
+
             # 設定更大的視窗尺寸，增加上下空間
             scroll_area.setMinimumHeight(1000)  # 增加最小高度
             self.gantt_canvas.setMinimumSize(1200, max(1000, len(tasks) * 35))
-            
+
             # 設定捲動區域的邊距
             container_layout = QVBoxLayout()
             container_layout.setContentsMargins(20, 40, 20, 40)  # 左、上、右、下邊距
             container_layout.addWidget(scroll_area)
-            
+
             # 更新分頁中的內容
             if self.tab_gantt_chart.layout().count():
                 old_widget = self.tab_gantt_chart.layout().takeAt(0)
                 if old_widget.widget():
                     old_widget.widget().deleteLater()
-            
+
             # 建立容器來包裝捲動區域
             container = QWidget()
             container.setLayout(container_layout)
             self.tab_gantt_chart.layout().addWidget(container)
-            
+
             # 重繪圖表
             self.gantt_canvas.draw()
-            
+
         except Exception as e:
             QMessageBox.warning(self, '警告', f'甘特圖繪製失敗：{e}')
 
@@ -779,14 +790,24 @@ class BirdmanQtApp(QMainWindow):
                 viz_params = config.get('visualization_params', {})
 
                 # 取得 SCC_ID 和 Layer 的映射
-                scc_map = dict(zip(self.sorted_wbs['Task ID'], self.sorted_wbs['SCC_ID']))
-                layer_map = dict(zip(self.sorted_wbs['Task ID'], self.sorted_wbs['Layer']))
-                
+                scc_map = dict(
+                    zip(
+                        self.sorted_wbs['Task ID'],
+                        self.sorted_wbs['SCC_ID'],
+                    )
+                )
+                layer_map = dict(
+                    zip(
+                        self.sorted_wbs['Task ID'],
+                        self.sorted_wbs['Layer'],
+                    )
+                )
+
                 # 重新建立圖表
                 fig = visualizer.create_dependency_graph_figure(
                     self.graph, scc_map, layer_map, viz_params)
                 self.graph_canvas.figure = fig
-                
+
                 # 更新圖表尺寸
                 self.graph_canvas.draw()
                 canvas_size = self.graph_canvas.get_width_height()
@@ -838,6 +859,7 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.information(self, '完成', f'已匯出甘特圖至：{path}')
         except (OSError, ValueError) as e:
             QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
+
 
 def main():
     app = QApplication(sys.argv)
