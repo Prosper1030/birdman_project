@@ -69,7 +69,7 @@ def create_dependency_graph_figure(
             if palette:
                 node_colors.append(palette[scc_id % len(palette)])
             else:
-                node_colors.append('orange')  # 備用顏色
+                node_colors.append('orange')    # 備用顏色
         else:
             node_colors.append(default_color)
 

@@ -397,7 +397,7 @@ class BirdmanQtApp(QMainWindow):
             if canvas_size[0] > 0 and canvas_size[1] > 0:
                 self.graph_container.setMinimumSize(
                     int(canvas_size[0] * 1.1),  # 稍微加大一點，留些邊距
-                    int(canvas_size[1] * 1.1)
+                    int(canvas_size[1] * 1.1),
                 )
 
             # 預覽
