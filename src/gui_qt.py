@@ -200,6 +200,12 @@ class BirdmanQtApp(QMainWindow):
         # 儲存目前顯示的 CPM 報告 DataFrame
         self.current_display_cpm_df = None
 
+        # 儲存分群與分層對應表
+        self.scc_map = {}
+        self.layer_map = {}
+        self.merged_scc_map = {}
+        self.merged_layer_map = {}
+
         # 預設的 k 參數值
         self.default_k_params = {
             'base': 1.0,  # 固定值
@@ -650,24 +656,32 @@ class BirdmanQtApp(QMainWindow):
                 merged,
             )
 
-            merged_scc_map = dict(
-                zip(merged_sorted_wbs['Task ID'], merged_sorted_wbs['SCC_ID'])
+            # 儲存原始圖的映射
+            self.scc_map = dict(
+                zip(sorted_wbs['Task ID'], sorted_wbs['SCC_ID'])
             )
-            merged_layer_map = dict(
-                zip(merged_sorted_wbs['Task ID'], merged_sorted_wbs['Layer'])
+            self.layer_map = dict(
+                zip(sorted_wbs['Task ID'], sorted_wbs['Layer'])
             )
 
-            scc_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['SCC_ID']))
-            layer_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['Layer']))
             fig = visualizer.create_dependency_graph_figure(
-                graph, scc_map, layer_map, viz_params)
+                graph, self.scc_map, self.layer_map, viz_params)
             self.graph_canvas.figure = fig
             self.graph_canvas.draw()
 
+            # 計算並儲存合併後圖形的映射
+            self.merged_layer_map = {
+                node: data.get('layer', 0)
+                for node, data in self.merged_graph.nodes(data=True)
+            }
+            self.merged_scc_map = {
+                node: i for i, node in enumerate(self.merged_graph.nodes())
+            }
+
             merged_fig = visualizer.create_dependency_graph_figure(
                 self.merged_graph,
-                merged_scc_map,
-                merged_layer_map,
+                self.merged_scc_map,
+                self.merged_layer_map,
                 viz_params,
             )
             self.merged_graph_canvas.figure = merged_fig
@@ -1334,23 +1348,13 @@ class BirdmanQtApp(QMainWindow):
                     config = json.load(f)
                 viz_params = config.get('visualization_params', {})
 
-                # 取得 SCC_ID 和 Layer 的映射
-                scc_map = dict(
-                    zip(
-                        self.sorted_wbs['Task ID'],
-                        self.sorted_wbs['SCC_ID'],
-                    )
-                )
-                layer_map = dict(
-                    zip(
-                        self.sorted_wbs['Task ID'],
-                        self.sorted_wbs['Layer'],
-                    )
-                )
-
-                # 重新建立圖表
+                # 重新建立原始圖
                 fig = visualizer.create_dependency_graph_figure(
-                    self.graph, scc_map, layer_map, viz_params)
+                    self.graph,
+                    self.scc_map,
+                    self.layer_map,
+                    viz_params,
+                )
                 self.graph_canvas.figure = fig
 
                 # 更新圖表尺寸
@@ -1358,9 +1362,26 @@ class BirdmanQtApp(QMainWindow):
                 canvas_size = self.graph_canvas.get_width_height()
                 if canvas_size[0] > 0 and canvas_size[1] > 0:
                     self.graph_container.setMinimumSize(
-                        int(canvas_size[0] * 1.1),  # 稍微加大一點，留些邊距
-                        int(canvas_size[1] * 1.1)
+                        int(canvas_size[0] * 1.1),
+                        int(canvas_size[1] * 1.1),
                     )
+
+                # 重新建立合併後圖
+                if self.merged_graph is not None:
+                    merged_fig = visualizer.create_dependency_graph_figure(
+                        self.merged_graph,
+                        self.merged_scc_map,
+                        self.merged_layer_map,
+                        viz_params,
+                    )
+                    self.merged_graph_canvas.figure = merged_fig
+                    self.merged_graph_canvas.draw()
+                    m_size = self.merged_graph_canvas.get_width_height()
+                    if m_size[0] > 0 and m_size[1] > 0:
+                        self.merged_graph_container.setMinimumSize(
+                            int(m_size[0] * 1.1),
+                            int(m_size[1] * 1.1),
+                        )
             except Exception as e:  # pylint: disable=broad-except
                 QMessageBox.warning(self, '警告', f'圖表重繪失敗：{e}')
 
