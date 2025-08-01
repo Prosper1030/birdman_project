@@ -7,6 +7,9 @@ from src.dsm_processor import (
     buildGraph,
     computeLayersAndScc,
     reorderDsm,
+    buildTaskMapping,
+    buildMergedDsm,
+    process_dsm,
 )
 from src.wbs_processor import readWbs, mergeByScc, validateIds
 from src.cpm_processor import (
@@ -121,6 +124,17 @@ def main():
         config = json.load(f)
     k_params = config.get('merge_k_params', {})
     merged = mergeByScc(wbs_sorted, k_params)
+
+    # 依原始 Task ID 與 SCC 對應建立合併映射
+    task_mapping = buildTaskMapping(wbs_sorted, merged)
+    # 根據映射產生合併後的 DSM
+    merged_dsm_raw = buildMergedDsm(G, task_mapping)
+    # 重新計算層次並建立合併後的依賴圖
+    merged_dsm, _merged_wbs_sorted, merged_graph = process_dsm(
+        merged_dsm_raw,
+        merged,
+    )
+
     out_merged = Path("merged_wbs.csv")
     merged.to_csv(out_merged, index=False, encoding="utf-8-sig")
     print(f"已輸出 {out_merged}")
@@ -142,21 +156,26 @@ def main():
             'default_duration_field', 'Te_expert'
         )
 
-        durations_hours = extractDurationFromWbs(wbs_sorted, duration_field)
+        # 以合併後的 WBS 取得工時
+        durations_hours = extractDurationFromWbs(merged, duration_field)
 
-        # 檢查循環依賴
-        cycles = list(nx.simple_cycles(G))
+        # 檢查合併後圖是否存在循環依賴
+        cycles = list(nx.simple_cycles(merged_graph))
         if cycles:
             cycle_str = ' -> '.join(cycles[0] + [cycles[0][0]])
             raise ValueError(f'發現循環依賴：{cycle_str}')
 
-        forward_data = cpmForwardPass(G, durations_hours)
+        forward_data = cpmForwardPass(merged_graph, durations_hours)
         project_end = max(ef for _, ef in forward_data.values())
-        backward_data = cpmBackwardPass(G, durations_hours, project_end)
-        cpm_result = calculateSlack(forward_data, backward_data, G)
+        backward_data = cpmBackwardPass(
+            merged_graph,
+            durations_hours,
+            project_end,
+        )
+        cpm_result = calculateSlack(forward_data, backward_data, merged_graph)
         critical_path = findCriticalPath(cpm_result)
 
-        wbs_with_cpm = wbs_sorted.copy()
+        wbs_with_cpm = merged.copy()
         for col in ['ES', 'EF', 'LS', 'LF', 'TF', 'FF', 'Critical']:
             wbs_with_cpm[col] = wbs_with_cpm['Task ID'].map(
                 cpm_result[col].to_dict()).fillna(0)
