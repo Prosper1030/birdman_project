@@ -77,8 +77,8 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 ```bash
 python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json
 ```
-
 執行後會在目前目錄產生 `sorted_wbs.csv`、`merged_wbs.csv` 及 `sorted_dsm.csv`。
+若加上 `--cmp` 參數，會同時輸出 `cmp_analysis.csv`，並可使用 `--export-gantt` 匯出甘特圖、`--export-graph` 匯出依賴關係圖。工期欄位可透過 `--duration-field` 指定。
 
 ### GUI（推薦 PyQt5 進階版）
 

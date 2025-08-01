@@ -658,12 +658,15 @@ class BirdmanQtApp(QMainWindow):
                 right=0.95    # 右邊距
             )
 
-            # 取得任務列表與相關數據
+            # 取得任務列表和相關數據
+
             tasks = cpmData.index.tolist()
             start_times = cpmData['ES'].tolist()
             task_durations = [durations.get(t, 0) for t in tasks]
 
-            # 設定任務條的位置與顏色
+
+            # 設定任務條的位置和顏色
+
             y_positions = range(len(tasks))
             colors = [
                 'red' if cpmData.at[t, 'Critical'] else 'skyblue'
@@ -700,7 +703,12 @@ class BirdmanQtApp(QMainWindow):
 
             # 設定標籤和標題
             ax.set_xlabel('時間 (小時)', fontsize=11, fontweight='bold')
-            ax.set_title('專案甘特圖 (紅色為關鍵路徑)', fontsize=14, pad=20)
+            ax.set_title(
+                '專案甘特圖 (紅色為關鍵路徑)',
+                fontsize=14,
+                pad=20,
+            )
+
 
             # 在每個任務條上添加持續時間標籤
             for i, (duration, start) in enumerate(
@@ -713,7 +721,7 @@ class BirdmanQtApp(QMainWindow):
                         f'{duration:.1f}h',
                         va='center',
                         fontsize=9,
-                        alpha=0.7
+                        alpha=0.7,
                     )
 
             # 反轉 Y 軸
