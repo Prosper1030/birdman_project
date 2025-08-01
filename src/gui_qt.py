@@ -270,6 +270,7 @@ class BirdmanQtApp(QMainWindow):
         self.tab_merged_dsm = QWidget()
         self.tab_sorted_dsm = QWidget()
         self.tab_graph = QWidget()
+        self.tab_merged_graph = QWidget()
         self.tab_cmp_result = QWidget()
         self.tab_gantt_chart = QWidget()
         self.tabs.addTab(self.tab_raw_dsm, '原始 DSM')
@@ -279,6 +280,7 @@ class BirdmanQtApp(QMainWindow):
         self.tabs.addTab(self.tab_merged_dsm, '合併 DSM')
         self.tabs.addTab(self.tab_sorted_dsm, '排序 DSM')
         self.tabs.addTab(self.tab_graph, '依賴關係圖')
+        self.tabs.addTab(self.tab_merged_graph, '合併後依賴圖')
         self.tabs.addTab(self.tab_cmp_result, 'CPM 分析結果')
         self.tabs.addTab(self.tab_gantt_chart, '甘特圖')
         main_layout.addWidget(self.tabs)
@@ -324,6 +326,10 @@ class BirdmanQtApp(QMainWindow):
         self.graph_figure = Figure(figsize=(18, 20))  # 使用與 visualizer.py 相同的尺寸
         self.graph_canvas = FigureCanvas(self.graph_figure)
 
+        # 合併後依賴圖畫布
+        self.merged_graph_figure = Figure(figsize=(18, 20))
+        self.merged_graph_canvas = FigureCanvas(self.merged_graph_figure)
+
         # 建立外層容器（用於控制大小和捲動）
         self.graph_outer_container = QWidget()
         self.graph_outer_layout = QVBoxLayout(self.graph_outer_container)
@@ -335,8 +341,23 @@ class BirdmanQtApp(QMainWindow):
         self.graph_container_layout.setContentsMargins(0, 0, 0, 0)
         self.graph_container_layout.addWidget(self.graph_canvas)
 
+        # 合併後圖的容器與捲動區域
+        self.merged_graph_outer_container = QWidget()
+        self.merged_graph_outer_layout = QVBoxLayout(
+            self.merged_graph_outer_container
+        )
+        self.merged_graph_outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.merged_graph_container = QWidget()
+        self.merged_graph_container_layout = QVBoxLayout(
+            self.merged_graph_container
+        )
+        self.merged_graph_container_layout.setContentsMargins(0, 0, 0, 0)
+        self.merged_graph_container_layout.addWidget(self.merged_graph_canvas)
+
         # 設定固定的參考尺寸
         self.graph_container.setMinimumSize(1000, 800)
+        self.merged_graph_container.setMinimumSize(1000, 800)
 
         # 建立捲動區域
         self.scroll_area = QScrollArea(self.graph_outer_container)
@@ -345,7 +366,20 @@ class BirdmanQtApp(QMainWindow):
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
+        self.merged_scroll_area = QScrollArea(
+            self.merged_graph_outer_container
+        )
+        self.merged_scroll_area.setWidget(self.merged_graph_container)
+        self.merged_scroll_area.setWidgetResizable(True)
+        self.merged_scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarAsNeeded
+        )
+        self.merged_scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarAsNeeded
+        )
+
         self.graph_outer_layout.addWidget(self.scroll_area)
+        self.merged_graph_outer_layout.addWidget(self.merged_scroll_area)
 
         # 只在 WBS 相關表格隱藏行號
         for view in [
@@ -373,6 +407,10 @@ class BirdmanQtApp(QMainWindow):
         self.tab_sorted_dsm.layout().addWidget(self.sorted_dsm_view)
         self.tab_graph.setLayout(QVBoxLayout())
         self.tab_graph.layout().addWidget(self.graph_outer_container)
+        self.tab_merged_graph.setLayout(QVBoxLayout())
+        self.tab_merged_graph.layout().addWidget(
+            self.merged_graph_outer_container
+        )
         self.tab_cmp_result.setLayout(QVBoxLayout())
         self.tab_cmp_result.layout().addWidget(self.cmp_result_view)
         self.tab_gantt_chart.setLayout(QVBoxLayout())
@@ -450,12 +488,28 @@ class BirdmanQtApp(QMainWindow):
                 merged,
             )
 
+            merged_scc_map = dict(
+                zip(merged_sorted_wbs['Task ID'], merged_sorted_wbs['SCC_ID'])
+            )
+            merged_layer_map = dict(
+                zip(merged_sorted_wbs['Task ID'], merged_sorted_wbs['Layer'])
+            )
+
             scc_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['SCC_ID']))
             layer_map = dict(zip(sorted_wbs['Task ID'], sorted_wbs['Layer']))
             fig = visualizer.create_dependency_graph_figure(
                 graph, scc_map, layer_map, viz_params)
             self.graph_canvas.figure = fig
             self.graph_canvas.draw()
+
+            merged_fig = visualizer.create_dependency_graph_figure(
+                self.merged_graph,
+                merged_scc_map,
+                merged_layer_map,
+                viz_params,
+            )
+            self.merged_graph_canvas.figure = merged_fig
+            self.merged_graph_canvas.draw()
 
             # 更新圖表尺寸
             self.graph_canvas.draw()  # 確保圖表已經繪製完成
@@ -464,6 +518,14 @@ class BirdmanQtApp(QMainWindow):
                 self.graph_container.setMinimumSize(
                     int(canvas_size[0] * 1.1),  # 稍微加大一點，留些邊距
                     int(canvas_size[1] * 1.1),
+                )
+
+            self.merged_graph_canvas.draw()
+            m_size = self.merged_graph_canvas.get_width_height()
+            if m_size[0] > 0 and m_size[1] > 0:
+                self.merged_graph_container.setMinimumSize(
+                    int(m_size[0] * 1.1),
+                    int(m_size[1] * 1.1),
                 )
 
             # 預覽
