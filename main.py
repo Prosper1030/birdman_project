@@ -7,9 +7,7 @@ from src.dsm_processor import (
     buildGraph,
     computeLayersAndScc,
     reorderDsm,
-    buildTaskMapping,
-    buildMergedDsm,
-    process_dsm,
+    create_merged_graph,
 )
 from src.wbs_processor import readWbs, mergeByScc, validateIds
 from src.cpm_processor import (
@@ -147,15 +145,8 @@ def main():
     k_params = config.get('merge_k_params', {})
     merged = mergeByScc(wbs_sorted, k_params)
 
-    # 依原始 Task ID 與 SCC 對應建立合併映射
-    task_mapping = buildTaskMapping(wbs_sorted, merged)
-    # 根據映射產生合併後的 DSM
-    merged_dsm_raw = buildMergedDsm(G, task_mapping)
-    # 重新計算層次並建立合併後的依賴圖
-    merged_dsm, _merged_wbs_sorted, merged_graph = process_dsm(
-        merged_dsm_raw,
-        merged,
-    )
+    # 以濃縮圖演算法為基礎，建立合併後的依賴關係圖
+    merged_graph = create_merged_graph(G, scc_id, merged)
 
     out_merged = Path("merged_wbs.csv")
     merged.to_csv(out_merged, index=False, encoding="utf-8-sig")

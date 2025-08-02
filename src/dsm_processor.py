@@ -83,31 +83,29 @@ def process_dsm(
     return sorted_dsm, wbs_sorted, G
 
 
-def buildTaskMapping(
-    original_wbs: pd.DataFrame, merged_wbs: pd.DataFrame
-) -> dict[str, str]:
-    """根據 SCC_ID 建立原始 Task ID 與合併後 Task ID 的對應關係"""
-    mapping: dict[str, str] = {}
-    for scc_id, grp in original_wbs.groupby("SCC_ID", sort=False):
-        merged_row = merged_wbs[merged_wbs["SCC_ID"] == scc_id]
-        if merged_row.empty:
-            continue
-        new_id = merged_row.iloc[0]["Task ID"]
-        for tid in grp["Task ID"]:
-            mapping[tid] = new_id
-    return mapping
+def create_merged_graph(
+    G: nx.DiGraph, scc_map: dict, merged_wbs: pd.DataFrame
+) -> nx.DiGraph:
+    """以濃縮圖 (Condensation) 為基礎，建立合併後的任務依賴圖
 
+    此方法可確保合併後的圖為 DAG (無循環)。
+    """
+    sccs = list(nx.strongly_connected_components(G))
+    condensation = nx.condensation(G, sccs)
 
-def buildMergedDsm(graph: nx.DiGraph, mapping: dict[str, str]) -> pd.DataFrame:
-    """依照合併映射關係產生新的 DSM"""
-    merged_tasks = sorted(set(mapping.values()))
-    merged_dsm = pd.DataFrame(
-        0, index=merged_tasks, columns=merged_tasks, dtype=int
-    )
-    for u, v in graph.edges():
-        u_m = mapping.get(u)
-        v_m = mapping.get(v)
-        if u_m is None or v_m is None or u_m == v_m:
-            continue
-        merged_dsm.at[v_m, u_m] = 1
-    return merged_dsm
+    scc_id_to_merged_id = {}
+    for scc_id, grp in merged_wbs.groupby("SCC_ID"):
+        scc_id_to_merged_id[scc_id] = grp.iloc[0]["Task ID"]
+
+    # 建立 scc 節點索引與 scc_id 的對應
+    node_to_scc_id = {
+        node: scc_map.get(node) for node in G.nodes()
+    }
+    scc_index_map = {
+        i: scc_id_to_merged_id[node_to_scc_id[list(scc)[0]]]
+        for i, scc in enumerate(sccs)
+        if node_to_scc_id[list(scc)[0]] in scc_id_to_merged_id
+    }
+
+    merged_graph = nx.relabel_nodes(condensation, scc_index_map, copy=True)
+    return merged_graph
