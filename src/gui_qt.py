@@ -6,6 +6,7 @@ import sys
 import json
 import os
 import networkx as nx
+import numpy as np
 from functools import partial
 
 from PyQt5.QtWidgets import (
@@ -29,8 +30,10 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QScrollArea,
     QTextEdit,
+    QProgressBar,
+    QSpinBox,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QObject, QThread, pyqtSignal
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
@@ -57,7 +60,75 @@ from .cpm_processor import (
 )
 from .rcpsp_solver import solveRcpsp
 from . import visualizer
-from .ui.dialogs.monte_carlo_dialog import MonteCarloDialog
+
+
+class MonteCarloWorker(QObject):
+    """執行蒙地卡羅模擬的背景工作執行緒"""
+
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(list)
+
+    def __init__(
+        self,
+        wbs_df: pd.DataFrame,
+        graph: nx.DiGraph,
+        role_key: str,
+        iterations: int,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.wbs_df = wbs_df
+        self.graph = graph
+        self.role_key = role_key
+        self.iterations = iterations
+        self.is_running = True
+
+    def run(self) -> None:
+        """執行模擬並回報進度"""
+        o_col = f"O_{self.role_key}"
+        m_col = f"M_{self.role_key}"
+        p_col = f"P_{self.role_key}"
+        for field in (o_col, m_col, p_col):
+            if field not in self.wbs_df.columns:
+                self.finished.emit([])
+                return
+        wbs_df = self.wbs_df.set_index("Task ID")
+        simulation_results: list[float] = []
+        for i in range(max(1, self.iterations)):
+            if not self.is_running:
+                break
+            sampled: dict[str, float] = {}
+            for task_id in wbs_df.index:
+                o = wbs_df.loc[task_id, o_col]
+                m = wbs_df.loc[task_id, m_col]
+                p = wbs_df.loc[task_id, p_col]
+                if p == o:
+                    simulated_duration = o
+                else:
+                    mu = (o + 4 * m + p) / 6
+                    mu = max(o, min(p, mu))
+                    if mu == o:
+                        alpha = 1
+                    else:
+                        alpha = 1 + 4 * ((mu - o) / (p - o))
+                    if mu == p:
+                        beta = 1
+                    else:
+                        beta = 1 + 4 * ((p - mu) / (p - o))
+                    random_beta = np.random.beta(alpha, beta)
+                    simulated_duration = o + random_beta * (p - o)
+                sampled[task_id] = float(simulated_duration)
+            forward = cpmForwardPass(self.graph, sampled)
+            project_end = max(v[1] for v in forward.values())
+            simulation_results.append(project_end)
+            self.progress.emit(i + 1)
+            if not self.is_running:
+                break
+        self.finished.emit(simulation_results)
+
+    def stop(self) -> None:
+        """停止模擬"""
+        self.is_running = False
 
 
 class PandasModel(QAbstractTableModel):
@@ -397,6 +468,7 @@ class BirdmanQtApp(QMainWindow):
         self.tab_merged_graph = QWidget()
         self.tab_cmp_result = QWidget()
         self.tab_gantt_chart = QWidget()
+        self.tab_monte_carlo = QWidget()
         self.tab_advanced_analysis = QWidget()  # 新增進階分析分頁
         self.tabs_results.addTab(self.tab_raw_dsm, '原始 DSM')
         self.tabs_results.addTab(self.tab_raw_wbs, '原始 WBS')
@@ -408,6 +480,7 @@ class BirdmanQtApp(QMainWindow):
         self.tabs_results.addTab(self.tab_merged_graph, '合併後依賴圖')
         self.tabs_results.addTab(self.tab_cmp_result, 'CPM 分析結果')
         self.tabs_results.addTab(self.tab_gantt_chart, '甘特圖')
+        self.tabs_results.addTab(self.tab_monte_carlo, '蒙地卡羅模擬 (Monte Carlo)')
         self.tabs_results.addTab(self.tab_advanced_analysis, '進階分析')
         results_layout.addWidget(self.tabs_results)
 
@@ -530,35 +603,8 @@ class BirdmanQtApp(QMainWindow):
         self.tab_cmp_result.layout().addLayout(cpm_top_layout)
         self.tab_cmp_result.layout().addWidget(self.cmp_result_view)
         self.tab_gantt_chart.setLayout(QVBoxLayout())
+        self.tab_monte_carlo.setLayout(QVBoxLayout())
         self.tab_advanced_analysis.setLayout(QVBoxLayout())
-
-        # --- 蒙地卡羅模擬區塊 ---
-        mc_group = QWidget()
-        mc_layout = QVBoxLayout()
-        mc_group.setLayout(mc_layout)
-
-        mc_title = QLabel("<h3>蒙地卡羅模擬 (Monte Carlo Simulation)</h3>")
-        mc_layout.addWidget(mc_title)
-
-        mc_form_layout = QFormLayout()
-        self.mc_role_select = QComboBox()
-        self.mc_role_select.addItems(["新手 (Novice)", "專家 (Expert)"])
-        self.mc_iterations_input = QLineEdit("1000")
-        self.mc_confidence_input = QLineEdit("0.95")
-        mc_form_layout.addRow("模擬角色 (Role):", self.mc_role_select)
-        mc_form_layout.addRow("模擬次數 (Iterations):", self.mc_iterations_input)
-        mc_form_layout.addRow("信心水準 (Confidence):", self.mc_confidence_input)
-        mc_layout.addLayout(mc_form_layout)
-
-        self.run_mc_button = QPushButton("執行蒙地卡羅模擬")
-        mc_layout.addWidget(self.run_mc_button)
-
-        self.mc_results_label = QLabel("模擬結果將顯示於此")
-        self.mc_results_label.setWordWrap(True)
-        mc_layout.addWidget(self.mc_results_label)
-
-        mc_layout.addStretch()
-        self.tab_advanced_analysis.layout().addWidget(mc_group)
 
         # --- RCPSP 排程區塊 ---
         rcpsp_group = QWidget()
@@ -574,8 +620,54 @@ class BirdmanQtApp(QMainWindow):
         rcpsp_layout.addStretch()
         self.tab_advanced_analysis.layout().addWidget(rcpsp_group)
 
+        # --- 蒙地卡羅模擬分頁 ---
+        mc_main_layout = QVBoxLayout()
+        self.tab_monte_carlo.setLayout(mc_main_layout)
+
+        mc_top_layout = QHBoxLayout()
+        mc_main_layout.addLayout(mc_top_layout)
+
+        mc_top_layout.addWidget(QLabel('分析對象:'))
+        self.mc_role_select_combo = QComboBox()
+        self.mc_role_select_combo.addItems(['新手 (Novice)', '專家 (Expert)'])
+        mc_top_layout.addWidget(self.mc_role_select_combo)
+
+        mc_top_layout.addWidget(QLabel('模擬次數:'))
+        self.mc_iterations_spinbox = QSpinBox()
+        self.mc_iterations_spinbox.setMaximum(100000)
+        self.mc_iterations_spinbox.setValue(1000)
+        mc_top_layout.addWidget(self.mc_iterations_spinbox)
+
+        self.mc_run_button = QPushButton('開始模擬')
+        mc_top_layout.addWidget(self.mc_run_button)
+
+        self.mc_progress_bar = QProgressBar()
+        mc_top_layout.addWidget(self.mc_progress_bar)
+        mc_top_layout.addStretch()
+
+        mc_result_layout = QHBoxLayout()
+        mc_main_layout.addLayout(mc_result_layout)
+
+        self.mc_figure = Figure(figsize=(5, 4))
+        self.mc_canvas = FigureCanvas(self.mc_figure)
+        mc_result_layout.addWidget(self.mc_canvas)
+
+        mc_stats_layout = QVBoxLayout()
+        self.mc_mean_label = QLabel('平均總工時：-')
+        self.mc_std_label = QLabel('標準差：-')
+        self.mc_p50_label = QLabel('50% 完成機率：-')
+        self.mc_p85_label = QLabel('85% 完成機率：-')
+        self.mc_p95_label = QLabel('95% 完成機率：-')
+        mc_stats_layout.addWidget(self.mc_mean_label)
+        mc_stats_layout.addWidget(self.mc_std_label)
+        mc_stats_layout.addWidget(self.mc_p50_label)
+        mc_stats_layout.addWidget(self.mc_p85_label)
+        mc_stats_layout.addWidget(self.mc_p95_label)
+        mc_stats_layout.addStretch()
+        mc_result_layout.addLayout(mc_stats_layout)
+
         # --- 按鈕連接 ---
-        self.run_mc_button.clicked.connect(self.run_monte_carlo_simulation)
+        self.mc_run_button.clicked.connect(self.run_monte_carlo_simulation)
         self.run_rcpsp_button.clicked.connect(self.run_rcpsp_optimization)
 
         # 甘特圖情境切換下拉選單
@@ -1475,13 +1567,65 @@ class BirdmanQtApp(QMainWindow):
         except (OSError, ValueError) as e:
             QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
 
-    def run_monte_carlo_simulation(self):
-        """開啟蒙地卡羅模擬對話框"""
+    def run_monte_carlo_simulation(self) -> None:
+        """執行蒙地卡羅模擬"""
         if self.merged_graph is None or self.merged_wbs is None:
             QMessageBox.warning(self, '警告', '請先執行完整分析')
             return
-        dialog = MonteCarloDialog(self.merged_wbs, self.merged_graph, self)
-        dialog.exec_()
+
+        self.mc_run_button.setEnabled(False)
+        role_key = (
+            'newbie'
+            if self.mc_role_select_combo.currentText() == '新手 (Novice)'
+            else 'expert'
+        )
+        iterations = self.mc_iterations_spinbox.value()
+        self.mc_progress_bar.setMaximum(iterations)
+        self.mc_progress_bar.setValue(0)
+
+        self.mc_thread = QThread()
+        self.mc_worker = MonteCarloWorker(
+            self.merged_wbs, self.merged_graph, role_key, iterations
+        )
+        self.mc_worker.moveToThread(self.mc_thread)
+        self.mc_thread.started.connect(self.mc_worker.run)
+        self.mc_worker.progress.connect(self.mc_progress_bar.setValue)
+        self.mc_worker.finished.connect(self.simulation_finished)
+        self.mc_worker.finished.connect(self.mc_thread.quit)
+        self.mc_worker.finished.connect(self.mc_worker.deleteLater)
+        self.mc_thread.finished.connect(self.mc_thread.deleteLater)
+        self.mc_thread.start()
+
+    def simulation_finished(self, results: list[float]) -> None:
+        """模擬完成後處理結果"""
+        self.mc_run_button.setEnabled(True)
+        if not results:
+            QMessageBox.information(self, '模擬完成', '無有效結果')
+            return
+        self.plot_results(results)
+
+    def plot_results(self, results: list[float]) -> None:
+        """顯示模擬結果"""
+        arr = np.array(results, dtype=float)
+        avg = float(arr.mean())
+        std = float(arr.std())
+        p50 = float(np.percentile(arr, 50))
+        p85 = float(np.percentile(arr, 85))
+        p95 = float(np.percentile(arr, 95))
+
+        self.mc_mean_label.setText(f'平均總工時：{avg:.2f}')
+        self.mc_std_label.setText(f'標準差：{std:.2f}')
+        self.mc_p50_label.setText(f'50% 完成機率：{p50:.2f}')
+        self.mc_p85_label.setText(f'85% 完成機率：{p85:.2f}')
+        self.mc_p95_label.setText(f'95% 完成機率：{p95:.2f}')
+
+        self.mc_figure.clear()
+        ax = self.mc_figure.add_subplot(111)
+        ax.hist(arr, bins=30, color='skyblue', edgecolor='black')
+        ax.set_title('完工時間分佈')
+        ax.set_xlabel('工時 (小時)')
+        ax.set_ylabel('頻率')
+        self.mc_canvas.draw()
 
     def run_rcpsp_optimization(self):
         """執行 RCPSP 資源排程"""
