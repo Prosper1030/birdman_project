@@ -164,7 +164,7 @@ def main():
         print("開始執行 RCPSP 排程...")
         cmp_params = config.get("cmp_params", {})
         duration_field = args.duration_field or cmp_params.get(
-            "default_duration_field", "Te_expert"
+            "default_duration_field", "Te_newbie"
         )
         schedule = solveRcpsp(merged_graph, merged, duration_field)
         merged["Start"] = merged["Task ID"].map(schedule).fillna(0)
@@ -190,7 +190,7 @@ def main():
         print("開始執行 CPM 分析...")
         cmp_params = config.get('cmp_params', {})
         duration_field = args.duration_field or cmp_params.get(
-            'default_duration_field', 'Te_expert'
+            'default_duration_field', 'Te_newbie'
         )
 
         # 以合併後的 WBS 取得工時

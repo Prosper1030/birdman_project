@@ -122,7 +122,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 ```
 
 執行後會在目前目錄產生 `sorted_wbs.csv`、`merged_wbs.csv` 及 `sorted_dsm.csv`。
-若加上 `--cmp` 參數，會同時輸出 `cmp_analysis.csv`，並可使用 `--export-gantt` 匯出甘特圖、`--export-graph` 匯出依賴關係圖。工期欄位可透過 `--duration-field` 指定。
+若加上 `--cmp` 參數，會同時輸出 `cmp_analysis.csv`，並可使用 `--export-gantt` 匯出甘特圖、`--export-graph` 匯出依賴關係圖。工期欄位預設採用 `config.json` 中的 `default_duration_field`（預設 `Te_newbie`），亦可透過 `--duration-field` 指定。
 若需評估工期分佈，可加入 `--monte-carlo 500` 執行 500 次模擬，信心水準可用 `--mc-confidence 0.9` 指定（預設為 0.9）。
 
 若需執行資源受限排程，可加入 `--rcpsp-opt`，將產生 `rcpsp_schedule.csv`。
