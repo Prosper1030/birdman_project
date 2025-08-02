@@ -603,7 +603,6 @@ class BirdmanQtApp(QMainWindow):
         self.tab_cmp_result.layout().addLayout(cpm_top_layout)
         self.tab_cmp_result.layout().addWidget(self.cmp_result_view)
         self.tab_gantt_chart.setLayout(QVBoxLayout())
-        self.tab_monte_carlo.setLayout(QVBoxLayout())
         self.tab_advanced_analysis.setLayout(QVBoxLayout())
 
         # --- RCPSP 排程區塊 ---
