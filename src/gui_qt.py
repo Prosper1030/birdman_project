@@ -54,10 +54,10 @@ from .cpm_processor import (
     calculateSlack,
     findCriticalPath,
     extractDurationFromWbs,
-    monteCarloSchedule,
 )
 from .rcpsp_solver import solveRcpsp
 from . import visualizer
+from .core import run_monte_carlo_simulation
 
 
 class PandasModel(QAbstractTableModel):
@@ -541,8 +541,11 @@ class BirdmanQtApp(QMainWindow):
         mc_layout.addWidget(mc_title)
 
         mc_form_layout = QFormLayout()
+        self.mc_role_select = QComboBox()
+        self.mc_role_select.addItems(["新手 (Novice)", "專家 (Expert)"])
         self.mc_iterations_input = QLineEdit("1000")
         self.mc_confidence_input = QLineEdit("0.95")
+        mc_form_layout.addRow("模擬角色 (Role):", self.mc_role_select)
         mc_form_layout.addRow("模擬次數 (Iterations):", self.mc_iterations_input)
         mc_form_layout.addRow("信心水準 (Confidence):", self.mc_confidence_input)
         mc_layout.addLayout(mc_form_layout)
@@ -1108,8 +1111,15 @@ class BirdmanQtApp(QMainWindow):
 
         QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
 
-    def drawGanttChart(self, cpmData, durations, roleText, wbsDf):
-        """繪製甘特圖並回傳 Figure"""
+    def drawGanttChart(self, cpmData, durations, title, wbsDf):
+        """繪製甘特圖並回傳 Figure
+
+        參數:
+            cpmData: CPM 計算結果
+            durations: 任務工期字典
+            title: 圖表標題
+            wbsDf: 含任務順序的 WBS 資料
+        """
         try:
             fig = Figure(figsize=(16, 12), dpi=100)
             ax = fig.add_subplot(111)
@@ -1183,7 +1193,7 @@ class BirdmanQtApp(QMainWindow):
                 color=plt.rcParams['axes.labelcolor'],
             )
             ax.set_title(
-                f'專案甘特圖 - {roleText} (紅色為關鍵路徑)',
+                title,
                 fontsize=14,
                 pad=20,
                 color=plt.rcParams['axes.labelcolor'],
@@ -1241,8 +1251,8 @@ class BirdmanQtApp(QMainWindow):
         self.cmp_result_view.setModel(
             PandasModel(self.current_display_cpm_df.head(100))
         )
-        role_text = '新手' if role_key == 'novice' else '專家'
         self.total_hours_label.setText(f'總工時：{project_end:.1f} 小時')
+        new_title = f"{key}\n總工時: {project_end:.2f} 小時"
 
         # 先清除舊的圖表
         layout = self.gantt_container.layout()
@@ -1253,7 +1263,10 @@ class BirdmanQtApp(QMainWindow):
 
         # 重新產生甘特圖並加入佈局
         self.gantt_figure = self.drawGanttChart(
-            cpm_df, durations, role_text, wbs_df
+            cpm_df,
+            durations,
+            new_title,
+            wbs_df,
         )
         self.gantt_canvas = FigureCanvas(self.gantt_figure)
         scroll_area = QScrollArea()
@@ -1477,26 +1490,29 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.critical(self, '輸入錯誤', f'參數無效：{e}')
             return
 
-        # 預設使用 newbie 的 O/M/P
-        base_fields = ["O_newbie", "M_newbie", "P_newbie"]
+        role_text = self.mc_role_select.currentText()
+        role_key = 'newbie' if '新手' in role_text else 'expert'
+        base_fields = [f"O_{role_key}", f"M_{role_key}", f"P_{role_key}"]
         if not all(f in self.merged_wbs.columns for f in base_fields):
             QMessageBox.critical(
-                self, '錯誤', '合併後的 WBS 缺少 O/M/P_newbie 欄位，無法執行模擬'
+                self,
+                '錯誤',
+                f'合併後的 WBS 缺少 {"/".join(base_fields)} 欄位，無法執行模擬'
             )
             return
 
         try:
-            o_dur = extractDurationFromWbs(self.merged_wbs, base_fields[0])
-            m_dur = extractDurationFromWbs(self.merged_wbs, base_fields[1])
-            p_dur = extractDurationFromWbs(self.merged_wbs, base_fields[2])
-
-            result = monteCarloSchedule(
-                self.merged_graph, o_dur, m_dur, p_dur, iterations, confidence
+            result = run_monte_carlo_simulation(
+                self.merged_graph,
+                self.merged_wbs,
+                iterations=iterations,
+                confidence=confidence,
+                role_key=role_key,
             )
 
             conf_pct = int(confidence * 100)
             result_text = (
-                f"<b>蒙地卡羅模擬結果 (基於 O/M/P_newbie):</b><br>"
+                f"<b>蒙地卡羅模擬結果 (基於 O/M/P_{role_key}):</b><br>"
                 f"平均完工時間: {result['average']:.2f} 小時<br>"
                 f"標準差: {result['std']:.2f} 小時<br>"
                 f"最短完工時間: {result['min']:.2f} 小時<br>"
