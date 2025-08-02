@@ -13,7 +13,7 @@ def test_cli_cpm(tmp_path):
     dsm = "Task ID,A,B,C\nA,0,1,1\nB,0,0,0\nC,0,0,0\n"
     dsm_path.write_text(dsm, encoding='utf-8')
 
-    wbs = "Task ID,TRF,Te_expert\nA,1,1\nB,1,1\nC,1,1\n"
+    wbs = "Task ID,TRF,Te_newbie\nA,1,1\nB,1,1\nC,1,1\n"
     wbs_path.write_text(wbs, encoding='utf-8')
 
     cmd = [
