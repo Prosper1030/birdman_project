@@ -9,7 +9,7 @@ from src.dsm_processor import (
     reorderDsm,
     buildTaskMapping,
     buildMergedDsm,
-    process_dsm,
+    processDsm,
 )
 from src.wbs_processor import readWbs, mergeByScc, validateIds
 from src.cpm_processor import (
@@ -26,7 +26,7 @@ from src import visualizer
 from matplotlib.figure import Figure
 
 
-def _save_figure(fig: Figure, path: str) -> None:
+def saveFigure(fig: Figure, path: str) -> None:
     """以副檔名決定輸出格式"""
     ext = Path(path).suffix.lower()
     fmt = 'png' if ext != '.svg' else 'svg'
@@ -37,20 +37,20 @@ def _save_figure(fig: Figure, path: str) -> None:
     fig.savefig(path, format=fmt, bbox_inches='tight', dpi=300)
 
 
-def save_gantt_chart(cpm_df, durations: dict[str, float], path: str) -> None:
+def saveGanttChart(cpmDf, durations: dict[str, float], path: str) -> None:
     """根據 CPM 結果輸出甘特圖"""
-    fig = Figure(figsize=(10, max(4, len(cpm_df) * 0.6)))
+    fig = Figure(figsize=(10, max(4, len(cpmDf) * 0.6)))
     ax = fig.add_subplot(111)
     fig.subplots_adjust(top=0.9, bottom=0.15, left=0.2, right=0.95)
-    tasks = cpm_df.index.tolist()
-    start_times = cpm_df['ES'].tolist()
-    task_durations = [durations.get(t, 0) for t in tasks]
-    y_pos = range(len(tasks))
-    colors = ['red' if cpm_df.at[t, 'Critical'] else 'skyblue' for t in tasks]
+    tasks = cpmDf.index.tolist()
+    startTimes = cpmDf['ES'].tolist()
+    taskDurations = [durations.get(t, 0) for t in tasks]
+    yPos = range(len(tasks))
+    colors = ['red' if cpmDf.at[t, 'Critical'] else 'skyblue' for t in tasks]
     ax.barh(
-        y_pos,
-        task_durations,
-        left=start_times,
+        yPos,
+        taskDurations,
+        left=startTimes,
         color=colors,
         alpha=0.8,
         height=0.6,
@@ -58,13 +58,13 @@ def save_gantt_chart(cpm_df, durations: dict[str, float], path: str) -> None:
         linewidth=1,
         zorder=2,
     )
-    ax.set_yticks(list(y_pos))
+    ax.set_yticks(list(yPos))
     ax.set_yticklabels(tasks, fontsize=10, fontweight='bold')
     ax.grid(True, axis='x', linestyle='--', color='gray', alpha=0.3, zorder=1)
     ax.set_axisbelow(True)
     ax.set_xlabel('時間 (小時)', fontsize=11, fontweight='bold')
     ax.set_title('專案甘特圖 (紅色為關鍵路徑)', fontsize=14, pad=20)
-    for i, (duration, start) in enumerate(zip(task_durations, start_times)):
+    for i, (duration, start) in enumerate(zip(taskDurations, startTimes)):
         if duration > 0:
             ax.text(
                 start + duration + 2,
@@ -75,7 +75,7 @@ def save_gantt_chart(cpm_df, durations: dict[str, float], path: str) -> None:
                 alpha=0.7,
             )
     ax.invert_yaxis()
-    _save_figure(fig, path)
+    saveFigure(fig, path)
 
 
 def main():
@@ -152,7 +152,7 @@ def main():
     # 根據映射產生合併後的 DSM
     merged_dsm_raw = buildMergedDsm(G, task_mapping)
     # 重新計算層次並建立合併後的依賴圖
-    merged_dsm, _merged_wbs_sorted, merged_graph = process_dsm(
+    merged_dsm, _merged_wbs_sorted, merged_graph = processDsm(
         merged_dsm_raw,
         merged,
     )
@@ -183,7 +183,7 @@ def main():
         fig = visualizer.create_dependency_graph_figure(
             G, scc_map, layer_map, viz_params
         )
-        _save_figure(fig, args.export_graph)
+        saveFigure(fig, args.export_graph)
         print(f"已匯出依賴關係圖至 {args.export_graph}")
 
     if args.cmp:
@@ -224,7 +224,7 @@ def main():
         print(f"關鍵路徑：{' → '.join(critical_path)}")
 
         if args.export_gantt:
-            save_gantt_chart(cpm_result, durations_hours, args.export_gantt)
+            saveGanttChart(cpm_result, durations_hours, args.export_gantt)
             print(f"已匯出甘特圖至 {args.export_gantt}")
 
         if args.monte_carlo > 0:

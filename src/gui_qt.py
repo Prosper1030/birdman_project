@@ -46,7 +46,7 @@ from PyQt5.QtCore import QAbstractTableModel
 
 from .dsm_processor import (
     readDsm,
-    process_dsm,
+    processDsm,
     buildTaskMapping,
     buildMergedDsm,
 )
@@ -920,7 +920,7 @@ class BirdmanQtApp(QMainWindow):
             # 統一設定圖表主題顏色
             self.configure_chart_theme()
 
-            sorted_dsm, sorted_wbs, graph = process_dsm(dsm, wbs)
+            sorted_dsm, sorted_wbs, graph = processDsm(dsm, wbs)
             self.sorted_wbs = self._add_no_column(sorted_wbs)
             self.sorted_dsm = sorted_dsm
             self.graph = graph  # 儲存圖形物件供後續使用
@@ -937,7 +937,7 @@ class BirdmanQtApp(QMainWindow):
                 self.merged_dsm,
                 merged_sorted_wbs,
                 self.merged_graph,
-            ) = process_dsm(
+            ) = processDsm(
                 merged_dsm,
                 merged,
             )
