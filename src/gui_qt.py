@@ -57,7 +57,7 @@ from .cpm_processor import (
 )
 from .rcpsp_solver import solveRcpsp
 from . import visualizer
-from .core import run_monte_carlo_simulation
+from .ui.dialogs.monte_carlo_dialog import MonteCarloDialog
 
 
 class PandasModel(QAbstractTableModel):
@@ -1476,54 +1476,12 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
 
     def run_monte_carlo_simulation(self):
-        """執行蒙地卡羅模擬"""
+        """開啟蒙地卡羅模擬對話框"""
         if self.merged_graph is None or self.merged_wbs is None:
             QMessageBox.warning(self, '警告', '請先執行完整分析')
             return
-
-        try:
-            iterations = int(self.mc_iterations_input.text())
-            confidence = float(self.mc_confidence_input.text())
-            if not (0 < confidence < 1):
-                raise ValueError("信心水準必須介於 0 和 1 之間")
-        except ValueError as e:
-            QMessageBox.critical(self, '輸入錯誤', f'參數無效：{e}')
-            return
-
-        role_text = self.mc_role_select.currentText()
-        role_key = 'newbie' if '新手' in role_text else 'expert'
-        base_fields = [f"O_{role_key}", f"M_{role_key}", f"P_{role_key}"]
-        if not all(f in self.merged_wbs.columns for f in base_fields):
-            QMessageBox.critical(
-                self,
-                '錯誤',
-                f'合併後的 WBS 缺少 {"/".join(base_fields)} 欄位，無法執行模擬'
-            )
-            return
-
-        try:
-            result = run_monte_carlo_simulation(
-                self.merged_graph,
-                self.merged_wbs,
-                iterations=iterations,
-                confidence=confidence,
-                role_key=role_key,
-            )
-
-            conf_pct = int(confidence * 100)
-            result_text = (
-                f"<b>蒙地卡羅模擬結果 (基於 O/M/P_{role_key}):</b><br>"
-                f"平均完工時間: {result['average']:.2f} 小時<br>"
-                f"標準差: {result['std']:.2f} 小時<br>"
-                f"最短完工時間: {result['min']:.2f} 小時<br>"
-                f"最長完工時間: {result['max']:.2f} 小時<br>"
-                f"<b>{conf_pct}% 信心水準下，專案可在 "
-                f"{result['confidence_value']:.2f} 小時內完成。</b>"
-            )
-            self.mc_results_label.setText(result_text)
-
-        except Exception as e:
-            QMessageBox.critical(self, '模擬失敗', f'執行蒙地卡羅模擬時發生錯誤：{e}')
+        dialog = MonteCarloDialog(self.merged_wbs, self.merged_graph, self)
+        dialog.exec_()
 
     def run_rcpsp_optimization(self):
         """執行 RCPSP 資源排程"""
