@@ -101,9 +101,13 @@ def create_dependency_graph_figure(
     # 2. 繪製邊線
     if critical_path_edges:
         # 分別繪製關鍵路徑和非關鍵路徑的邊線
-        critical_edges = [(u, v) for u, v in G.edges() if (u, v) in critical_path_edges]
-        non_critical_edges = [(u, v) for u, v in G.edges() if (u, v) not in critical_path_edges]
-        
+        critical_edges = [
+            (u, v) for u, v in G.edges() if (
+                u, v) in critical_path_edges]
+        non_critical_edges = [
+            (u, v) for u, v in G.edges() if (
+                u, v) not in critical_path_edges]
+
         # 繪製非關鍵路徑邊線（使用預設顏色）
         if non_critical_edges:
             nx.draw_networkx_edges(
@@ -119,7 +123,7 @@ def create_dependency_graph_figure(
                 connectionstyle='arc3,rad=0.1',
                 node_size=node_size,
             )
-        
+
         # 繪製關鍵路徑邊線（紅色）
         if critical_edges:
             nx.draw_networkx_edges(
