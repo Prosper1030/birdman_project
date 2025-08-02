@@ -63,24 +63,24 @@ def reorderDsm(dsm: pd.DataFrame, order: list[str]) -> pd.DataFrame:
     return dsm.loc[order, order]
 
 
-def process_dsm(
+def processDsm(
     dsm: pd.DataFrame,
     wbs: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame, nx.DiGraph]:
     """整合 DSM 與 WBS，回傳排序後的 DSM、WBS 以及依賴圖"""
     G = buildGraph(dsm)
-    layers, scc_map = computeLayersAndScc(G)
+    layers, sccMap = computeLayersAndScc(G)
 
-    wbs_sorted = wbs.copy()
-    wbs_sorted["Layer"] = wbs_sorted["Task ID"].map(
+    wbsSorted = wbs.copy()
+    wbsSorted["Layer"] = wbsSorted["Task ID"].map(
         layers).fillna(-1).astype(int)
-    wbs_sorted["SCC_ID"] = wbs_sorted["Task ID"].map(
-        scc_map).fillna(-1).astype(int)
-    wbs_sorted = wbs_sorted.sort_values(
+    wbsSorted["SCC_ID"] = wbsSorted["Task ID"].map(
+        sccMap).fillna(-1).astype(int)
+    wbsSorted = wbsSorted.sort_values(
         by=["Layer", "Task ID"]).reset_index(drop=True)
 
-    sorted_dsm = reorderDsm(dsm, wbs_sorted["Task ID"].tolist())
-    return sorted_dsm, wbs_sorted, G
+    sortedDsm = reorderDsm(dsm, wbsSorted["Task ID"].tolist())
+    return sortedDsm, wbsSorted, G
 
 
 def buildTaskMapping(
