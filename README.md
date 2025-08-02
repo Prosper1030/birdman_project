@@ -114,6 +114,14 @@ pip install -r requirements.txt
 python -m src.gui_qt
 ```
 
+#### 蒙地卡羅模擬快速視窗
+
+```bash
+python src/ui/main_window.py
+```
+
+可獨立開啟含「開始模擬」按鈕的蒙地卡羅介面。
+
 #### 進階 GUI 功能
 
 1. **檔案操作**

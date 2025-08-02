@@ -237,3 +237,14 @@ class MainWindow(QWidget):
         ax.set_xlabel('工時 (小時)')
         ax.set_ylabel('頻率')
         self.mc_canvas.draw()
+
+
+# 提供獨立執行的入口
+if __name__ == "__main__":
+    import sys
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication(sys.argv)
+    win = MainWindow()
+    win.show()
+    sys.exit(app.exec_())
