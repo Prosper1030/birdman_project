@@ -152,9 +152,10 @@ class MainWindow(QWidget):
         result_layout.addLayout(stats_layout)
 
         container.addLayout(result_layout)
-
-        self.mc_run_button.clicked.connect(self.run_monte_carlo_simulation)
         self.setLayout(container)
+
+        # 連接模擬按鈕的事件，按下後執行蒙地卡羅模擬
+        self.mc_run_button.clicked.connect(self.run_monte_carlo_simulation)
 
     def run_monte_carlo_simulation(self) -> None:
         """執行蒙地卡羅模擬"""
