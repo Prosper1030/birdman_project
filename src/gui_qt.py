@@ -255,7 +255,9 @@ class BirdmanQtApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Birdman Project 進階 GUI')
-        self.resize(1000, 600)
+        # 設定更合適的初始窗口尺寸和最小尺寸
+        self.setMinimumSize(800, 600)
+        self.resize(1200, 800)
         self.dsm_path = ''
         self.wbs_path = ''
         self.sorted_wbs = None
@@ -271,6 +273,13 @@ class BirdmanQtApp(QMainWindow):
         self.merged_graph_canvas = None
         self.gantt_figure = None
         self.gantt_canvas = None
+        
+        # 蒙地卡羅模擬相關初始化
+        self.mc_figure = None
+        self.mc_canvas = None
+        self.mc_last_results = None
+        self.mc_thread = None
+        self.mc_worker = None
 
         # CPM 分析相關資料
         self.cmp_result = None
@@ -308,6 +317,112 @@ class BirdmanQtApp(QMainWindow):
             self.k_params = self.default_k_params
 
         self.initUI()
+
+    def configure_chart_theme(self):
+        """統一設定所有圖表的深色模式顏色，以蒙地卡羅圖表為標準"""
+        if self.is_dark_mode:
+            # 統一的深色背景色（以蒙地卡羅為標準）
+            dark_bg_color = '#2b2b2b'
+            text_color = 'white'
+            grid_color = '#555555'
+            edge_color = '#666666'
+            
+            # 更新 matplotlib 的全域設定
+            plt.rcParams.update({
+                'figure.facecolor': dark_bg_color,
+                'axes.facecolor': dark_bg_color,
+                'axes.labelcolor': text_color,
+                'axes.edgecolor': edge_color,
+                'text.color': text_color,
+                'xtick.color': text_color,
+                'ytick.color': text_color,
+                'grid.color': grid_color,
+                'axes.spines.left': True,
+                'axes.spines.bottom': True,
+                'axes.spines.top': True,
+                'axes.spines.right': True,
+            })
+        else:
+            # 淺色模式
+            light_bg_color = 'white'
+            text_color = 'black'
+            grid_color = '#cccccc'
+            edge_color = 'black'
+            
+            plt.rcParams.update({
+                'figure.facecolor': light_bg_color,
+                'axes.facecolor': light_bg_color,
+                'axes.labelcolor': text_color,
+                'axes.edgecolor': edge_color,
+                'text.color': text_color,
+                'xtick.color': text_color,
+                'ytick.color': text_color,
+                'grid.color': grid_color,
+                'axes.spines.left': True,
+                'axes.spines.bottom': True,
+                'axes.spines.top': True,
+                'axes.spines.right': True,
+            })
+
+    def get_critical_path_edges(self, graph, critical_path_nodes):
+        """將關鍵路徑節點轉換為關鍵路徑邊線集合"""
+        if not critical_path_nodes or len(critical_path_nodes) < 2:
+            return set()
+        
+        critical_edges = set()
+        for i in range(len(critical_path_nodes) - 1):
+            current_node = critical_path_nodes[i]
+            next_node = critical_path_nodes[i + 1]
+            
+            # 檢查圖中是否存在這個邊
+            if graph.has_edge(current_node, next_node):
+                critical_edges.add((current_node, next_node))
+        
+        return critical_edges
+
+    def closeEvent(self, event):
+        """處理視窗關閉事件，確保正確清理 QThread"""
+        # 檢查是否有正在運行的蒙地卡羅模擬
+        if hasattr(self, 'mc_thread') and self.mc_thread is not None:
+            try:
+                if self.mc_thread.isRunning():
+                    # 詢問用戶是否要強制關閉
+                    reply = QMessageBox.question(
+                        self, 
+                        '確認關閉', 
+                        '蒙地卡羅模擬正在進行中，強制關閉可能導致數據丟失。\n確定要關閉應用程式嗎？',
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
+                    )
+                    
+                    if reply == QMessageBox.No:
+                        event.ignore()
+                        return
+                    
+                    # 用戶選擇強制關閉，停止線程和工作對象
+                    if hasattr(self, 'mc_worker') and self.mc_worker is not None:
+                        # 斷開信號連接，避免在清理過程中觸發信號
+                        try:
+                            self.mc_worker.progress.disconnect()
+                            self.mc_worker.finished.disconnect()
+                        except (RuntimeError, TypeError):
+                            pass
+                    
+                    # 終止線程
+                    self.mc_thread.terminate()
+                    self.mc_thread.wait(3000)  # 等待3秒讓線程正常結束
+                    
+                    if self.mc_thread.isRunning():
+                        # 如果還在運行，強制終止
+                        self.mc_thread.quit()
+                        self.mc_thread.wait(1000)
+                        
+            except RuntimeError:
+                # 線程已被刪除，正常繼續
+                pass
+        
+        # 接受關閉事件
+        event.accept()
 
     def initUI(self):
         main_widget = QWidget()
@@ -449,6 +564,19 @@ class BirdmanQtApp(QMainWindow):
         )
         export_cpm_menu.addAction(export_cpm_xlsx)
 
+        # 蒙地卡羅匯出
+        export_mc_menu = export_menu.addMenu('匯出蒙地卡羅分析')
+        export_mc_png = QAction('存成 PNG 圖片... (.png)', self)
+        export_mc_png.triggered.connect(
+            partial(self.export_monte_carlo_chart, 'png')
+        )
+        export_mc_menu.addAction(export_mc_png)
+        export_mc_svg = QAction('存成 SVG 圖片... (.svg)', self)
+        export_mc_svg.triggered.connect(
+            partial(self.export_monte_carlo_chart, 'svg')
+        )
+        export_mc_menu.addAction(export_mc_svg)
+
         # 執行分析按鈕
         self.full_analysis_button = QPushButton('執行完整分析 (Run Full Analysis)')
         self.full_analysis_button.clicked.connect(self.run_full_analysis)
@@ -456,10 +584,8 @@ class BirdmanQtApp(QMainWindow):
         setup_layout.addLayout(self.path_layout)
         setup_layout.addWidget(self.full_analysis_button)
 
-        # 分析結果分頁集合
+        # 分析結果分頁集合 (移除原始DSM和原始WBS)
         self.tabs_results = QTabWidget()
-        self.tab_raw_dsm = QWidget()
-        self.tab_raw_wbs = QWidget()
         self.tab_sorted_wbs = QWidget()
         self.tab_merged_wbs = QWidget()
         self.tab_merged_dsm = QWidget()
@@ -470,13 +596,12 @@ class BirdmanQtApp(QMainWindow):
         self.tab_gantt_chart = QWidget()
         self.tab_monte_carlo = QWidget()
         self.tab_advanced_analysis = QWidget()  # 新增進階分析分頁
-        self.tabs_results.addTab(self.tab_raw_dsm, '原始 DSM')
-        self.tabs_results.addTab(self.tab_raw_wbs, '原始 WBS')
+        # 按照要求的順序：先排序，再合併，最後依賴關係圖
         self.tabs_results.addTab(self.tab_sorted_wbs, '排序 WBS')
-        self.tabs_results.addTab(self.tab_merged_wbs, '合併 WBS')
-        self.tabs_results.addTab(self.tab_merged_dsm, '合併 DSM')
         self.tabs_results.addTab(self.tab_sorted_dsm, '排序 DSM')
         self.tabs_results.addTab(self.tab_graph, '依賴關係圖')
+        self.tabs_results.addTab(self.tab_merged_wbs, '合併 WBS')
+        self.tabs_results.addTab(self.tab_merged_dsm, '合併 DSM')
         self.tabs_results.addTab(self.tab_merged_graph, '合併後依賴圖')
         self.tabs_results.addTab(self.tab_cmp_result, 'CPM 分析結果')
         self.tabs_results.addTab(self.tab_gantt_chart, '甘特圖')
@@ -487,9 +612,7 @@ class BirdmanQtApp(QMainWindow):
         main_widget.setLayout(main_layout)
         self.setCentralWidget(main_widget)
 
-        # 表格
-        self.raw_dsm_view = QTableView()
-        self.raw_wbs_view = QTableView()
+        # 表格 (移除原始DSM和原始WBS視圖)
         self.sorted_wbs_view = QTableView()
         self.merged_wbs_view = QTableView()
         self.sorted_dsm_view = QTableView()
@@ -510,8 +633,8 @@ class BirdmanQtApp(QMainWindow):
         self.dsm_preview_tab.setLayout(QVBoxLayout())
         self.dsm_preview_tab.layout().addWidget(self.dsm_preview)
 
-        setup_layout.addWidget(self.preview_tabs)
-        setup_layout.addWidget(self.full_analysis_button)
+        setup_layout.addWidget(self.preview_tabs, 1)  # 設定伸縮比例，讓預覽區域可以伸縮
+        # 移除重複的按鈕添加，按鈕已經在前面加入過了
         # 依賴關係圖容器（Canvas 之後動態加入）
         self.graph_container = QWidget()
         self.graph_container_layout = QVBoxLayout(self.graph_container)
@@ -564,20 +687,14 @@ class BirdmanQtApp(QMainWindow):
 
         # 只在 WBS 相關表格隱藏行號
         for view in [
-            self.raw_wbs_view,
             self.sorted_wbs_view,
             self.merged_wbs_view,
             self.cmp_result_view,
         ]:
             view.verticalHeader().setVisible(False)
         # DSM 表格顯示行號 (Task ID)
-        self.raw_dsm_view.verticalHeader().setVisible(True)
         self.sorted_dsm_view.verticalHeader().setVisible(True)
         self.merged_dsm_view.verticalHeader().setVisible(True)
-        self.tab_raw_dsm.setLayout(QVBoxLayout())
-        self.tab_raw_dsm.layout().addWidget(self.raw_dsm_view)
-        self.tab_raw_wbs.setLayout(QVBoxLayout())
-        self.tab_raw_wbs.layout().addWidget(self.raw_wbs_view)
         self.tab_sorted_wbs.setLayout(QVBoxLayout())
         self.tab_sorted_wbs.layout().addWidget(self.sorted_wbs_view)
         self.tab_merged_wbs.setLayout(QVBoxLayout())
@@ -594,12 +711,17 @@ class BirdmanQtApp(QMainWindow):
         )
         self.tab_cmp_result.setLayout(QVBoxLayout())
         cpm_top_layout = QHBoxLayout()
-        cpm_top_layout.addStretch()
+        
+        # 左邊完整的控制區域
+        cpm_display_label = QLabel('顯示模式：')
+        cpm_top_layout.addWidget(cpm_display_label)
         self.cpm_display_combo = QComboBox()
         self.cpm_display_combo.currentIndexChanged.connect(
             self.update_cpm_display
         )
         cpm_top_layout.addWidget(self.cpm_display_combo)
+        
+        cpm_top_layout.addStretch()
         self.tab_cmp_result.layout().addLayout(cpm_top_layout)
         self.tab_cmp_result.layout().addWidget(self.cmp_result_view)
         self.tab_gantt_chart.setLayout(QVBoxLayout())
@@ -647,35 +769,64 @@ class BirdmanQtApp(QMainWindow):
         mc_result_layout = QHBoxLayout()
         mc_main_layout.addLayout(mc_result_layout)
 
-        self.mc_figure = Figure(figsize=(5, 4))
+        # 增大直方圖尺寸
+        self.mc_figure = Figure(figsize=(8, 5))
         self.mc_canvas = FigureCanvas(self.mc_figure)
+        
+        # 初始化空白圖表，根據當前模式設定顏色
+        self.initialize_monte_carlo_chart()
+        
         mc_result_layout.addWidget(self.mc_canvas)
 
+        # 統計資訊區域，調整寬度比例
+        mc_stats_widget = QWidget()
+        mc_stats_widget.setMaximumWidth(220)  # 限制統計區域寬度
         mc_stats_layout = QVBoxLayout()
+        mc_stats_widget.setLayout(mc_stats_layout)
+        
         self.mc_mean_label = QLabel('平均總工時：-')
         self.mc_std_label = QLabel('標準差：-')
         self.mc_p50_label = QLabel('50% 完成機率：-')
         self.mc_p85_label = QLabel('85% 完成機率：-')
         self.mc_p95_label = QLabel('95% 完成機率：-')
+        
+        # 設定標籤的字體和對齊
+        for label in [self.mc_mean_label, self.mc_std_label, self.mc_p50_label, 
+                     self.mc_p85_label, self.mc_p95_label]:
+            label.setAlignment(Qt.AlignLeft)
+            label.setStyleSheet("padding: 2px; margin: 1px;")
+        
         mc_stats_layout.addWidget(self.mc_mean_label)
         mc_stats_layout.addWidget(self.mc_std_label)
         mc_stats_layout.addWidget(self.mc_p50_label)
         mc_stats_layout.addWidget(self.mc_p85_label)
         mc_stats_layout.addWidget(self.mc_p95_label)
         mc_stats_layout.addStretch()
-        mc_result_layout.addLayout(mc_stats_layout)
+        
+        mc_result_layout.addWidget(mc_stats_widget)
 
         # --- 按鈕連接 ---
         self.mc_run_button.clicked.connect(self.run_monte_carlo_simulation)
         self.run_rcpsp_button.clicked.connect(self.run_rcpsp_optimization)
 
         # 甘特圖情境切換下拉選單
+        gantt_top_layout = QHBoxLayout()
+        
+        # 左邊角色選擇
+        role_label = QLabel('角色：')
+        gantt_top_layout.addWidget(role_label)
+        self.role_selection_combo = QComboBox()
+        self.role_selection_combo.addItems(['新手 (Novice)', '專家 (Expert)'])
+        gantt_top_layout.addWidget(self.role_selection_combo)
+        
+        # 中間的顯示模式選擇
         self.gantt_display_combo = QComboBox()
         self.gantt_display_combo.currentIndexChanged.connect(
             self.update_gantt_display
         )
-        gantt_top_layout = QHBoxLayout()
         gantt_top_layout.addWidget(self.gantt_display_combo)
+        
+        # 右邊的總工時顯示
         self.total_hours_label = QLabel('總工時：0 小時')
         gantt_top_layout.addWidget(self.total_hours_label)
         gantt_top_layout.addStretch()
@@ -685,6 +836,9 @@ class BirdmanQtApp(QMainWindow):
         self.gantt_container = QWidget()
         self.gantt_container.setLayout(QVBoxLayout())
         self.tab_gantt_chart.layout().addWidget(self.gantt_container)
+        
+        # 初始化圖表主題配置
+        self.configure_chart_theme()
 
     def chooseDsm(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -695,7 +849,6 @@ class BirdmanQtApp(QMainWindow):
             try:
                 dsm = readDsm(path)
                 model = PandasModel(dsm.head(100), dsm_mode=True)
-                self.raw_dsm_view.setModel(model)
                 self.dsm_preview.setModel(model)
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, '錯誤', f'DSM 載入失敗：{e}')
@@ -710,7 +863,6 @@ class BirdmanQtApp(QMainWindow):
                 wbs = readWbs(path)
                 wbs = self._add_no_column(wbs)
                 model = PandasModel(wbs.head(100))
-                self.raw_wbs_view.setModel(model)
                 self.wbs_preview.setModel(model)
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, '錯誤', f'WBS 載入失敗：{e}')
@@ -748,30 +900,25 @@ class BirdmanQtApp(QMainWindow):
         self.wbs_path_label.setText(wbs_path)
         self.dsm_path_label.setText(dsm_path)
         model_wbs = PandasModel(wbs_display.head(100))
-        self.raw_wbs_view.setModel(model_wbs)
         self.wbs_preview.setModel(model_wbs)
         model_dsm = PandasModel(dsm.head(100), dsm_mode=True)
-        self.raw_dsm_view.setModel(model_dsm)
         self.dsm_preview.setModel(model_dsm)
 
-    def runAnalysis(self):
+    def runAnalysis(self, show_notification=True):
         try:
             dsm = readDsm(self.dsm_path)
             wbs = readWbs(self.wbs_path)
-            # 預覽原始資料
+            # 預覽原始資料 (保留在預覽區，但不在分析結果顯示)
             model_dsm = PandasModel(dsm.head(100), dsm_mode=True)
-            self.raw_dsm_view.setModel(model_dsm)
             self.dsm_preview.setModel(model_dsm)
             wbs_with_no = self._add_no_column(wbs)
             model_wbs = PandasModel(wbs_with_no.head(100))
-            self.raw_wbs_view.setModel(model_wbs)
             self.wbs_preview.setModel(model_wbs)
 
             validateIds(wbs, dsm)
 
-            # 設定正確的圖表主題
-            plt.style.use(
-                'dark_background' if self.is_dark_mode else 'default')
+            # 統一設定圖表主題顏色
+            self.configure_chart_theme()
 
             sorted_dsm, sorted_wbs, graph = process_dsm(dsm, wbs)
             self.sorted_wbs = self._add_no_column(sorted_wbs)
@@ -846,7 +993,8 @@ class BirdmanQtApp(QMainWindow):
             # 啟用結果分頁並自動切換
             self.main_tabs.setTabEnabled(1, True)
             self.main_tabs.setCurrentIndex(1)
-            QMessageBox.information(self, '完成', '分析完成，可切換分頁預覽與匯出')
+            if show_notification:
+                QMessageBox.information(self, '完成', '分析完成，可切換分頁預覽與匯出')
             return True
         except Exception as e:  # pylint: disable=broad-except
             # 執行流程中可能發生多種錯誤，此處統一彙整顯示訊息
@@ -1037,8 +1185,8 @@ class BirdmanQtApp(QMainWindow):
             cmp_params = config.get('cmp_params', {})
             base_field = cmp_params.get('default_duration_field', 'Te_newbie')
 
-            role_choice = self.role_selection_combo.currentText()
-            role_suffix = 'newbie' if '新手' in role_choice else 'expert'
+            # 使用預設角色 newbie，或者可以從其他設定獲取
+            role_suffix = 'newbie'  # 預設使用新手角色
             parts_role = base_field.split('_', 1)
             if len(parts_role) == 2:
                 base_field = f"{parts_role[0]}_{role_suffix}"
@@ -1046,7 +1194,7 @@ class BirdmanQtApp(QMainWindow):
                 base_field = f"{base_field}_{role_suffix}"
 
             # 解析使用者選擇的情境
-            choice = self.time_selection_combo.currentText()
+            choice = self.gantt_display_combo.currentText()
             if choice == 'All Scenarios':
                 scenarios = ['O', 'P', 'M', 'Te']
             else:
@@ -1114,7 +1262,7 @@ class BirdmanQtApp(QMainWindow):
 
     def run_full_analysis(self):
         """執行所有情境的 CPM 分析"""
-        success = self.runAnalysis()
+        success = self.runAnalysis(show_notification=False)  # 不顯示基本分析通知
         if not success:
             return
 
@@ -1200,7 +1348,10 @@ class BirdmanQtApp(QMainWindow):
         self.cpm_display_combo.setCurrentIndex(default_index)
         self.update_gantt_display()
 
-        QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
+        QMessageBox.information(
+            self, '完整分析完成', 
+            f'已完成所有情境的 CPM 分析，共生成 {len(self.gantt_results)} 種情境結果'
+        )
 
     def drawGanttChart(self, cpmData, durations, title, wbsDf):
         """繪製甘特圖並回傳 Figure
@@ -1245,7 +1396,7 @@ class BirdmanQtApp(QMainWindow):
                 color=colors,
                 alpha=0.8,
                 height=0.6,
-                edgecolor='black',
+                edgecolor=plt.rcParams['axes.edgecolor'],
                 linewidth=1,
                 zorder=2,
             )
@@ -1339,6 +1490,10 @@ class BirdmanQtApp(QMainWindow):
             wbs_df, role_key, time_key
         )
         self.critical_path = findCriticalPath(cpm_df)
+        
+        # 更新關鍵路徑後，重繪合併後的依賴圖以顯示關鍵路徑
+        self.redraw_merged_graph()
+        
         self.cmp_result_view.setModel(
             PandasModel(self.current_display_cpm_df.head(100))
         )
@@ -1446,29 +1601,123 @@ class BirdmanQtApp(QMainWindow):
 
     def toggle_dark_mode(self, checked):
         """切換深色/淺色模式"""
-        if checked:
-            self.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
-            plt.style.use('dark_background')
-            self.is_dark_mode = True
-            self.dark_mode_action.setText('啟用淺色模式')
-        else:
-            self.setStyleSheet("")
-            plt.style.use('default')
-            self.is_dark_mode = False
-            self.dark_mode_action.setText('啟用深色模式')
+        try:
+            # 檢查是否有蒙地卡羅模擬正在進行
+            is_simulation_running = False
+            try:
+                is_simulation_running = (hasattr(self, 'mc_thread') and 
+                                       self.mc_thread is not None and
+                                       self.mc_thread.isRunning())
+            except RuntimeError:
+                # QThread 已被刪除，表示模擬已完成
+                is_simulation_running = False
+            
+            # 如果模擬正在進行，顯示警告並阻止切換
+            if is_simulation_running:
+                # 恢復原始狀態
+                self.dark_mode_action.blockSignals(True)
+                self.dark_mode_action.setChecked(self.is_dark_mode)
+                self.dark_mode_action.blockSignals(False)
+                QMessageBox.warning(
+                    self, 
+                    '無法切換主題', 
+                    '蒙地卡羅模擬進行中，請等待模擬完成後再進行任何操作。'
+                )
+                return
+            
+            # 保存當前窗口狀態
+            current_geometry = self.geometry()
+            was_maximized = self.isMaximized()
+            
+            if checked:
+                # 載入深色樣式表，包含標題欄
+                dark_style = qdarkstyle.load_stylesheet_pyqt5()
+                # 為標題欄添加額外的樣式
+                dark_style += """
+                QMainWindow {
+                    background-color: #2b2b2b;
+                    color: #ffffff;
+                }
+                QMenuBar {
+                    background-color: #353535;
+                    color: #ffffff;
+                    border: 1px solid #555555;
+                }
+                QMenuBar::item {
+                    background-color: transparent;
+                    color: #ffffff;
+                }
+                QMenuBar::item:selected {
+                    background-color: #4a90e2;
+                }
+                """
+                self.setStyleSheet(dark_style)
+                self.is_dark_mode = True
+                self.dark_mode_action.setText('啟用淺色模式')
+            else:
+                self.setStyleSheet("")
+                self.is_dark_mode = False
+                self.dark_mode_action.setText('啟用深色模式')
 
-        # --- 清除舊圖表 ---
-        if self.gantt_figure:
-            self.gantt_figure.clear()
-        if self.graph_figure:
-            self.graph_figure.clear()
-        if self.merged_graph_figure:
-            self.merged_graph_figure.clear()
+            # 處理窗口幾何問題
+            # 等待樣式應用完成
+            QApplication.processEvents()
+            
+            # 溫和地處理窗口狀態
+            if was_maximized:
+                # 如果之前是最大化，重新最大化
+                self.showMaximized()
+            else:
+                # 如果不是最大化狀態，只調整最小尺寸避免衝突
+                # 暫時放寬最小尺寸限制
+                self.setMinimumSize(600, 400)
+                QApplication.processEvents()
+                
+                # 嘗試恢復原始幾何，如果失敗則使用安全的尺寸
+                try:
+                    self.setGeometry(current_geometry)
+                except:
+                    # 如果恢復失敗，使用安全的尺寸
+                    self.resize(1200, 800)
+                
+                # 恢復合適的最小尺寸
+                self.setMinimumSize(800, 600)
+                
+            # 再次處理事件以確保佈局正確
+            QApplication.processEvents()
 
-        # 重繪圖表
-        self.redraw_graph()
-        if self.gantt_results:
-            self.update_gantt_display()
+            # 統一配置圖表主題顏色
+            self.configure_chart_theme()
+
+            # --- 清除舊圖表 ---
+            if hasattr(self, 'gantt_figure') and self.gantt_figure:
+                self.gantt_figure.clear()
+            if hasattr(self, 'graph_figure') and self.graph_figure:
+                self.graph_figure.clear()
+            if hasattr(self, 'merged_graph_figure') and self.merged_graph_figure:
+                self.merged_graph_figure.clear()
+            if hasattr(self, 'mc_figure') and self.mc_figure:
+                self.mc_figure.clear()
+
+            # 重繪圖表
+            self.redraw_graph()
+            if hasattr(self, 'gantt_results') and self.gantt_results:
+                self.update_gantt_display()
+            
+            # 重繪蒙地卡羅圖表
+            if hasattr(self, 'mc_last_results') and self.mc_last_results:
+                self.plot_results(self.mc_last_results)
+            else:
+                # 如果沒有結果，重新初始化空白圖表
+                self.initialize_monte_carlo_chart()
+                
+        except Exception as e:
+            # 如果主題切換過程中出現任何錯誤，顯示錯誤訊息但不崩潰
+            QMessageBox.warning(
+                self,
+                '主題切換警告',
+                f'主題切換過程中發生問題：{str(e)}\n程序將繼續正常運行。'
+            )
 
     def redraw_graph(self):
         """重新繪製依賴關係圖"""
@@ -1515,12 +1764,20 @@ class BirdmanQtApp(QMainWindow):
 
                 # 重新建立合併後圖
                 if self.merged_graph is not None:
+                    # 計算關鍵路徑邊線
+                    critical_path_edges = None
+                    if hasattr(self, 'critical_path') and self.critical_path:
+                        critical_path_edges = self.get_critical_path_edges(
+                            self.merged_graph, self.critical_path
+                        )
+                    
                     self.merged_graph_figure = (
                         visualizer.create_dependency_graph_figure(
                             self.merged_graph,
                             self.merged_scc_map,
                             self.merged_layer_map,
                             viz_params,
+                            critical_path_edges,
                         )
                     )
                     self.merged_graph_canvas = FigureCanvas(
@@ -1538,6 +1795,52 @@ class BirdmanQtApp(QMainWindow):
                         )
             except Exception as e:  # pylint: disable=broad-except
                 QMessageBox.warning(self, '警告', f'圖表重繪失敗：{e}')
+
+    def redraw_merged_graph(self):
+        """專門重繪合併後的依賴關係圖（包含關鍵路徑資訊）"""
+        if not hasattr(self, 'merged_graph') or self.merged_graph is None:
+            return
+            
+        try:
+            with open('config.json', 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            viz_params = config.get('visualization_params', {})
+
+            # 清除舊的合併圖 Canvas
+            for i in reversed(range(self.merged_graph_container_layout.count())):
+                old_widget = self.merged_graph_container_layout.itemAt(i).widget()
+                if old_widget:
+                    old_widget.setParent(None)
+
+            # 計算關鍵路徑邊線
+            critical_path_edges = None
+            if hasattr(self, 'critical_path') and self.critical_path:
+                critical_path_edges = self.get_critical_path_edges(
+                    self.merged_graph, self.critical_path
+                )
+
+            # 重新建立合併後圖
+            self.merged_graph_figure = (
+                visualizer.create_dependency_graph_figure(
+                    self.merged_graph,
+                    self.merged_scc_map,
+                    self.merged_layer_map,
+                    viz_params,
+                    critical_path_edges,
+                )
+            )
+            self.merged_graph_canvas = FigureCanvas(self.merged_graph_figure)
+            self.merged_graph_container_layout.addWidget(self.merged_graph_canvas)
+            self.merged_graph_canvas.draw()
+            
+            m_size = self.merged_graph_canvas.get_width_height()
+            if m_size[0] > 0 and m_size[1] > 0:
+                self.merged_graph_container.setMinimumSize(
+                    int(m_size[0] * 1.1),
+                    int(m_size[1] * 1.1),
+                )
+        except Exception as e:  # pylint: disable=broad-except
+            QMessageBox.warning(self, '警告', f'合併後依賴圖重繪失敗：{e}')
 
     def exportGanttChart(self, fmt='png'):
         """匯出甘特圖"""
@@ -1572,6 +1875,30 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.warning(self, '警告', '請先執行完整分析')
             return
 
+        # 清理舊的線程引用（如果存在）
+        if hasattr(self, 'mc_thread') and self.mc_thread is not None:
+            try:
+                if self.mc_thread.isRunning():
+                    QMessageBox.warning(self, '警告', '已有模擬正在進行中')
+                    return
+            except RuntimeError:
+                # 線程已被刪除，繼續執行
+                pass
+        
+        # 重置線程引用
+        self.mc_thread = None
+        self.mc_worker = None
+
+        # 禁用深色模式切換
+        self.dark_mode_action.setEnabled(False)
+        
+        # 禁用分頁切換
+        self.tabs_results.setEnabled(False)
+        self.main_tabs.setEnabled(False)
+        
+        # 禁用菜單欄
+        self.menuBar().setEnabled(False)
+        
         self.mc_run_button.setEnabled(False)
         role_key = (
             'newbie'
@@ -1587,24 +1914,69 @@ class BirdmanQtApp(QMainWindow):
             self.merged_wbs, self.merged_graph, role_key, iterations
         )
         self.mc_worker.moveToThread(self.mc_thread)
+        
+        # 連接信號
         self.mc_thread.started.connect(self.mc_worker.run)
         self.mc_worker.progress.connect(self.mc_progress_bar.setValue)
         self.mc_worker.finished.connect(self.simulation_finished)
         self.mc_worker.finished.connect(self.mc_thread.quit)
         self.mc_worker.finished.connect(self.mc_worker.deleteLater)
+        
+        # 確保線程完全結束後清理
+        self.mc_thread.finished.connect(lambda: setattr(self, 'mc_thread', None))
         self.mc_thread.finished.connect(self.mc_thread.deleteLater)
+        
         self.mc_thread.start()
 
     def simulation_finished(self, results: list[float]) -> None:
         """模擬完成後處理結果"""
-        self.mc_run_button.setEnabled(True)
-        if not results:
-            QMessageBox.information(self, '模擬完成', '無有效結果')
-            return
-        self.plot_results(results)
+        try:
+            self.mc_run_button.setEnabled(True)
+            
+            # 重新啟用深色模式切換
+            self.dark_mode_action.setEnabled(True)
+            
+            # 重新啟用分頁切換
+            self.tabs_results.setEnabled(True)
+            self.main_tabs.setEnabled(True)
+            
+            # 重新啟用菜單欄
+            self.menuBar().setEnabled(True)
+            
+            # 注意：線程引用將由信號連接自動清理，不要在這裡手動設置為 None
+            # 這是因為 lambda: setattr(self, 'mc_thread', None) 會在線程完全結束後執行
+            
+            if not results:
+                QMessageBox.information(self, '模擬完成', '無有效結果')
+                return
+            
+            # 繪製結果
+            self.plot_results(results)
+            
+            # 額外確保 UI 更新
+            QApplication.processEvents()
+            
+            # 強制更新蒙地卡羅分頁
+            self.tab_monte_carlo.update()
+            self.tab_monte_carlo.repaint()
+        except Exception as e:
+            # 即使處理結果時出錯，也要確保重新啟用控制項
+            self.mc_run_button.setEnabled(True)
+            self.dark_mode_action.setEnabled(True)
+            self.tabs_results.setEnabled(True)
+            self.main_tabs.setEnabled(True)
+            self.menuBar().setEnabled(True)
+            QMessageBox.critical(self, '錯誤', f'處理模擬結果時發生錯誤：{e}')
 
     def plot_results(self, results: list[float]) -> None:
         """顯示模擬結果"""
+        # 保存結果以便深色模式切換時重繪
+        self.mc_last_results = results
+        
+        # 設定中文字體
+        plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'SimHei', 'Arial Unicode MS', 'sans-serif']
+        plt.rcParams['axes.unicode_minus'] = False
+        
         arr = np.array(results, dtype=float)
         avg = float(arr.mean())
         std = float(arr.std())
@@ -1620,10 +1992,137 @@ class BirdmanQtApp(QMainWindow):
 
         self.mc_figure.clear()
         ax = self.mc_figure.add_subplot(111)
-        ax.hist(arr, bins=30, color='skyblue', edgecolor='black')
-        ax.set_title('完工時間分佈')
-        ax.set_xlabel('工時 (小時)')
-        ax.set_ylabel('頻率')
+        
+        # 計算合適的bin寬度以增大直方圖條
+        range_val = arr.max() - arr.min()
+        bin_width = range_val / 25  # 減少bins數量以增大條寬
+        
+        # 根據深色模式設定顏色
+        if self.is_dark_mode:
+            bar_color = 'lightblue'
+            edge_color = 'white'
+            text_color = 'white'
+            # 設定圖表背景為深色
+            self.mc_figure.patch.set_facecolor('#2b2b2b')
+            ax.set_facecolor('#2b2b2b')
+        else:
+            bar_color = 'skyblue'
+            edge_color = 'black'
+            text_color = 'black'
+            # 設定圖表背景為淺色
+            self.mc_figure.patch.set_facecolor('white')
+            ax.set_facecolor('white')
+        
+        # 繪製直方圖，增大條寬
+        n, bins, patches = ax.hist(
+            arr, 
+            bins=25,  # 減少bins數量
+            color=bar_color, 
+            edgecolor=edge_color,
+            alpha=0.8,
+            rwidth=0.9  # 增大條的相對寬度
+        )
+        
+        # 獲取模擬條件資訊
+        role_text = self.mc_role_select_combo.currentText()
+        iterations = self.mc_iterations_spinbox.value()
+        
+        # 設定標題，包含模擬條件
+        title = f'蒙地卡羅模擬結果\n分析對象: {role_text} | 模擬次數: {iterations:,} 次'
+        ax.set_title(title, color=text_color, fontsize=12, pad=15)
+        
+        ax.set_xlabel('工時 (小時)', color=text_color, fontsize=10)
+        ax.set_ylabel('頻率', color=text_color, fontsize=10)
+        
+        # 設定刻度顏色
+        ax.tick_params(colors=text_color)
+        
+        # 在圖表上添加統計資訊文字
+        stats_text = f'平均: {avg:.1f}h\n標準差: {std:.1f}h\n中位數: {p50:.1f}h'
+        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+               verticalalignment='top', fontsize=9,
+               bbox=dict(boxstyle='round', facecolor='white' if not self.is_dark_mode else '#404040', 
+                        alpha=0.8, edgecolor=text_color),
+               color=text_color)
+        
+        # 調整布局
+        self.mc_figure.tight_layout()
+        
+        # 強制重繪和更新畫布
+        self.mc_canvas.draw()
+        self.mc_canvas.flush_events()
+        
+        # 確保 widget 更新
+        self.mc_canvas.update()
+        self.mc_canvas.repaint()
+        
+        # 處理所有待處理的事件
+        QApplication.processEvents()
+
+    def export_monte_carlo_chart(self, fmt='png'):
+        """匯出蒙地卡羅模擬圖表"""
+        if not hasattr(self, 'mc_figure') or self.mc_figure is None:
+            QMessageBox.warning(self, '警告', '請先執行蒙地卡羅模擬')
+            return
+            
+        if not hasattr(self, 'mc_last_results') or not self.mc_last_results:
+            QMessageBox.warning(self, '警告', '沒有可匯出的模擬結果')
+            return
+
+        file_filter = 'PNG 圖片 (*.png)' if fmt == 'png' else 'SVG 向量圖 (*.svg)'
+        path, _ = QFileDialog.getSaveFileName(
+            self, '匯出蒙地卡羅模擬圖表', '', file_filter)
+
+        if not path:
+            return
+
+        try:
+            if not path.lower().endswith(f'.{fmt}'):
+                path += f'.{fmt}'
+            self.mc_figure.savefig(
+                path,
+                format=fmt,
+                bbox_inches='tight',
+                dpi=300,
+                pad_inches=0.2
+            )
+            QMessageBox.information(self, '完成', f'已匯出蒙地卡羅圖表至：{path}')
+        except (OSError, ValueError) as e:
+            QMessageBox.critical(self, '錯誤', f'匯出圖檔時發生錯誤：{e}')
+            
+    def initialize_monte_carlo_chart(self):
+        """初始化蒙地卡羅圖表，設定適當的背景色"""
+        self.mc_figure.clear()
+        ax = self.mc_figure.add_subplot(111)
+        
+        # 設定中文字體
+        plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'SimHei', 'Arial Unicode MS', 'sans-serif']
+        plt.rcParams['axes.unicode_minus'] = False
+        
+        # 根據當前模式設定顏色
+        if self.is_dark_mode:
+            text_color = 'white'
+            self.mc_figure.patch.set_facecolor('#2b2b2b')
+            ax.set_facecolor('#2b2b2b')
+        else:
+            text_color = 'black'
+            self.mc_figure.patch.set_facecolor('white')
+            ax.set_facecolor('white')
+        
+        # 設定空白圖表的標題和標籤
+        ax.set_title('蒙地卡羅模擬結果\n(請先執行模擬)', color=text_color, fontsize=12)
+        ax.set_xlabel('工時 (小時)', color=text_color, fontsize=10)
+        ax.set_ylabel('頻率', color=text_color, fontsize=10)
+        
+        # 設定刻度顏色
+        ax.tick_params(colors=text_color)
+        
+        # 添加提示文字
+        ax.text(0.5, 0.5, '點擊「開始模擬」按鈕\n進行蒙地卡羅分析', 
+               transform=ax.transAxes, ha='center', va='center',
+               fontsize=14, color=text_color, alpha=0.6)
+        
+        self.mc_figure.tight_layout()
         self.mc_canvas.draw()
 
     def run_rcpsp_optimization(self):
@@ -1686,9 +2185,26 @@ class BirdmanQtApp(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    
+    # 設置應用程式退出時清理所有 QThread
+    app.setQuitOnLastWindowClosed(True)
+    
     window = BirdmanQtApp()
     window.show()
-    sys.exit(app.exec_())
+    
+    try:
+        exit_code = app.exec_()
+    finally:
+        # 確保在應用程式退出時所有線程都被正確清理
+        if hasattr(window, 'mc_thread') and window.mc_thread is not None:
+            try:
+                if window.mc_thread.isRunning():
+                    window.mc_thread.terminate()
+                    window.mc_thread.wait(2000)  # 等待2秒
+            except (RuntimeError, AttributeError):
+                pass
+    
+    sys.exit(exit_code)
 
 
 if __name__ == '__main__':

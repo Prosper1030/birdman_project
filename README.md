@@ -2,18 +2,24 @@
 
 ## 最新更新
 
-- 改進甘特圖功能
-  - 優化圖表顯示效果
+- **Bug 修復與界面優化**
+  - 修復切換深色/淺色主題時依賴關係圖出現額外視窗的問題
+  - 使用非交互式 matplotlib 後端避免 GUI 衝突
+  - 簡化 CPM 分析界面，移除角色選擇控件，僅保留顯示模式切換
+  - 統一蒙地卡羅分析匯出功能到檔案選單，提升界面一致性
+- **甘特圖功能優化**
+  - 改進圖表顯示效果
   - 支援水平和垂直捲動
   - 增加外部邊距空間
   - 支援 SVG/PNG 格式匯出
-- 介面精簡化
+- **介面精簡化**
   - 匯入與匯出統一整合至「檔案」選單
   - 「設定與輸入」分頁移除檔案選擇按鈕，僅顯示路徑資訊
-- CPM 分析優化
+- **CPM 分析優化**
   - 使用工時（小時）作為時間單位
-- 移除天數轉換功能，提供更精確的時間計算
-- 優化關鍵路徑顯示
+  - 預設使用新手(newbie)角色進行分析
+  - 移除天數轉換功能，提供更精確的時間計算
+  - 優化關鍵路徑顯示
 - 修正浮點數誤差導致關鍵任務判斷失效
 - 合併後依賴關係圖新增節點上色，合併節點以淡珊瑚色標示
 - 修正依賴關係圖節點顏色顯示異常
@@ -51,10 +57,11 @@
    - 預設使用 `Te_newbie` 作為 CPM 計算工期欄位
    - 新增蒙地卡羅模擬分頁，可評估工期分佈
    - 模擬角色可切換新手或專家
+
 4. **RCPSP 排程**
+
    - 透過 OR-Tools 求解資源受限排程
    - 使用 --rcpsp-opt 取得優化結果
-
 
 5. **匯出功能**
    - 支援 SVG/PNG 格式
@@ -82,6 +89,8 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 
 ## 主要功能
 
+### 核心分析模組
+
 - 讀取 DSM 與 WBS 並驗證資料
 - DSM 拓撲排序、下三角化與 SCC 分析
 - WBS 依排序重排並加入 Layer、SCC_ID
@@ -89,10 +98,20 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 - 合併時自動判斷 Task ID 年份並建立新任務編號，若年份不一致將報錯
 - 新合併任務的 Name 欄位預設留空
 - 以 CSV 匯出排序與合併結果
+
+### 使用者介面功能
+
 - GUI 可在 DSM 分頁正確顯示 Task ID 行表頭
 - 依賴性視覺化：新分頁展示任務間依賴圖及 SCC 群組
 - k 係數參數設定：透過對話框調整合併演算法參數
-- 主題選單支援深色/淺色切換
+- 主題選單支援深色/淺色切換，使用非交互式圖表後端確保穩定性
+
+### 進階分析工具
+
+- **CPM 關鍵路徑分析**：工時為單位的精確時間計算，支援多種顯示模式
+- **蒙地卡羅模擬**：項目完成時間的概率分析與風險評估
+- **甘特圖可視化**：支援雙向捲動與多格式匯出
+- **統一匯出系統**：所有分析結果均整合至檔案選單，提供一致的使用體驗
 
 ## 使用方式
 
@@ -101,11 +120,13 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 ```bash
 python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json
 ```
+
 執行後會在目前目錄產生 `sorted_wbs.csv`、`merged_wbs.csv` 及 `sorted_dsm.csv`。
 若加上 `--cmp` 參數，會同時輸出 `cmp_analysis.csv`，並可使用 `--export-gantt` 匯出甘特圖、`--export-graph` 匯出依賴關係圖。工期欄位可透過 `--duration-field` 指定。
 若需評估工期分佈，可加入 `--monte-carlo 500` 執行 500 次模擬，信心水準可用 `--mc-confidence 0.9` 指定（預設為 0.9）。
 
 若需執行資源受限排程，可加入 `--rcpsp-opt`，將產生 `rcpsp_schedule.csv`。
+
 ### GUI（推薦 PyQt5 進階版）
 
 #### PyQt5 進階 GUI
@@ -218,6 +239,7 @@ pip install -r requirements.txt
 ```bash
 pytest
 ```
+
 安裝完成後，也可執行 `flake8` 確保程式碼格式一致。
 
 ```bash

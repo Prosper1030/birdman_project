@@ -288,20 +288,36 @@ for u, v in self.graph.edges():
 
 ## 最新更新重點
 
-1. 甘特圖功能優化：
+1. **Bug 修復與界面優化**：
+
+   - 修復切換主題時依賴關係圖出現額外視窗的問題
+   - 使用 `matplotlib.use('Agg')` 確保非交互式後端
+   - 簡化 CPM 分析界面，移除角色選擇，僅保留顯示模式切換
+   - 統一蒙地卡羅匯出功能到檔案選單，提升界面一致性
+
+2. **甘特圖功能優化**：
 
    - 改進視窗縮放功能
    - 優化捲動區域設定
    - 增加外部邊距空間
 
-2. CPM 分析改進：
+3. **CPM 分析改進**：
    - 移除工時轉換天數邏輯
    - 直接使用小時作為時間單位
    - 優化時程計算邏輯
+   - 預設使用 'newbie' 角色進行分析
 
 ## 需要注意的問題
 
-1. 甘特圖顯示：
+1. **主題切換與圖表渲染**：
+
+   ```python
+   # 確保使用 Agg backend 避免創建額外視窗
+   import matplotlib
+   matplotlib.use('Agg')
+   ```
+
+2. **甘特圖顯示**：
 
    ```python
    # 設定捲動區域時需注意容器的層級關係
@@ -309,28 +325,51 @@ for u, v in self.graph.edges():
    container_layout.setContentsMargins(20, 40, 20, 40)
    ```
 
-2. CPM 分析：
+3. **CPM 分析**：
+
    ```python
-   # 時間單位統一使用小時
+   # 時間單位統一使用小時，預設使用 newbie 角色
    durations_hours = extractDurationFromWbs(
        self.merged_wbs.drop(columns=['No.']), duration_field
    )
+   role_suffix = 'newbie'  # 預設使用新手角色
+   ```
+
+4. **界面佈局優化**：
+   ```python
+   # CPM界面簡化，僅保留顯示模式選擇
+   cpm_display_label = QLabel('顯示模式：')
+   cpm_top_layout.addWidget(cpm_display_label)
+   self.cpm_display_combo = QComboBox()
    ```
 
 ## 開發建議
 
-1. 使用 QScrollArea 時需注意：
+1. **matplotlib 使用注意事項**：
+
+   - 在創建圖表時使用 `matplotlib.use('Agg')` 避免 GUI 衝突
+   - 確保圖表渲染不會創建額外的交互式視窗
+   - 主題切換時正確配置圖表顏色參數
+
+2. **QScrollArea 使用注意事項**：
 
    - 設定適當的 MinimumSize
    - 正確配置捲動條策略
    - 處理好容器之間的層級關係
 
-2. 圖表繪製時：
+3. **圖表繪製最佳實踐**：
+
    - 使用 subplots_adjust 控制邊距
    - 注意深色/淺色模式的切換
    - 確保匯出時的圖表品質
 
-3. 其他開發規範：
+4. **界面設計原則**：
+
+   - 統一將匯出功能整合到檔案選單
+   - 簡化控制項，避免過多選擇造成混亂
+   - 保持界面元素的一致性
+
+5. **其他開發規範**：
    - CPM 分析預設以 `Te_newbie` 欄位計算工期
    - 每次修改程式碼後，請執行 `flake8` 確認格式
    - 每次新增或修改功能時，必須同步更新 `README.md`

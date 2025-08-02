@@ -32,6 +32,7 @@ def create_dependency_graph_figure(
     scc_map: dict,
     layer_map: dict,
     viz_params: dict,
+    critical_path_edges: set = None,
 ) -> Figure:
     """建立任務依賴關係圖 (使用分層佈局)"""
 
@@ -46,6 +47,10 @@ def create_dependency_graph_figure(
     except Exception as e:  # pylint: disable=broad-except
         # 不同環境下可能因字體名稱或 matplotlib 設定產生例外
         print(f"警告：設定中文字體時發生錯誤: {e}")
+
+    # 確保使用 Agg backend 避免創建額外視窗
+    import matplotlib
+    matplotlib.use('Agg')
 
     fig = Figure(figsize=(18, 20), dpi=100)
     ax = fig.add_subplot(111)
@@ -94,18 +99,56 @@ def create_dependency_graph_figure(
     )
 
     # 2. 繪製邊線
-    nx.draw_networkx_edges(
-        G,
-        pos,
-        ax=ax,
-        edge_color=plt.rcParams['grid.color'],
-        arrows=True,
-        arrowstyle='->',
-        arrowsize=20,
-        width=1.2,
-        connectionstyle='arc3,rad=0.1',
-        node_size=node_size,
-    )
+    if critical_path_edges:
+        # 分別繪製關鍵路徑和非關鍵路徑的邊線
+        critical_edges = [(u, v) for u, v in G.edges() if (u, v) in critical_path_edges]
+        non_critical_edges = [(u, v) for u, v in G.edges() if (u, v) not in critical_path_edges]
+        
+        # 繪製非關鍵路徑邊線（使用預設顏色）
+        if non_critical_edges:
+            nx.draw_networkx_edges(
+                G,
+                pos,
+                ax=ax,
+                edgelist=non_critical_edges,
+                edge_color=plt.rcParams['grid.color'],
+                arrows=True,
+                arrowstyle='->',
+                arrowsize=20,
+                width=1.2,
+                connectionstyle='arc3,rad=0.1',
+                node_size=node_size,
+            )
+        
+        # 繪製關鍵路徑邊線（紅色）
+        if critical_edges:
+            nx.draw_networkx_edges(
+                G,
+                pos,
+                ax=ax,
+                edgelist=critical_edges,
+                edge_color='red',
+                arrows=True,
+                arrowstyle='->',
+                arrowsize=20,
+                width=2.0,  # 關鍵路徑線條稍微粗一點
+                connectionstyle='arc3,rad=0.1',
+                node_size=node_size,
+            )
+    else:
+        # 沒有關鍵路徑資訊時，使用預設繪製方式
+        nx.draw_networkx_edges(
+            G,
+            pos,
+            ax=ax,
+            edge_color=plt.rcParams['grid.color'],
+            arrows=True,
+            arrowstyle='->',
+            arrowsize=20,
+            width=1.2,
+            connectionstyle='arc3,rad=0.1',
+            node_size=node_size,
+        )
 
     # 3. 繪製標籤
     nx.draw_networkx_labels(
