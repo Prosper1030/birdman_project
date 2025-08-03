@@ -299,7 +299,7 @@ class BirdmanQtApp(QMainWindow):
         self.merged_layer_map = {}
 
         # 預設的 k 參數值
-        self.default_k_params = {
+        self.defaultKParams = {
             'base': 1.0,  # 固定值
             'trf_scale': 1.0,
             'trf_divisor': 10.0,
@@ -311,11 +311,11 @@ class BirdmanQtApp(QMainWindow):
         try:
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
-                self.k_params = config.get(
-                    'merge_k_params', self.default_k_params)
+                self.kParams = config.get(
+                    'merge_k_params', self.defaultKParams)
         except (OSError, json.JSONDecodeError):
             # 檔案不存在或解析失敗時以預設值處理
-            self.k_params = self.default_k_params
+            self.kParams = self.defaultKParams
 
         self.initUI()
 
@@ -471,9 +471,9 @@ class BirdmanQtApp(QMainWindow):
         theme_menu = menubar.addMenu('主題')
 
         # k 係數參數設定動作
-        k_params_action = QAction('k 係數參數設定...', self)
-        k_params_action.triggered.connect(self.open_settings_dialog)
-        settings_menu.addAction(k_params_action)
+        kParamsAction = QAction('k 係數參數設定...', self)
+        kParamsAction.triggered.connect(self.open_settings_dialog)
+        settings_menu.addAction(kParamsAction)
 
         # 深色模式切換動作
         self.dark_mode_action = QAction('啟用深色模式', self)
@@ -815,7 +815,9 @@ class BirdmanQtApp(QMainWindow):
 
         # --- 按鈕連接 ---
         self.mc_run_button.clicked.connect(self.run_monte_carlo_simulation)
-        self.mc_chart_mode_combo.currentIndexChanged.connect(self.on_chart_mode_changed)
+        self.mc_chart_mode_combo.currentIndexChanged.connect(
+            self.on_chart_mode_changed
+        )
         self.run_rcpsp_button.clicked.connect(self.run_rcpsp_optimization)
 
         # 甘特圖情境切換下拉選單
@@ -934,7 +936,7 @@ class BirdmanQtApp(QMainWindow):
             self.sorted_dsm = sorted_dsm
             self.graph = graph  # 儲存圖形物件供後續使用
 
-            merged = mergeByScc(sorted_wbs, self.k_params)
+            merged = mergeByScc(sorted_wbs, self.kParams)
             self.merged_wbs = self._add_no_column(merged)
 
             # 建立原始 Task ID 到合併後 Task ID 的對應
@@ -1192,15 +1194,15 @@ class BirdmanQtApp(QMainWindow):
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
-            base_field = cmp_params.get('default_duration_field', 'Te_newbie')
+            baseField = cmp_params.get('default_duration_field', 'Te_newbie')
 
             # 使用預設角色 newbie，或者可以從其他設定獲取
             role_suffix = 'newbie'  # 預設使用新手角色
-            parts_role = base_field.split('_', 1)
-            if len(parts_role) == 2:
-                base_field = f"{parts_role[0]}_{role_suffix}"
+            partsRole = baseField.split('_', 1)
+            if len(partsRole) == 2:
+                baseField = f"{partsRole[0]}_{role_suffix}"
             else:
-                base_field = f"{base_field}_{role_suffix}"
+                baseField = f"{baseField}_{role_suffix}"
 
             # 解析使用者選擇的情境
             choice = self.gantt_display_combo.currentText()
@@ -1213,14 +1215,14 @@ class BirdmanQtApp(QMainWindow):
             self.gantt_results = {}
 
             for sc in scenarios:
-                parts = base_field.split('_', 1)
+                parts = baseField.split('_', 1)
                 if len(parts) == 2:
-                    duration_field = f"{sc}_{parts[1]}"
+                    durationField = f"{sc}_{parts[1]}"
                 else:
-                    duration_field = sc
+                    durationField = sc
 
                 durations_hours = extractDurationFromWbs(
-                    self.merged_wbs.drop(columns=['No.']), duration_field
+                    self.merged_wbs.drop(columns=['No.']), durationField
                 )
 
                 forward_data = cpmForwardPass(
@@ -1279,7 +1281,7 @@ class BirdmanQtApp(QMainWindow):
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
-            base_field = cmp_params.get('default_duration_field', 'Te_newbie')
+            baseField = cmp_params.get('default_duration_field', 'Te_newbie')
         except Exception as e:  # pylint: disable=broad-except
             QMessageBox.critical(self, '錯誤', f'設定檔讀取失敗：{e}')
             return
@@ -1299,17 +1301,17 @@ class BirdmanQtApp(QMainWindow):
 
         for role_text, role_key in roles.items():
             # 依角色調整基準欄位名稱
-            parts_role = base_field.split('_', 1)
-            if len(parts_role) == 2:
-                _ = f"{parts_role[0]}_{role_key}"
+            partsRole = baseField.split('_', 1)
+            if len(partsRole) == 2:
+                baseField = f"{partsRole[0]}_{role_key}"
             else:
-                _ = f"{base_field}_{role_key}"
+                baseField = f"{baseField}_{role_key}"
 
             for time_text, time_key in time_types.items():
-                duration_field = f"{time_key}_{role_key}"
+                durationField = f"{time_key}_{role_key}"
 
                 durations_hours = extractDurationFromWbs(
-                    self.merged_wbs.drop(columns=['No.']), duration_field
+                    self.merged_wbs.drop(columns=['No.']), durationField
                 )
                 forward_data = cpmForwardPass(
                     self.merged_graph,
@@ -1333,7 +1335,7 @@ class BirdmanQtApp(QMainWindow):
                         cpm_result[col].to_dict()
                     ).fillna(0)
 
-                key = f"{role_text} - {time_text} ({duration_field})"
+                key = f"{role_text} - {time_text} ({durationField})"
                 self.gantt_results[key] = (
                     cpm_result,
                     durations_hours,
@@ -1590,19 +1592,19 @@ class BirdmanQtApp(QMainWindow):
 
     def open_settings_dialog(self):
         """開啟 k 係數參數設定對話框"""
-        dialog = SettingsDialog(self.k_params, self)
+        dialog = SettingsDialog(self.kParams, self)
         if dialog.exec_() == QDialog.Accepted:
             settings = dialog.get_settings()
             if settings is None:
                 QMessageBox.critical(self, '錯誤', 'k 係數參數必須為數字！')
                 return
-            self.k_params = settings
+            self.kParams = settings
 
             # 將新設定寫入 config.json
             try:
                 with open('config.json', 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                config['merge_k_params'] = self.k_params
+                config['merge_k_params'] = self.kParams
                 with open('config.json', 'w', encoding='utf-8') as f:
                     json.dump(config, f, indent=2, ensure_ascii=False)
             except (OSError, json.JSONDecodeError) as e:
@@ -2055,19 +2057,19 @@ class BirdmanQtApp(QMainWindow):
             try:
                 if len(arr) > 1:  # 確保有足夠的數據點計算KDE
                     kde = gaussian_kde(arr)
-                    
+
                     # 創建平滑的x軸數據點，範圍稍微超出數據範圍
                     x_min, x_max = arr.min(), arr.max()
                     x_range = x_max - x_min
                     x_smooth = np.linspace(
-                        x_min - 0.1 * x_range, 
-                        x_max + 0.1 * x_range, 
+                        x_min - 0.1 * x_range,
+                        x_max + 0.1 * x_range,
                         200
                     )
-                    
+
                     # 計算KDE值
                     kde_values = kde(x_smooth)
-                    
+
                     # 設定KDE曲線顏色
                     if self.is_dark_mode:
                         kde_color = '#ff6b6b'  # 紅色系，在深色背景下明顯
@@ -2075,17 +2077,17 @@ class BirdmanQtApp(QMainWindow):
                     else:
                         kde_color = '#e74c3c'  # 深紅色，在淺色背景下明顯
                         kde_alpha = 0.8
-                    
+
                     # 繪製KDE曲線
                     ax.plot(
-                        x_smooth, 
+                        x_smooth,
                         kde_values,
                         color=kde_color,
                         linewidth=2.5,
                         alpha=kde_alpha,
                         label='KDE 密度曲線'
                     )
-                    
+
                     # 添加圖例
                     legend = ax.legend(
                         loc='upper right',
@@ -2099,7 +2101,7 @@ class BirdmanQtApp(QMainWindow):
                     legend.get_frame().set_edgecolor(text_color)
                     for text in legend.get_texts():
                         text.set_color(text_color)
-                        
+
             except Exception as e:
                 # 如果KDE計算失敗，不中斷程序，但記錄錯誤
                 print(f"KDE計算失敗: {e}")
@@ -2121,11 +2123,14 @@ class BirdmanQtApp(QMainWindow):
         iterations = self.mc_iterations_spinbox.value()
 
         # 設定標題，包含模擬條件和圖表模式
-        title = f'蒙地卡羅模擬結果 ({chart_mode})\n分析對象: {role_text} | 模擬次數: {iterations:,} 次'
+        title = (
+            f'蒙地卡羅模擬結果 ({chart_mode})\n'
+            f'分析對象: {role_text} | 模擬次數: {iterations:,} 次'
+        )
         ax.set_title(title, color=text_color, fontsize=12, pad=15)
 
         ax.set_xlabel('工時 (小時)', color=text_color, fontsize=10)
-        
+
         # 根據模式設定Y軸標籤
         if is_density_mode:
             ax.set_ylabel('密度', color=text_color, fontsize=10)
@@ -2244,12 +2249,12 @@ class BirdmanQtApp(QMainWindow):
             with open('config.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
-            duration_field = cmp_params.get(
+            durationField = cmp_params.get(
                 'default_duration_field', 'Te_newbie'
             )
 
-            if duration_field not in self.merged_wbs.columns:
-                raise ValueError(f"WBS 缺少工期欄位 {duration_field}")
+            if durationField not in self.merged_wbs.columns:
+                raise ValueError(f"WBS 缺少工期欄位 {durationField}")
             if "Category" not in self.merged_wbs.columns:
                 QMessageBox.warning(
                     self, '警告', 'WBS 缺少 "Category" 欄位，將不考慮資源限制'
@@ -2258,7 +2263,7 @@ class BirdmanQtApp(QMainWindow):
             schedule = solveRcpsp(
                 self.merged_graph,
                 self.merged_wbs,
-                durationField=duration_field,
+                durationField=durationField,
                 resourceField="Category",
             )
 

@@ -92,9 +92,9 @@ def buildTaskMapping(
         merged_row = merged_wbs[merged_wbs["SCC_ID"] == scc_id]
         if merged_row.empty:
             continue
-        new_id = merged_row.iloc[0]["Task ID"]
+        newId = merged_row.iloc[0]["Task ID"]
         for tid in grp["Task ID"]:
-            mapping[tid] = new_id
+            mapping[tid] = newId
     return mapping
 
 

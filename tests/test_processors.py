@@ -58,8 +58,8 @@ def test_merge_by_scc():
     wbs = pd.DataFrame(data)
     merged = mergeByScc(wbs)
     assert len(merged) == 1
-    new_id = merged.iloc[0]["Task ID"]
-    assert new_id.startswith("M24-")
+    newId = merged.iloc[0]["Task ID"]
+    assert newId.startswith("M24-")
 
 
 def test_reorder_dsm():

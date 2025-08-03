@@ -96,6 +96,7 @@ def main():
     )
     parser.add_argument(
         "--duration-field",
+        dest="durationField",
         metavar="FIELD",
         help="指定 CPM 工期欄位，預設為設定檔值"
     )
@@ -108,6 +109,7 @@ def main():
     )
     parser.add_argument(
         "--mc-confidence",
+        dest="mcConfidence",
         metavar="P",
         type=float,
         default=0.9,
@@ -144,8 +146,8 @@ def main():
 
     with open(args.config, 'r', encoding='utf-8') as f:
         config = json.load(f)
-    k_params = config.get('merge_k_params', {})
-    merged = mergeByScc(wbs_sorted, k_params)
+    kParams = config.get('merge_k_params', {})
+    merged = mergeByScc(wbs_sorted, kParams)
 
     # 依原始 Task ID 與 SCC 對應建立合併映射
     task_mapping = buildTaskMapping(wbs_sorted, merged)
@@ -163,12 +165,12 @@ def main():
     if args.rcpsp_opt:
         print("開始執行 RCPSP 排程...")
         cmp_params = config.get("cmp_params", {})
-        duration_field = args.duration_field or cmp_params.get(
+        durationField = args.durationField or cmp_params.get(
             "default_duration_field", "Te_newbie"
         )
-        schedule = solveRcpsp(merged_graph, merged, duration_field)
+        schedule = solveRcpsp(merged_graph, merged, durationField)
         merged["Start"] = merged["Task ID"].map(schedule).fillna(0)
-        merged["Finish"] = merged["Start"] + merged[duration_field].fillna(0)
+        merged["Finish"] = merged["Start"] + merged[durationField].fillna(0)
         out_rcpsp = Path("rcpsp_schedule.csv")
         merged[["Task ID", "Start", "Finish"]].to_csv(
             out_rcpsp,
@@ -189,12 +191,12 @@ def main():
     if args.cpm:
         print("開始執行 CPM 分析...")
         cmp_params = config.get('cmp_params', {})
-        duration_field = args.duration_field or cmp_params.get(
+        durationField = args.durationField or cmp_params.get(
             'default_duration_field', 'Te_newbie'
         )
 
         # 以合併後的 WBS 取得工時
-        durations_hours = extractDurationFromWbs(merged, duration_field)
+        durations_hours = extractDurationFromWbs(merged, durationField)
 
         # 檢查合併後圖是否存在循環依賴
         cycles = list(nx.simple_cycles(merged_graph))
@@ -228,7 +230,7 @@ def main():
             print(f"已匯出甘特圖至 {args.export_gantt}")
 
         if args.monte_carlo > 0:
-            base = duration_field.replace("Te_", "")
+            base = durationField.replace("Te_", "")
             o_field = f"O_{base}"
             m_field = f"M_{base}"
             p_field = f"P_{base}"
@@ -246,9 +248,9 @@ def main():
                     m_dur,
                     p_dur,
                     args.monte_carlo,
-                    args.mc_confidence,
+                    args.mcConfidence,
                 )
-                conf_pct = int(args.mc_confidence * 100)
+                conf_pct = int(args.mcConfidence * 100)
                 sample_arr = np.array(mc_result["samples"])
                 prob = float(
                     np.mean(sample_arr <= mc_result["confidence_value"]) * 100

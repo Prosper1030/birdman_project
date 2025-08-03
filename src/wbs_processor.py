@@ -49,7 +49,7 @@ def mergeByScc(
     若同一 SCC 中的任務年份不一致則報錯。可透過 ``kParams``
     自訂計算係數的相關參數。
     """
-    time_cols = [
+    timeCols = [
         "M_expert",
         "O_expert",
         "P_expert",
@@ -82,11 +82,11 @@ def mergeByScc(
         else:
             raise ValueError(f"SCC {scc_id} 包含不同年份的 Task ID: {years}")
 
-        new_id = f"M{year}-{serial:03d}[{','.join(grp['Task ID'])}]"
+        newId = f"M{year}-{serial:03d}[{','.join(grp['Task ID'])}]"
         serial += 1
 
         new_row = grp.iloc[0].copy()
-        new_row["Task ID"] = new_id
+        new_row["Task ID"] = newId
         if "Name" in new_row.index:
             new_row["Name"] = ""
 
@@ -103,7 +103,7 @@ def mergeByScc(
             k = base + ((trf_sum / n) * scale) ** 0.5 / \
                 divisor + nCoef * (n - 1)
 
-        for col in time_cols:
+        for col in timeCols:
             if col in grp.columns:
                 new_row[col] = grp[col].astype(float).sum() * k
 
