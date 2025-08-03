@@ -74,8 +74,9 @@
 
 4. **RCPSP 排程**
    - 透過 OR-Tools 求解資源受限排程
-   - WBS 支援 `ResourceDemand` 欄位，可設定每個任務所需資源單位
-   - 使用 --rcpsp-opt 取得優化結果
+   - 需提供 Resources.csv 以計算各資源容量
+   - WBS 必須包含資源欄位（預設 `Category`）與 `ResourceDemand` 欄位
+   - 使用 `--rcpsp-opt` 搭配 `--resources` 取得優化結果
 
 5. **匯出功能**
    - 支援 SVG/PNG 格式
@@ -139,10 +140,17 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 ```
 
 執行後會在目前目錄產生 `sorted_wbs.csv`、`merged_wbs.csv` 及 `sorted_dsm.csv`。
+若需同時考量資源限制，可執行：
+
+```bash
+python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv \
+    --resources sample_data/Resources.csv --config config.json --rcpsp-opt \
+    --export-rcpsp-gantt rcpsp.png
+```
 若加上 `--cpm` 參數，會同時輸出 `cmp_analysis.csv`，並可使用 `--export-gantt` 匯出甘特圖、`--export-graph` 匯出依賴關係圖。工期欄位預設採用 `config.json` 中的 `default_duration_field`（預設 `Te_newbie`），亦可透過 `--duration-field` 指定。
 若需評估工期分佈，可加入 `--monte-carlo 500` 執行 500 次模擬，信心水準可用 `--mc-confidence 0.9` 指定（預設為 0.9）。
 
-若需執行資源受限排程，可加入 `--rcpsp-opt`，將產生 `rcpsp_schedule.csv`。若同時使用 `--export-rcpsp-gantt PATH`，可將資源受限排程的結果匯出為甘特圖。
+若需執行資源受限排程，請加上 `--rcpsp-opt` 並指定 `--resources Resources.csv`，WBS 需提供資源欄位與 `ResourceDemand` 欄位。執行後會產生 `rcpsp_schedule.csv`，若同時使用 `--export-rcpsp-gantt PATH`，可將結果匯出為甘特圖。
 
 ### GUI（推薦 PyQt5 進階版）
 
@@ -165,7 +173,7 @@ python src/ui/main_window.py
 
 1. **檔案操作**
 
-   - 支援選擇 DSM/WBS 檔案
+   - 支援選擇 DSM/WBS/Resources 檔案
    - 即時預覽資料內容
    - CSV 格式匯出結果
    - 匯出合併後 DSM（CSV 與 Excel）
