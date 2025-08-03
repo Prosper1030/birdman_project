@@ -137,7 +137,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 若加上 `--cpm` 參數，會同時輸出 `cmp_analysis.csv`，並可使用 `--export-gantt` 匯出甘特圖、`--export-graph` 匯出依賴關係圖。工期欄位預設採用 `config.json` 中的 `default_duration_field`（預設 `Te_newbie`），亦可透過 `--duration-field` 指定。
 若需評估工期分佈，可加入 `--monte-carlo 500` 執行 500 次模擬，信心水準可用 `--mc-confidence 0.9` 指定（預設為 0.9）。
 
-若需執行資源受限排程，可加入 `--rcpsp-opt`，將產生 `rcpsp_schedule.csv`。
+若需執行資源受限排程，可加入 `--rcpsp-opt`，將產生 `rcpsp_schedule.csv`。若同時使用 `--export-rcpsp-gantt PATH`，可將資源受限排程的結果匯出為甘特圖。
 
 ### GUI（推薦 PyQt5 進階版）
 
