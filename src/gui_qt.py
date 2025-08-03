@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QSpinBox,
 )
-from PyQt5.QtCore import Qt, QObject, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
@@ -42,8 +42,6 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import qdarkstyle
 import pandas as pd
-from pandas import DataFrame
-from PyQt5.QtCore import QAbstractTableModel
 
 from .dsm_processor import (
     readDsm,
@@ -61,122 +59,8 @@ from .cpm_processor import (
 )
 from .rcpsp_solver import solveRcpsp
 from . import visualizer
-
-
-class MonteCarloWorker(QObject):
-    """執行蒙地卡羅模擬的背景工作執行緒"""
-
-    progress = pyqtSignal(int)
-    finished = pyqtSignal(list)
-
-    def __init__(
-        self,
-        wbs_df: pd.DataFrame,
-        graph: nx.DiGraph,
-        role_key: str,
-        iterations: int,
-        parent: QObject | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.wbs_df = wbs_df
-        self.graph = graph
-        self.role_key = role_key
-        self.iterations = iterations
-        self.is_running = True
-
-    def run(self) -> None:
-        """執行模擬並回報進度"""
-        o_col = f"O_{self.role_key}"
-        m_col = f"M_{self.role_key}"
-        p_col = f"P_{self.role_key}"
-        for field in (o_col, m_col, p_col):
-            if field not in self.wbs_df.columns:
-                self.finished.emit([])
-                return
-        wbs_df = self.wbs_df.set_index("Task ID")
-        simulation_results: list[float] = []
-        for i in range(max(1, self.iterations)):
-            if not self.is_running:
-                break
-            sampled: dict[str, float] = {}
-            for task_id in wbs_df.index:
-                o = wbs_df.loc[task_id, o_col]
-                m = wbs_df.loc[task_id, m_col]
-                p = wbs_df.loc[task_id, p_col]
-                if p == o:
-                    simulated_duration = o
-                else:
-                    mu = (o + 4 * m + p) / 6
-                    mu = max(o, min(p, mu))
-                    if mu == o:
-                        alpha = 1
-                    else:
-                        alpha = 1 + 4 * ((mu - o) / (p - o))
-                    if mu == p:
-                        beta = 1
-                    else:
-                        beta = 1 + 4 * ((p - mu) / (p - o))
-                    random_beta = np.random.beta(alpha, beta)
-                    simulated_duration = o + random_beta * (p - o)
-                sampled[task_id] = float(simulated_duration)
-            forward = cpmForwardPass(self.graph, sampled)
-            project_end = max(v[1] for v in forward.values())
-            simulation_results.append(project_end)
-            self.progress.emit(i + 1)
-            if not self.is_running:
-                break
-        self.finished.emit(simulation_results)
-
-    def stop(self) -> None:
-        """停止模擬"""
-        self.is_running = False
-
-
-class PandasModel(QAbstractTableModel):
-    def __init__(self, df: DataFrame, dsm_mode=False):
-        super().__init__()
-        self._df = df
-        self._dsm_mode = dsm_mode
-
-    def rowCount(self, parent=None):
-        return self._df.shape[0]
-
-    def columnCount(self, parent=None):
-        return self._df.shape[1]
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        value = self._df.iloc[index.row(), index.column()]
-        # 顯示內容
-        if role == Qt.DisplayRole:
-            return str(value)
-        # 只有DSM分頁才標紅依賴格子
-        if self._dsm_mode and role == Qt.BackgroundRole:
-            """若值為 1 則以紅色標示，避免解析失敗"""
-            try:
-                if str(value).strip() in {"1", "1.0"}:
-                    from PyQt5.QtGui import QColor
-                    return QColor(255, 120, 120)
-                if float(value) == 1:
-                    from PyQt5.QtGui import QColor
-                    return QColor(255, 120, 120)
-            except (ValueError, TypeError):
-                # 轉型失敗時忽略，避免整體流程中斷
-                pass
-        return None
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole:
-            if orientation == Qt.Horizontal:
-                return str(self._df.columns[section])
-            else:
-                # DSM 模式下，直接使用索引作為行表頭（Task ID）
-                if self._dsm_mode:
-                    return str(self._df.index[section])
-                # 其他情況維持 1 起始的列號
-                return str(section + 1)
-        return None
+from .ui.models import PandasModel
+from .ui.workers import MonteCarloWorker
 
 
 class SettingsDialog(QDialog):
