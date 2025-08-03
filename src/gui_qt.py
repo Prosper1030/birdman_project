@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QSpinBox,
 )
-from PyQt5.QtCore import Qt, QThread
+from PyQt5.QtCore import Qt, QThread, QObject, pyqtSignal, QAbstractTableModel
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
@@ -42,6 +42,7 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import qdarkstyle
 import pandas as pd
+from pandas import DataFrame
 
 from .dsm_processor import (
     readDsm,
@@ -59,7 +60,6 @@ from .cpm_processor import (
 )
 from .rcpsp_solver import solveRcpsp
 from . import visualizer
-
 
 
 class MonteCarloWorker(QObject):
@@ -178,7 +178,6 @@ class PandasModel(QAbstractTableModel):
                 # 其他情況維持 1 起始的列號
                 return str(section + 1)
         return None
-
 
 
 class SettingsDialog(QDialog):
@@ -1232,7 +1231,6 @@ class BirdmanQtApp(QMainWindow):
             self.cpmDisplayCombo.setCurrentIndex(0)
             self.update_gantt_display()
 
-
             QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
         except (ValueError, KeyError, nx.NetworkXError) as e:
             QMessageBox.critical(self, '錯誤', f'CPM 分析失敗：{e}')
@@ -1756,7 +1754,6 @@ class BirdmanQtApp(QMainWindow):
             except Exception as e:  # pylint: disable=broad-except
                 QMessageBox.warning(self, "警告", f"圖表重繪失敗：{e}")
 
-
     def redraw_merged_graph(self):
         """專門重繪合併後的依賴關係圖（包含關鍵路徑資訊）"""
         if not hasattr(self, "mergedGraph") or self.mergedGraph is None:
@@ -1801,7 +1798,6 @@ class BirdmanQtApp(QMainWindow):
 
         except Exception as e:  # pylint: disable=broad-except
             QMessageBox.warning(self, "警告", f"合併後依賴圖重繪失敗：{e}")
-
 
     def exportGanttChart(self, fmt="png"):
         """匯出甘特圖"""
@@ -2233,10 +2229,8 @@ class BirdmanQtApp(QMainWindow):
             dialog.resize(400, 300)
             dialog.exec_()
 
-
         except Exception as e:
             QMessageBox.critical(self, "排程失敗", f"執行 RCPSP 排程時發生錯誤：{e}")
-
 
 
 def main():
