@@ -1,273 +1,60 @@
 # Birdman Project
 
-## 最新更新
+## 專案簡介
+`Birdman Project` 是一套以 Python 實作的專案管理工具，可從 DSM 與 WBS 資料進行任務排序、合併與時程分析。工具整合命令列與 PyQt5 圖形介面，支援多種視覺化與模擬功能。
 
-- **模組重構**：將 `MonteCarloWorker` 與 `PandasModel` 移至 `src/ui` 子模組，主視窗檔案更為精簡
+## 核心功能
+- **DSM/WBS 處理**：讀取並驗證資料，完成拓樸排序與強連通分量分析。
+- **任務合併**：自動合併同一 SCC 的任務，重新建立 Task ID 並計算工期。
+- **依賴關係圖與甘特圖**：提供分層式依賴圖與甘特圖，可切換深色/淺色主題並匯出 SVG/PNG。
+- **CPM 分析**：以小時為單位計算工期，找出關鍵路徑並產出詳細時程；預設使用 `Te_newbie` 欄位。
+- **蒙地卡羅模擬**：採 Beta-PERT 分佈進行多次模擬，提供次數與密度兩種圖表模式並可匯出結果。
+- **RCPSP 排程**：使用 OR-Tools 根據資源限制優化排程，輸出最佳開始時間。
+- **GUI 介面**：PyQt5 進階介面整合檔案選取、視覺化、CPM、蒙地卡羅與 RCPSP 功能。
+- **匯出功能**：排序後/合併後 WBS、DSM、依賴圖、甘特圖及分析結果皆可匯出。
 
-- **蒙地卡羅模擬功能增強** ✨
-  - 新增 scipy 相依性，支援核密度估計(KDE)功能
-  - 實現雙模式圖表顯示：「次數模式」和「密度模式」
-  - 次數模式：顯示原始計數分布，Y 軸為「次數」
-  - 密度模式：顯示密度分布並疊加 KDE 曲線，Y 軸為「密度」
-  - 新增圖表模式切換下拉選單，支援即時切換與重繪
-  - 預設使用「次數模式」，提供更直觀的數據呈現
-  - 圖表標題會顯示當前模式，提升使用者體驗
-- **Bug 修復與界面優化**
-  - 修復切換深色/淺色主題時依賴關係圖出現額外視窗的問題
-  - 使用非交互式 matplotlib 後端避免 GUI 衝突
-  - 簡化 CPM 分析界面，移除角色選擇控件，僅保留顯示模式切換
-  - 統一蒙地卡羅分析匯出功能到檔案選單，提升界面一致性
-- **甘特圖功能優化**
-  - 改進圖表顯示效果
-  - 支援水平和垂直捲動
-  - 增加外部邊距空間
-  - 支援 SVG/PNG 格式匯出
-- **介面精簡化**
-  - 匯入與匯出統一整合至「檔案」選單
-  - 「設定與輸入」分頁移除檔案選擇按鈕，僅顯示路徑資訊
-- **CPM 分析優化**
-  - 使用工時（小時）作為時間單位
-  - 預設使用新手(newbie)角色進行分析
-  - 移除天數轉換功能，提供更精確的時間計算
-  - 優化關鍵路徑顯示
-- 修正浮點數誤差導致關鍵任務判斷失效
-- 合併後依賴關係圖新增節點上色，合併節點以淡珊瑚色標示
-- 修正依賴關係圖節點顏色顯示異常
-- 重構圖表容器，切換主題時重新建立畫布避免殘影
-- 執行完整分析時自動計算八種情境，預設顯示「新手 - 期望時間」
-- 新增「匯入資料夾」選項，可同時載入 WBS、DSM，若包含 Resources 亦會一併匯入並提供預覽
-- 改進深色/淺色模式切換，依賴圖與甘特圖的背景與文字顏色能即時更新
-- 修正合併後依賴圖層級計算並強制繪製箭頭
-- 蒙地卡羅模擬可在專屬分頁中選擇新手或專家數據
-- 蒙地卡羅模擬採用 Beta-PERT 分佈並提供進度條，模擬次數上限 100,000 次；CLI 函式 `monteCarloSchedule` 同步使用此分佈
-- 甘特圖標題顯示當前情境與總工時
-- 修正蒙地卡羅模擬分頁「開始模擬」按鈕無反應問題，補上按鈕事件連接
-- 修正蒙地卡羅模擬分頁未顯示執行按鈕與選單的佈局設定
-- 蒙地卡羅模擬改為背景執行緒，進度條可即時更新
-- **程式命名統一**
-  - `gui_qt.py` 內部變數改用 camelCase 命名，維持風格一致
-  - 新增 `resource_processor.py`，可由資源表計算可同時執行任務數
-
-## 功能說明
-
-1. **基本分析**
-   - DSM 排序與合併
-   - WBS 層次分析
-   - 依賴關係圖生成
-2. **視覺化功能**
-
-   - 分層式依賴關係圖顯示
-   - 支援圖表縮放與捲動
-   - 甘特圖時間軸優化
-   - 支援深色/淺色主題切換
-
-3. **CPM 分析**
-
-   - 工時計算（小時為單位）
-   - 關鍵路徑識別
-   - 甘特圖視覺化
-   - 完整的時程資訊
-   - 預設使用 `Te_newbie` 作為 CPM 計算工期欄位
-   - 新增蒙地卡羅模擬分頁，可評估工期分佈
-   - 模擬角色可切換新手或專家
-   - 雙模式圖表：次數模式（直方圖）與密度模式（直方圖+KDE 曲線）
-
-4. **RCPSP 排程**
-   - 透過 OR-Tools 求解資源受限排程
-   - 需提供 Resources.csv 以計算各資源容量
-   - WBS 必須包含資源欄位（預設 `Category`）與 `ResourceDemand` 欄位
-   - 使用 `--rcpsp-opt` 搭配 `--resources` 取得優化結果
-
-5. **匯出功能**
-   - 支援 SVG/PNG 格式
-   - 高品質圖表輸出
-   - 分析結果 CSV 匯出
-
-此工具根據 DSM 與 WBS 檔案計算任務依賴層級，輸出排序後的 WBS，並提供 CPM 分析功能。
-
-DSM 矩陣中，若某列某欄的值為 `1`，代表該列任務必須等待該欄任務完成。
-建圖時會將此視為「欄任務 -> 列任務」的邊。
-
-## 環境需求
-
-建議使用 **Python 3.10** 以上版本，並先安裝 `requirements.txt` 內的相依套件。
-
-## 執行方式
-
-```bash
-python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json
-```
-
-完成後會在目前目錄生成 `sorted_wbs.csv`、`merged_wbs.csv`，以及 `sorted_dsm.csv`。
-
-此專案為鳥人間團隊開發的 DSM/WBS 處理工具，提供拓撲排序、強連通分量分析與任務合併等功能，並具備簡易 GUI。
-
-## 主要功能
-
-### 核心分析模組
-
-- 讀取 DSM 與 WBS 並驗證資料
-- DSM 拓撲排序、下三角化與 SCC 分析
-- WBS 依排序重排並加入 Layer、SCC_ID
-- 同一 SCC 任務自動合併並計算工時
-- 合併時自動判斷 Task ID 年份並建立新任務編號，若年份不一致將報錯
-- 新合併任務的 Name 欄位預設留空
-- 以 CSV 匯出排序與合併結果
-
-### 使用者介面功能
-
-- GUI 可在 DSM 分頁正確顯示 Task ID 行表頭
-- 依賴性視覺化：新分頁展示任務間依賴圖及 SCC 群組
-- k 係數參數設定：透過對話框調整合併演算法參數
-- 主題選單支援深色/淺色切換，使用非交互式圖表後端確保穩定性
-
-### 進階分析工具
-
-- **CPM 關鍵路徑分析**：工時為單位的精確時間計算，支援多種顯示模式
-- **蒙地卡羅模擬**：項目完成時間的概率分析與風險評估
-  - 支援雙模式圖表顯示：次數模式與密度模式
-  - 密度模式包含 KDE 曲線疊加，提供平滑的概率密度估計
-  - 即時模式切換功能，無需重新執行模擬
-- **甘特圖可視化**：支援雙向捲動與多格式匯出
-- **統一匯出系統**：所有分析結果均整合至檔案選單，提供一致的使用體驗
-
-## 使用方式
-
-### CLI
-
-```bash
-python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json
-```
-
-執行後會在目前目錄產生 `sorted_wbs.csv`、`merged_wbs.csv` 及 `sorted_dsm.csv`。
-若需同時考量資源限制，可執行：
-
-```bash
-python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv \
-    --resources sample_data/Resources.csv --config config.json --rcpsp-opt \
-    --export-rcpsp-gantt rcpsp.png
-```
-若加上 `--cpm` 參數，會同時輸出 `cmp_analysis.csv`，並可使用 `--export-gantt` 匯出甘特圖、`--export-graph` 匯出依賴關係圖。工期欄位預設採用 `config.json` 中的 `default_duration_field`（預設 `Te_newbie`），亦可透過 `--duration-field` 指定。
-若需評估工期分佈，可加入 `--monte-carlo 500` 執行 500 次模擬，信心水準可用 `--mc-confidence 0.9` 指定（預設為 0.9）。
-
-若需執行資源受限排程，請加上 `--rcpsp-opt` 並指定 `--resources Resources.csv`，WBS 需提供資源欄位與 `ResourceDemand` 欄位。執行後會產生 `rcpsp_schedule.csv`，若同時使用 `--export-rcpsp-gantt PATH`，可將結果匯出為甘特圖。
-
-### GUI（推薦 PyQt5 進階版）
-
-#### PyQt5 進階 GUI
-
-```bash
-pip install -r requirements.txt
-python -m src.gui_qt
-```
-
-#### 蒙地卡羅模擬快速視窗
-
-```bash
-python src/ui/main_window.py
-```
-
-可獨立開啟含「開始模擬」按鈕的蒙地卡羅介面。
-
-#### 進階 GUI 功能
-
-1. **檔案操作**
-
-   - 支援選擇 DSM/WBS/Resources 檔案
-   - 即時預覽資料內容
-   - CSV 格式匯出結果
-   - 匯出合併後 DSM（CSV 與 Excel）
-
-2. **視覺化功能**
-
-   - 多分頁檢視（原始資料、排序結果、合併結果）
-   - 分層式依賴關係圖顯示
-   - 支援圖表縮放與捲動
-   - 可匯出高品質 SVG/PNG 格式圖表
-   - DSM 中的依賴關係以紅色醒目標示
-   - 深色/淺色主題切換
-   - 匯出原始與合併後依賴關係圖
-   - 匯出甘特圖與 CPM 分析結果
-   - CPM 分析結果可匯出乾淨報告（CSV/Excel）
-   - CPM 分析可切換 O、P、M、TE 或 All Scenarios
-   - CPM 分析結果分頁具備情境切換選單
-   - 甘特圖上方顯示總工時並依 CPM 結果排序任務
-   - 甘特圖標題同步顯示情境與總工時
-   - 蒙地卡羅模擬支援雙模式圖表顯示與 KDE 曲線分析
-
-3. **參數調整**
-   - k 係數參數設定對話框
-   - 支援 Override 功能
-   - 設定值自動保存至 config.json
-
-功能：
-
-- 多分頁切換（原始/排序/合併/DSM 預覽）
-- 表格預覽（像 Excel，可橫向捲動、欄位標題清楚）
-- DSM 依賴格自動標紅
-- 匯出功能完整
-- 新增依賴關係圖分頁，能以圖形呈現任務依賴
-
-## 依賴視覺化範例
-
-(此處可放入依賴關係圖截圖)
-
-> **僅提供 PyQt5 版 GUI，請確保已安裝對應套件。**
-
-## 安裝套件
+## 安裝需求
+- Python 3.10 以上版本。
+- 先安裝相依套件：
 
 ```bash
 pip install -r requirements.txt
 ```
 
-執行此指令會同時安裝 `networkx` 等必要套件。
+## 命令列使用
+基本範例：
+
+```bash
+python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json
+```
+
+其他常用選項：
+- `--monte-carlo 次數`：進行蒙地卡羅模擬。
+- `--rcpsp-opt --resources Resources.csv`：執行 RCPSP 排程並輸出 `rcpsp_schedule.csv`。
+- `--export-rcpsp-gantt PATH`：匯出 RCPSP 排程甘特圖。
+
+## GUI 使用
+
+```bash
+python -m src.gui_qt        # 完整介面
+python src/ui/main_window.py  # 單獨的蒙地卡羅視窗
+```
 
 ## 系統設定 (config.json)
+- **cmp_params**：`work_hours_per_day`、`working_days_per_week`、`default_duration_field`、`project_start_date`、`time_unit`。
+- **merge_k_params**：合併演算法參數（`override`、`base`、`trf_scale`、`trf_divisor`、`n_coef`）。
+- **visualization_params**：圖表顏色與字型設定（`node_color`、`scc_color_palette`、`font_size`）。
 
-此檔記錄執行流程所需的設定，主要區塊包括：
-
-1. **cmp_params**
-   - `work_hours_per_day`：每日工作小時數。
-   - `working_days_per_week`：每週工作天數。
-   - `default_duration_field`：CPM 分析預設使用的工期欄位，若未額外指定即採用此欄位，預設為 `"Te_newbie"`。
-   - `project_start_date`：專案開始日期，可為空值。
-   - `time_unit`：時間單位，預設為 `"hours"`。
-2. **merge_k_params**
-   - `override`：直接覆寫合併計算的 k 值。
-   - `base`：基礎係數，固定為 1.0。
-   - `trf_scale`：TRF 轉換比例，用於調整估算幅度。
-   - `trf_divisor`：TRF 除數，平滑複雜度對 k 值的影響。
-   - `n_coef`：數量係數，根據合併任務數量調整權重。
-3. **visualization_params**
-   - `node_color`：一般節點顏色。
-   - `scc_color_palette`：SCC 群組顏色陣列。
-   - `font_size`：字型大小。
-
-## WBS.csv 欄位詳解
-
-- `TRF`：任務複雜度係數，數值不得為負。
-- `M_expert`：專家評估的最可能工時。
-- `O_expert`：專家的樂觀工時。
-- `P_expert`：專家的悲觀工時。
-- `Te_expert`：依 PERT 公式 `(O + 4*M_expert + P) / 6` 計算的期望工時。
-- `K_adj`：估算新手工時的調整係數。
-- `O_newbie`、`M_newbie`、`P_newbie`：將專家對應的時間乘以 `K_adj` 後得出的新手估算工時。
-- `Te_newbie`：根據新手時間以 PERT 公式計算出的期望工時，也是系統新的預設工時。
+## WBS.csv 欄位
+必需欄位：`Task_ID`、`TRF`、各角色工期 (如 `O_expert`、`M_expert`、`P_expert`、`Te_expert` 及其新手版本)，以及 `Te_newbie`。
+若要使用 RCPSP，需另外提供 `Category` 與 `ResourceDemand` 欄位。
 
 ## 範例資料
+`sample_data/` 內含 `DSM.csv`、`WBS.csv` 等測試資料，可直接用於演示與驗證。
 
-`sample_data/` 內含 DSM.csv 與 WBS.csv，可供測試。
-
-## 測試
-
-安裝套件後，可直接於專案根目錄執行 `pytest`，驗證主要功能是否正常。
+## 測試與格式檢查
 
 ```bash
 pytest
-```
-
-安裝完成後，也可執行 `flake8` 確保程式碼格式一致。
-
-```bash
 flake8
 ```
