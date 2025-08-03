@@ -20,6 +20,7 @@ def test_solve_rcpsp_basic():
             "Task ID": ["A", "B"],
             "Te_newbie": [2, 3],
             "Category": ["R1", "R2"],
+            "ResourceDemand": [1, 1],
         }
     )
 
@@ -29,3 +30,23 @@ def test_solve_rcpsp_basic():
     assert schedule["A"] == 0
     assert schedule["B"] == schedule["A"] + 2
     assert schedule["ProjectEnd"] == schedule["B"] + 3
+
+
+def test_resource_demand_affects_schedule():
+    """測試 ResourceDemand 會影響排程，需求量超過容量時不可並行"""
+    graph = nx.DiGraph()
+    graph.add_nodes_from(["A", "B"])  # 兩任務無依賴
+
+    wbs = pd.DataFrame(
+        {
+            "Task ID": ["A", "B"],
+            "Te_newbie": [2, 3],
+            "Category": ["R1", "R1"],
+            "ResourceDemand": [2, 1],
+        }
+    )
+
+    schedule = solveRcpsp(graph, wbs, resourceCap={"R1": 2})
+
+    assert schedule["ProjectEnd"] == 5
+    assert schedule["A"] + 2 <= schedule["B"] or schedule["B"] + 3 <= schedule["A"]

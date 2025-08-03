@@ -12,6 +12,7 @@ def solveRcpsp(
     wbs: pd.DataFrame,
     durationField: str = "Te_newbie",
     resourceField: str = "Category",
+    demandField: str = "ResourceDemand",
     resourceCap: Dict[str, int] | None = None,
     timeLimit: int = 10,
 ) -> Dict[str, Any]:
@@ -22,6 +23,7 @@ def solveRcpsp(
         wbs:   任務資料表，需包含工期與資源欄位
         durationField: 工期欄位名稱
         resourceField: 資源分類欄位名稱
+        demandField:   資源需求量欄位名稱
         resourceCap:   各資源可同時執行的數量，預設為 1
         timeLimit:     求解時間上限 (秒)
 
@@ -36,7 +38,7 @@ def solveRcpsp(
     startVars: Dict[str, cp_model.IntVar] = {}
     endVars: Dict[str, cp_model.IntVar] = {}
     intervalMap: Dict[str, cp_model.IntervalVar] = {}
-    resourceMap: Dict[str, list[cp_model.IntervalVar]] = {}
+    resourceMap: Dict[str, tuple[list[cp_model.IntervalVar], list[int]]] = {}
 
     for _, row in wbs.iterrows():
         taskId = row["Task ID"]
@@ -53,15 +55,17 @@ def solveRcpsp(
         intervalMap[taskId] = interval
 
         res = str(row.get(resourceField, "default"))
-        resourceMap.setdefault(res, []).append(interval)
+        demand = int(float(row.get(demandField, 1)))
+        intervals, demands = resourceMap.setdefault(res, ([], []))
+        intervals.append(interval)
+        demands.append(demand)
 
     for u, v in graph.edges():
         if u in endVars and v in startVars:
             model.Add(startVars[v] >= endVars[u])
 
-    for res, intervals in resourceMap.items():
+    for res, (intervals, demands) in resourceMap.items():
         cap = int(resourceCap.get(res, 1))
-        demands = [1] * len(intervals)
         model.AddCumulative(intervals, demands, cap)
 
     makespan = model.NewIntVar(0, horizon, "makespan")

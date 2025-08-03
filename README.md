@@ -74,6 +74,7 @@
 4. **RCPSP 排程**
 
    - 透過 OR-Tools 求解資源受限排程
+   - WBS 支援 `ResourceDemand` 欄位，可設定每個任務所需資源單位
    - 使用 --rcpsp-opt 取得優化結果
 
 5. **匯出功能**
