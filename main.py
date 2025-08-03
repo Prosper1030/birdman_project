@@ -83,7 +83,7 @@ def main():
     parser.add_argument("--dsm", required=True)
     parser.add_argument("--wbs", required=True)
     parser.add_argument("--config", default="config.json")
-    parser.add_argument("--cmp", action="store_true", help="執行 CPM 分析")
+    parser.add_argument("--cpm", action="store_true", help="執行 CPM 分析")
     parser.add_argument(
         "--export-graph",
         metavar="PATH",
@@ -92,7 +92,7 @@ def main():
     parser.add_argument(
         "--export-gantt",
         metavar="PATH",
-        help="匯出甘特圖 (SVG 或 PNG)，需同時啟用 --cmp"
+        help="匯出甘特圖 (SVG 或 PNG)，需同時啟用 --cpm"
     )
     parser.add_argument(
         "--duration-field",
@@ -186,7 +186,7 @@ def main():
         saveFigure(fig, args.export_graph)
         print(f"已匯出依賴關係圖至 {args.export_graph}")
 
-    if args.cmp:
+    if args.cpm:
         print("開始執行 CPM 分析...")
         cmp_params = config.get('cmp_params', {})
         duration_field = args.duration_field or cmp_params.get(
