@@ -22,6 +22,7 @@ from src.cpm_processor import (
 )
 import numpy as np
 from src.rcpsp_solver import solveRcpsp
+from src.resource_processor import readResources
 from src import visualizer
 from matplotlib.figure import Figure
 import matplotlib
@@ -174,6 +175,14 @@ def parse_arguments():
         "--duration-field", dest="durationField", metavar="FIELD",
         help="指定工期欄位")
     parser.add_argument(
+        "--resources", metavar="PATH", help="Resources 檔案路徑")
+    parser.add_argument(
+        "--resource-field", dest="resourceField", default="Category",
+        help="WBS 中資源欄位名稱 (預設 Category)")
+    parser.add_argument(
+        "--demand-field", dest="demandField", default="ResourceDemand",
+        help="WBS 中資源需求欄位名稱 (預設 ResourceDemand)")
+    parser.add_argument(
         "--monte-carlo", metavar="N", type=int, default=0,
         help="執行蒙地卡羅模擬次數")
     parser.add_argument(
@@ -229,17 +238,31 @@ def generate_outputs(
 
     # 執行 RCPSP
     if args.rcpsp_opt:
+        if not args.resources:
+            raise ValueError("使用 RCPSP 排程時必須提供 --resources 檔案")
+        if args.resourceField not in merged.columns:
+            raise ValueError(f'WBS 缺少資源欄位 {args.resourceField}')
+        if args.demandField not in merged.columns:
+            raise ValueError(f'WBS 缺少需求欄位 {args.demandField}')
         print("開始執行 RCPSP 排程...")
         cmp_params = config.get("cmp_params", {})
         durationField = args.durationField or cmp_params.get(
             "default_duration_field", "Te_newbie")
-        schedule = solveRcpsp(merged_graph, merged, durationField)
+        resourceCap = readResources(args.resources, merged, durationField)
+        schedule = solveRcpsp(
+            merged_graph,
+            merged,
+            durationField=durationField,
+            resourceField=args.resourceField,
+            demandField=args.demandField,
+            resourceCap=resourceCap,
+        )
         merged["Start"] = merged["Task ID"].map(schedule).fillna(0)
         merged["Finish"] = merged["Start"] + merged[durationField].fillna(0)
         out_rcpsp = Path("rcpsp_schedule.csv")
         merged[["Task ID", "Start", "Finish"]].to_csv(
             out_rcpsp, index=False, encoding="utf-8-sig")
-        total_duration = schedule['ProjectEnd']
+        total_duration = schedule["ProjectEnd"]
         print(f"最短完工時間：{total_duration:.1f} 小時")
         if args.export_rcpsp_gantt:
             saveRcpspGanttChart(

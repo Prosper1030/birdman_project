@@ -59,6 +59,7 @@ from .cpm_processor import (
     extractDurationFromWbs,
 )
 from .rcpsp_solver import solveRcpsp
+from .resource_processor import readResources
 from . import visualizer
 
 
@@ -257,6 +258,7 @@ class BirdmanQtApp(QMainWindow):
         self.resize(1200, 800)
         self.dsmPath = ""
         self.wbsPath = ""
+        self.resourcePath = ""
         self.sortedWbs = None
         self.mergedWbs = None
         self.sortedDsm = None
@@ -460,6 +462,11 @@ class BirdmanQtApp(QMainWindow):
         self.path_layout.addWidget(self.wbs_label)
         self.path_layout.addWidget(self.wbs_path_label)
 
+        self.resources_label = QLabel("Resources 檔案:")
+        self.resources_path_label = QLabel("")
+        self.path_layout.addWidget(self.resources_label)
+        self.path_layout.addWidget(self.resources_path_label)
+
         # 頂端選單列
         menubar = self.menuBar()
         file_menu = menubar.addMenu("檔案")
@@ -485,6 +492,9 @@ class BirdmanQtApp(QMainWindow):
         import_dsm_action = QAction("匯入 DSM 檔案...", self)
         import_dsm_action.triggered.connect(self.chooseDsm)
         import_menu.addAction(import_dsm_action)
+        import_resources_action = QAction("匯入 Resources 檔案...", self)
+        import_resources_action.triggered.connect(self.chooseResources)
+        import_menu.addAction(import_resources_action)
         import_folder_action = QAction("匯入資料夾...", self)
         import_folder_action.triggered.connect(self.import_from_folder)
         import_menu.addAction(import_folder_action)
@@ -834,6 +844,14 @@ class BirdmanQtApp(QMainWindow):
                 self.wbs_preview.setModel(model)
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, "錯誤", f"WBS 載入失敗：{e}")
+
+    def chooseResources(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "選擇 Resources 檔案", "", "CSV Files (*.csv)"
+        )
+        if path:
+            self.resourcePath = path
+            self.resources_path_label.setText(path)
 
     def import_from_folder(self):
         """從資料夾匯入 WBS 與 DSM"""
@@ -1432,6 +1450,78 @@ class BirdmanQtApp(QMainWindow):
             return fig
         except Exception as e:
             QMessageBox.warning(self, "警告", f"甘特圖繪製失敗：{e}")
+            return Figure()
+
+    def drawRcpspGanttChart(self, scheduleDf, durationField, title):
+        """繪製 RCPSP 甘特圖並回傳 Figure"""
+        try:
+            fig = Figure(figsize=(16, 12), dpi=100)
+            ax = fig.add_subplot(111)
+            fig.patch.set_facecolor(plt.rcParams["figure.facecolor"])
+            ax.set_facecolor(plt.rcParams["axes.facecolor"])
+            fig.subplots_adjust(top=0.9, bottom=0.15, left=0.2, right=0.95)
+            tasks = scheduleDf["Task ID"].tolist()
+            startTimes = scheduleDf["Start"].tolist()
+            durations = scheduleDf[durationField].tolist()
+            yPos = range(len(tasks))
+            ax.barh(
+                yPos,
+                durations,
+                left=startTimes,
+                color="dodgerblue",
+                alpha=0.8,
+                height=0.6,
+                edgecolor=plt.rcParams["axes.edgecolor"],
+                linewidth=1,
+                zorder=2,
+            )
+            ax.set_yticks(list(yPos))
+            ax.set_yticklabels(
+                tasks,
+                fontsize=10,
+                fontweight="bold",
+                color=plt.rcParams["axes.labelcolor"],
+            )
+            ax.tick_params(axis="x", colors=plt.rcParams["xtick.color"])
+            ax.tick_params(axis="y", colors=plt.rcParams["ytick.color"])
+            for spine in ax.spines.values():
+                spine.set_edgecolor(plt.rcParams["axes.edgecolor"])
+            ax.grid(
+                True,
+                axis="x",
+                linestyle="--",
+                color=plt.rcParams["grid.color"],
+                alpha=0.3,
+                zorder=1,
+            )
+            ax.set_axisbelow(True)
+            ax.set_xlabel(
+                "時間 (小時)",
+                fontsize=11,
+                fontweight="bold",
+                color=plt.rcParams["axes.labelcolor"],
+            )
+            ax.set_title(
+                title,
+                fontsize=14,
+                pad=20,
+                color=plt.rcParams["axes.labelcolor"],
+            )
+            for i, (dur, start) in enumerate(zip(durations, startTimes)):
+                if dur > 0:
+                    ax.text(
+                        start + dur + 0.1,
+                        i,
+                        f"{dur:.1f}h",
+                        va="center",
+                        fontsize=9,
+                        alpha=0.7,
+                        color=plt.rcParams["text.color"],
+                    )
+            ax.invert_yaxis()
+            return fig
+        except Exception as e:
+            QMessageBox.warning(self, "警告", f"RCPSP 甘特圖繪製失敗：{e}")
             return Figure()
 
     def update_gantt_display(self):
@@ -2183,6 +2273,9 @@ class BirdmanQtApp(QMainWindow):
         if self.mergedGraph is None or self.mergedWbs is None:
             QMessageBox.warning(self, "警告", "請先執行完整分析")
             return
+        if not self.resourcePath:
+            QMessageBox.warning(self, "警告", "請先匯入 Resources 檔案")
+            return
 
         try:
             with open("config.json", "r", encoding="utf-8") as f:
@@ -2193,40 +2286,61 @@ class BirdmanQtApp(QMainWindow):
             if durationField not in self.mergedWbs.columns:
                 raise ValueError(f"WBS 缺少工期欄位 {durationField}")
             if "Category" not in self.mergedWbs.columns:
-                QMessageBox.warning(
-                    self, "警告", 'WBS 缺少 "Category" 欄位，將不考慮資源限制'
-                )
+                raise ValueError('WBS 缺少 "Category" 欄位')
+            if "ResourceDemand" not in self.mergedWbs.columns:
+                raise ValueError('WBS 缺少 "ResourceDemand" 欄位')
 
+            resourceCap = readResources(
+                self.resourcePath, self.mergedWbs, durationField)
             schedule = solveRcpsp(
                 self.mergedGraph,
                 self.mergedWbs,
                 durationField=durationField,
                 resourceField="Category",
+                demandField="ResourceDemand",
+                resourceCap=resourceCap,
             )
 
             projectEnd = schedule.pop("ProjectEnd", 0)
-            result_text = (
+            scheduleDf = self.mergedWbs[["Task ID", durationField]].copy()
+            scheduleDf["Start"] = scheduleDf["Task ID"].map(schedule).fillna(0)
+            scheduleDf["Finish"] = (
+                scheduleDf["Start"] + scheduleDf[durationField].fillna(0)
+            )
+            resultText = (
                 f"<b>RCPSP 排程結果 (總工期: {projectEnd:.2f} 小時):" "</b><br><br>"
             )
-            result_text += "<table border='1' style='width:100%'>"
-            result_text += "<tr><th>任務 ID</th><th>開始時間 (小時)</th></tr>"
-            for task, start_time in sorted(schedule.items()):
-                result_text += f"<tr><td>{task}</td><td>{start_time}</td></tr>"
-            result_text += "</table>"
+            resultText += "<table border='1' style='width:100%'>"
+            resultText += "<tr><th>任務 ID</th><th>開始時間 (小時)</th></tr>"
+            for task, startTime in sorted(schedule.items()):
+                resultText += f"<tr><td>{task}</td><td>{startTime}</td></tr>"
+            resultText += "</table>"
 
-            # 使用一個可捲動的對話框來顯示結果
             dialog = QDialog(self)
             dialog.setWindowTitle("RCPSP 排程結果")
             layout = QVBoxLayout()
-            text_edit = QTextEdit()
-            text_edit.setHtml(result_text)
-            text_edit.setReadOnly(True)
-            layout.addWidget(text_edit)
-            button_box = QDialogButtonBox(QDialogButtonBox.Ok)
-            button_box.accepted.connect(dialog.accept)
-            layout.addWidget(button_box)
+            textEdit = QTextEdit()
+            textEdit.setHtml(resultText)
+            textEdit.setReadOnly(True)
+            layout.addWidget(textEdit)
+
+            fig = self.drawRcpspGanttChart(
+                scheduleDf,
+                durationField,
+                f"RCPSP 排程 (總工期: {projectEnd:.2f} 小時)",
+            )
+            canvas = FigureCanvas(fig)
+            scrollArea = QScrollArea()
+            scrollArea.setWidget(canvas)
+            scrollArea.setWidgetResizable(True)
+            scrollArea.setMinimumHeight(400)
+            layout.addWidget(scrollArea)
+
+            buttonBox = QDialogButtonBox(QDialogButtonBox.Ok)
+            buttonBox.accepted.connect(dialog.accept)
+            layout.addWidget(buttonBox)
             dialog.setLayout(layout)
-            dialog.resize(400, 300)
+            dialog.resize(600, 500)
             dialog.exec_()
 
         except Exception as e:
