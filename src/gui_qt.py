@@ -981,7 +981,7 @@ class BirdmanQtApp(QMainWindow):
                         except nx.NetworkXNoPath:
                             continue
                     self.merged_layer_map[node] = max_dist
-            except Exception:  # pylint: disable=broad-except
+            except (ValueError, nx.NetworkXError):
                 self.merged_layer_map = {
                     node: i for i, node in enumerate(self.merged_graph.nodes())
                 }
@@ -1007,7 +1007,13 @@ class BirdmanQtApp(QMainWindow):
             if show_notification:
                 QMessageBox.information(self, '完成', '分析完成，可切換分頁預覽與匯出')
             return True
-        except Exception as e:  # pylint: disable=broad-except
+        except (
+            OSError,
+            ValueError,
+            KeyError,
+            nx.NetworkXError,
+            pd.errors.ParserError,
+        ) as e:
             # 執行流程中可能發生多種錯誤，此處統一彙整顯示訊息
             QMessageBox.critical(self, '錯誤', str(e))
             return False
@@ -1268,7 +1274,7 @@ class BirdmanQtApp(QMainWindow):
             self.update_gantt_display()
 
             QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
-        except Exception as e:  # pylint: disable=broad-except
+        except (ValueError, KeyError, nx.NetworkXError) as e:
             QMessageBox.critical(self, '錯誤', f'CPM 分析失敗：{e}')
 
     def run_full_analysis(self):
@@ -1282,7 +1288,7 @@ class BirdmanQtApp(QMainWindow):
                 config = json.load(f)
             cmp_params = config.get('cmp_params', {})
             baseField = cmp_params.get('default_duration_field', 'Te_newbie')
-        except Exception as e:  # pylint: disable=broad-except
+        except (OSError, json.JSONDecodeError) as e:
             QMessageBox.critical(self, '錯誤', f'設定檔讀取失敗：{e}')
             return
 
@@ -1470,7 +1476,7 @@ class BirdmanQtApp(QMainWindow):
             ax.invert_yaxis()
 
             return fig
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             QMessageBox.warning(self, '警告', f'甘特圖繪製失敗：{e}')
             return Figure()
 
@@ -1687,7 +1693,7 @@ class BirdmanQtApp(QMainWindow):
                 # 嘗試恢復原始幾何，如果失敗則使用安全的尺寸
                 try:
                     self.setGeometry(current_geometry)
-                except BaseException:
+                except (RuntimeError, TypeError, ValueError):
                     # 如果恢復失敗，使用安全的尺寸
                     self.resize(1200, 800)
 
@@ -1724,7 +1730,7 @@ class BirdmanQtApp(QMainWindow):
                 # 如果沒有結果，重新初始化空白圖表
                 self.initialize_monte_carlo_chart()
 
-        except Exception as e:
+        except (AttributeError, RuntimeError) as e:
             # 如果主題切換過程中出現任何錯誤，顯示錯誤訊息但不崩潰
             QMessageBox.warning(
                 self,
@@ -1806,7 +1812,12 @@ class BirdmanQtApp(QMainWindow):
                             int(m_size[0] * 1.1),
                             int(m_size[1] * 1.1),
                         )
-            except Exception as e:  # pylint: disable=broad-except
+            except (
+                OSError,
+                json.JSONDecodeError,
+                ValueError,
+                nx.NetworkXError,
+            ) as e:
                 QMessageBox.warning(self, '警告', f'圖表重繪失敗：{e}')
 
     def redraw_merged_graph(self):
@@ -1856,7 +1867,12 @@ class BirdmanQtApp(QMainWindow):
                     int(m_size[0] * 1.1),
                     int(m_size[1] * 1.1),
                 )
-        except Exception as e:  # pylint: disable=broad-except
+        except (
+            OSError,
+            json.JSONDecodeError,
+            ValueError,
+            nx.NetworkXError,
+        ) as e:
             QMessageBox.warning(self, '警告', f'合併後依賴圖重繪失敗：{e}')
 
     def exportGanttChart(self, fmt='png'):
@@ -1977,7 +1993,7 @@ class BirdmanQtApp(QMainWindow):
             # 強制更新蒙地卡羅分頁
             self.tab_monte_carlo.update()
             self.tab_monte_carlo.repaint()
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             # 即使處理結果時出錯，也要確保重新啟用控制項
             self.mc_run_button.setEnabled(True)
             self.dark_mode_action.setEnabled(True)
@@ -2102,7 +2118,7 @@ class BirdmanQtApp(QMainWindow):
                     for text in legend.get_texts():
                         text.set_color(text_color)
 
-            except Exception as e:
+            except (ValueError, np.linalg.LinAlgError) as e:
                 # 如果KDE計算失敗，不中斷程序，但記錄錯誤
                 print(f"KDE計算失敗: {e}")
                 pass
@@ -2293,7 +2309,12 @@ class BirdmanQtApp(QMainWindow):
             dialog.resize(400, 300)
             dialog.exec_()
 
-        except Exception as e:
+        except (
+            OSError,
+            json.JSONDecodeError,
+            ValueError,
+            RuntimeError,
+        ) as e:
             QMessageBox.critical(self, '排程失敗', f'執行 RCPSP 排程時發生錯誤：{e}')
 
 
