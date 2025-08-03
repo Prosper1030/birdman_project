@@ -2,7 +2,6 @@ import pandas as pd
 import networkx as nx
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Any
-import random
 import numpy as np
 
 
@@ -123,7 +122,8 @@ def monteCarloSchedule(
 ) -> Dict[str, Any]:
     """蒙地卡羅模擬計算專案完工時間
 
-    以三點估算法的 O、M、P 值為基礎，進行多次隨機抽樣後執行 CPM。
+    以三點估算法的 O、M、P 值為基礎，使用 Beta-PERT 分佈進行隨機抽樣後
+    執行 CPM，取得專案完工時間的統計資料。
 
     參數:
         G: 依賴關係圖
@@ -144,25 +144,42 @@ def monteCarloSchedule(
             o = float(oDurations.get(task, 0))
             m = float(mDurations.get(task, 0))
             p = float(pDurations.get(task, 0))
-            sampled[task] = random.triangular(o, p, m)
+
+            # 依 Beta-PERT 分佈產生模擬工期
+            if p == o:
+                simulatedDuration = o
+            else:
+                meanMu = (o + 4 * m + p) / 6
+                meanMu = max(o, min(p, meanMu))
+                if meanMu == o:
+                    alpha = 1
+                else:
+                    alpha = 1 + 4 * ((meanMu - o) / (p - o))
+                if meanMu == p:
+                    beta = 1
+                else:
+                    beta = 1 + 4 * ((p - meanMu) / (p - o))
+                randomBeta = np.random.beta(alpha, beta)
+                simulatedDuration = o + randomBeta * (p - o)
+            sampled[task] = float(simulatedDuration)
 
         forward = cpmForwardPass(G, sampled)
-        project_end = max(v[1] for v in forward.values())
-        results.append(project_end)
+        projectEnd = max(v[1] for v in forward.values())
+        results.append(projectEnd)
 
     arr = np.array(results)
     avg = float(arr.mean())
     std = float(arr.std(ddof=1)) if len(arr) > 1 else 0.0
-    min_v = float(arr.min())
-    max_v = float(arr.max())
-    conf_v = float(np.quantile(arr, confidence))
+    minVal = float(arr.min())
+    maxVal = float(arr.max())
+    confidenceValue = float(np.quantile(arr, confidence))
 
     return {
         "average": avg,
         "std": std,
-        "min": min_v,
-        "max": max_v,
+        "min": minVal,
+        "max": maxVal,
         "confidence": confidence,
-        "confidence_value": conf_v,
+        "confidence_value": confidenceValue,
         "samples": results,
     }
