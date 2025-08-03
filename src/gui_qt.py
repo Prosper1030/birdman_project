@@ -601,17 +601,22 @@ class BirdmanQtApp(QMainWindow):
         # 預覽用表格
         self.dsm_preview = QTableView()
         self.wbs_preview = QTableView()
+        self.resources_preview = QTableView()
 
         # 預覽分頁
         self.preview_tabs = QTabWidget()
         self.wbs_preview_tab = QWidget()
         self.dsm_preview_tab = QWidget()
+        self.resources_preview_tab = QWidget()
         self.preview_tabs.addTab(self.wbs_preview_tab, "WBS Preview")
         self.preview_tabs.addTab(self.dsm_preview_tab, "DSM Preview")
+        self.preview_tabs.addTab(self.resources_preview_tab, "Resources Preview")
         self.wbs_preview_tab.setLayout(QVBoxLayout())
         self.wbs_preview_tab.layout().addWidget(self.wbs_preview)
         self.dsm_preview_tab.setLayout(QVBoxLayout())
         self.dsm_preview_tab.layout().addWidget(self.dsm_preview)
+        self.resources_preview_tab.setLayout(QVBoxLayout())
+        self.resources_preview_tab.layout().addWidget(self.resources_preview)
 
         setup_layout.addWidget(self.preview_tabs, 1)  # 設定伸縮比例，讓預覽區域可以伸縮
         # 移除重複的按鈕添加，按鈕已經在前面加入過了
@@ -850,17 +855,25 @@ class BirdmanQtApp(QMainWindow):
             self, "選擇 Resources 檔案", "", "CSV Files (*.csv)"
         )
         if path:
-            self.resourcePath = path
-            self.resources_path_label.setText(path)
+            try:
+                # 讀取並預覽 Resources 資料
+                resources = pd.read_csv(path, encoding="utf-8-sig")
+                model = PandasModel(resources.head(100))
+                self.resources_preview.setModel(model)
+                self.resourcePath = path
+                self.resources_path_label.setText(path)
+            except (OSError, pd.errors.ParserError, ValueError) as e:
+                QMessageBox.critical(self, "錯誤", f"Resources 載入失敗：{e}")
 
     def import_from_folder(self):
-        """從資料夾匯入 WBS 與 DSM"""
+        """從資料夾匯入 WBS、DSM，若有 Resources 亦一併匯入"""
         folder = QFileDialog.getExistingDirectory(self, "選擇資料夾", "")
         if not folder:
             return
         files = os.listdir(folder)
         wbsFiles = [f for f in files if "wbs" in f.lower()]
         dsmFiles = [f for f in files if "dsm" in f.lower()]
+        resourceFiles = [f for f in files if "resource" in f.lower()]
         if len(wbsFiles) != 1 or len(dsmFiles) != 1:
             QMessageBox.warning(
                 self, "錯誤", "請選擇一個剛好包含一份 WBS 和一份 DSM 檔案的資料夾。"
@@ -885,6 +898,27 @@ class BirdmanQtApp(QMainWindow):
         self.wbs_preview.setModel(model_wbs)
         model_dsm = PandasModel(dsm.head(100), dsmMode=True)
         self.dsm_preview.setModel(model_dsm)
+
+        # 匯入並預覽 Resources（可選）
+        self.resourcePath = ""
+        self.resources_path_label.setText("")
+        self.resources_preview.setModel(PandasModel(pd.DataFrame()))
+        if len(resourceFiles) > 1:
+            QMessageBox.warning(
+                self, "錯誤", "資料夾中最多只能有一份 Resources 檔案，將忽略多餘檔案。"
+            )
+        elif len(resourceFiles) == 1:
+            resourcePath = os.path.join(folder, resourceFiles[0])
+            try:
+                resources = pd.read_csv(resourcePath, encoding="utf-8-sig")
+                model_res = PandasModel(resources.head(100))
+                self.resources_preview.setModel(model_res)
+                self.resourcePath = resourcePath
+                self.resources_path_label.setText(resourcePath)
+            except (OSError, pd.errors.ParserError, ValueError):
+                QMessageBox.warning(
+                    self, "錯誤", "Resources 檔案格式不正確，將忽略。"
+                )
 
     def runAnalysis(self, show_notification=True):
         try:
