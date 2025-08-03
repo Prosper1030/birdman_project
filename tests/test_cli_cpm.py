@@ -22,7 +22,7 @@ def test_cli_cpm(tmp_path):
         '--dsm', str(dsm_path),
         '--wbs', str(wbs_path),
         '--config', str(ROOT / 'config.json'),
-        '--cmp'
+        '--cpm'
     ]
     subprocess.run(cmd, check=True, cwd=tmp_path)
     assert (tmp_path / 'cmp_analysis.csv').exists()
