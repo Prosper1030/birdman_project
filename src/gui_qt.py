@@ -8,6 +8,7 @@ import os
 import networkx as nx
 import numpy as np
 from functools import partial
+from scipy.stats import gaussian_kde
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -760,6 +761,12 @@ class BirdmanQtApp(QMainWindow):
         self.mc_iterations_spinbox.setValue(1000)
         mc_top_layout.addWidget(self.mc_iterations_spinbox)
 
+        mc_top_layout.addWidget(QLabel('圖表模式:'))
+        self.mc_chart_mode_combo = QComboBox()
+        self.mc_chart_mode_combo.addItems(['次數模式', '密度模式'])
+        self.mc_chart_mode_combo.setCurrentIndex(0)  # 預設為次數模式
+        mc_top_layout.addWidget(self.mc_chart_mode_combo)
+
         self.mc_run_button = QPushButton('開始模擬')
         mc_top_layout.addWidget(self.mc_run_button)
 
@@ -808,6 +815,7 @@ class BirdmanQtApp(QMainWindow):
 
         # --- 按鈕連接 ---
         self.mc_run_button.clicked.connect(self.run_monte_carlo_simulation)
+        self.mc_chart_mode_combo.currentIndexChanged.connect(self.on_chart_mode_changed)
         self.run_rcpsp_button.clicked.connect(self.run_rcpsp_optimization)
 
         # 甘特圖情境切換下拉選單
@@ -1976,6 +1984,11 @@ class BirdmanQtApp(QMainWindow):
             self.menuBar().setEnabled(True)
             QMessageBox.critical(self, '錯誤', f'處理模擬結果時發生錯誤：{e}')
 
+    def on_chart_mode_changed(self):
+        """當圖表模式改變時重新繪製圖表"""
+        if hasattr(self, 'mc_last_results') and self.mc_last_results:
+            self.plot_results(self.mc_last_results)
+
     def plot_results(self, results: list[float]) -> None:
         """顯示模擬結果"""
         # 保存結果以便深色模式切換時重繪
@@ -2020,26 +2033,104 @@ class BirdmanQtApp(QMainWindow):
             self.mc_figure.patch.set_facecolor('white')
             ax.set_facecolor('white')
 
-        # 繪製直方圖，增大條寬
-        n, bins, patches = ax.hist(
-            arr,
-            bins=25,  # 減少bins數量
-            color=bar_color,
-            edgecolor=edge_color,
-            alpha=0.8,
-            rwidth=0.9  # 增大條的相對寬度
-        )
+        # 獲取當前選擇的圖表模式
+        chart_mode = self.mc_chart_mode_combo.currentText()
+        is_density_mode = (chart_mode == '密度模式')
+
+        # 根據模式繪製不同的直方圖
+        if is_density_mode:
+            # 密度模式：使用密度歸一化，並繪製KDE曲線
+            n, bins, patches = ax.hist(
+                arr,
+                bins=25,
+                color=bar_color,
+                edgecolor=edge_color,
+                alpha=0.8,
+                rwidth=0.9,
+                density=True,  # 密度歸一化
+                label='直方圖'
+            )
+
+            # 計算並繪製KDE曲線
+            try:
+                if len(arr) > 1:  # 確保有足夠的數據點計算KDE
+                    kde = gaussian_kde(arr)
+                    
+                    # 創建平滑的x軸數據點，範圍稍微超出數據範圍
+                    x_min, x_max = arr.min(), arr.max()
+                    x_range = x_max - x_min
+                    x_smooth = np.linspace(
+                        x_min - 0.1 * x_range, 
+                        x_max + 0.1 * x_range, 
+                        200
+                    )
+                    
+                    # 計算KDE值
+                    kde_values = kde(x_smooth)
+                    
+                    # 設定KDE曲線顏色
+                    if self.is_dark_mode:
+                        kde_color = '#ff6b6b'  # 紅色系，在深色背景下明顯
+                        kde_alpha = 0.9
+                    else:
+                        kde_color = '#e74c3c'  # 深紅色，在淺色背景下明顯
+                        kde_alpha = 0.8
+                    
+                    # 繪製KDE曲線
+                    ax.plot(
+                        x_smooth, 
+                        kde_values,
+                        color=kde_color,
+                        linewidth=2.5,
+                        alpha=kde_alpha,
+                        label='KDE 密度曲線'
+                    )
+                    
+                    # 添加圖例
+                    legend = ax.legend(
+                        loc='upper right',
+                        fontsize=9,
+                        framealpha=0.8
+                    )
+                    # 設定圖例文字顏色
+                    legend.get_frame().set_facecolor(
+                        'white' if not self.is_dark_mode else '#404040'
+                    )
+                    legend.get_frame().set_edgecolor(text_color)
+                    for text in legend.get_texts():
+                        text.set_color(text_color)
+                        
+            except Exception as e:
+                # 如果KDE計算失敗，不中斷程序，但記錄錯誤
+                print(f"KDE計算失敗: {e}")
+                pass
+        else:
+            # 次數模式：不使用密度歸一化，顯示原始計數
+            n, bins, patches = ax.hist(
+                arr,
+                bins=25,
+                color=bar_color,
+                edgecolor=edge_color,
+                alpha=0.8,
+                rwidth=0.9,
+                density=False  # 不使用密度歸一化，顯示次數
+            )
 
         # 獲取模擬條件資訊
         role_text = self.mc_role_select_combo.currentText()
         iterations = self.mc_iterations_spinbox.value()
 
-        # 設定標題，包含模擬條件
-        title = f'蒙地卡羅模擬結果\n分析對象: {role_text} | 模擬次數: {iterations:,} 次'
+        # 設定標題，包含模擬條件和圖表模式
+        title = f'蒙地卡羅模擬結果 ({chart_mode})\n分析對象: {role_text} | 模擬次數: {iterations:,} 次'
         ax.set_title(title, color=text_color, fontsize=12, pad=15)
 
         ax.set_xlabel('工時 (小時)', color=text_color, fontsize=10)
-        ax.set_ylabel('頻率', color=text_color, fontsize=10)
+        
+        # 根據模式設定Y軸標籤
+        if is_density_mode:
+            ax.set_ylabel('密度', color=text_color, fontsize=10)
+        else:
+            ax.set_ylabel('次數', color=text_color, fontsize=10)
 
         # 設定刻度顏色
         ax.tick_params(colors=text_color)
@@ -2130,7 +2221,7 @@ class BirdmanQtApp(QMainWindow):
         # 設定空白圖表的標題和標籤
         ax.set_title('蒙地卡羅模擬結果\n(請先執行模擬)', color=text_color, fontsize=12)
         ax.set_xlabel('工時 (小時)', color=text_color, fontsize=10)
-        ax.set_ylabel('頻率', color=text_color, fontsize=10)
+        ax.set_ylabel('次數', color=text_color, fontsize=10)  # 預設為次數模式
 
         # 設定刻度顏色
         ax.tick_params(colors=text_color)
