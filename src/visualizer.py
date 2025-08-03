@@ -1,6 +1,7 @@
 """視覺化相關函式，使用分層佈局"""
 from collections import defaultdict
 
+import logging
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import networkx as nx
@@ -44,9 +45,12 @@ def create_dependency_graph_figure(
             'Arial Unicode MS',
         ]
         plt.rcParams['axes.unicode_minus'] = False
-    except Exception as e:  # pylint: disable=broad-except
-        # 不同環境下可能因字體名稱或 matplotlib 設定產生例外
-        print(f"警告：設定中文字體時發生錯誤: {e}")
+    except (KeyError, ValueError) as e:
+        # 已知錯誤：rcParams 鍵值錯誤或設定值不合法
+        print(f"警告：設定中文字體時發生已知錯誤：{e}")
+    except Exception as e:
+        # 未預期錯誤，紀錄詳細資訊以利除錯
+        logging.exception("設定中文字體時發生未預期錯誤：%s", e)
 
     # 確保使用 Agg backend 避免創建額外視窗
     import matplotlib
