@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QComboBox,
     QAction,
+    QActionGroup,
     QDialogButtonBox,
     QScrollArea,
     QTextEdit,
@@ -506,6 +507,28 @@ class BirdmanQtApp(QMainWindow):
         file_menu = menubar.addMenu("檔案")
         settings_menu = menubar.addMenu("設定")
         theme_menu = menubar.addMenu("主題")
+        role_menu = menubar.addMenu("角色(R)")
+
+        # 全域角色設定
+        self.selected_role = 'newbie'  # 預設為新手
+
+        # 建立角色選擇動作
+        self.novice_action = QAction("新手 (Novice)", self)
+        self.novice_action.setCheckable(True)
+        self.novice_action.setChecked(True)  # 預設選中
+        self.novice_action.triggered.connect(lambda: self.setGlobalRole('newbie'))
+
+        self.expert_action = QAction("專家 (Expert)", self)
+        self.expert_action.setCheckable(True)
+        self.expert_action.triggered.connect(lambda: self.setGlobalRole('expert'))
+
+        # 建立動作群組確保單選
+        self.role_action_group = QActionGroup(self)
+        self.role_action_group.addAction(self.novice_action)
+        self.role_action_group.addAction(self.expert_action)
+
+        role_menu.addAction(self.novice_action)
+        role_menu.addAction(self.expert_action)
 
         # k 係數參數設定動作
         kParamsAction = QAction("k 係數參數設定...", self)
@@ -732,23 +755,6 @@ class BirdmanQtApp(QMainWindow):
         self.tab_gantt_chart.setLayout(QVBoxLayout())
         self.tab_advanced_analysis.setLayout(QVBoxLayout())
 
-        # --- RCPSP 排程區塊 ---
-        rcpsp_group = QWidget()
-        rcpsp_layout = QVBoxLayout()
-        rcpsp_group.setLayout(rcpsp_layout)
-
-        rcpsp_title = QLabel("<h3>RCPSP 資源排程 (RCPSP Resource Scheduling)</h3>")
-        rcpsp_layout.addWidget(rcpsp_title)
-
-        self.configResourcesButton = QPushButton("設定資源容量")
-        rcpsp_layout.addWidget(self.configResourcesButton)
-
-        self.runRcpspButton = QPushButton("執行 RCPSP 資源排程")
-        rcpsp_layout.addWidget(self.runRcpspButton)
-
-        rcpsp_layout.addStretch()
-        self.tab_advanced_analysis.layout().addWidget(rcpsp_group)
-
         # --- RACP 人力配置區塊 ---
         racp_group = QWidget()
         racp_layout = QVBoxLayout()
@@ -779,17 +785,29 @@ class BirdmanQtApp(QMainWindow):
         racp_layout.addStretch()
         self.tab_advanced_analysis.layout().addWidget(racp_group)
 
+        # --- RCPSP 排程區塊 ---
+        rcpsp_group = QWidget()
+        rcpsp_layout = QVBoxLayout()
+        rcpsp_group.setLayout(rcpsp_layout)
+
+        rcpsp_title = QLabel("<h3>RCPSP 資源排程 (RCPSP Resource Scheduling)</h3>")
+        rcpsp_layout.addWidget(rcpsp_title)
+
+        self.configResourcesButton = QPushButton("設定資源容量")
+        rcpsp_layout.addWidget(self.configResourcesButton)
+
+        self.runRcpspButton = QPushButton("執行 RCPSP 資源排程")
+        rcpsp_layout.addWidget(self.runRcpspButton)
+
+        rcpsp_layout.addStretch()
+        self.tab_advanced_analysis.layout().addWidget(rcpsp_group)
+
         # --- 蒙地卡羅模擬分頁 ---
         mc_main_layout = QVBoxLayout()
         self.tab_monte_carlo.setLayout(mc_main_layout)
 
         mc_top_layout = QHBoxLayout()
         mc_main_layout.addLayout(mc_top_layout)
-
-        mc_top_layout.addWidget(QLabel("分析對象:"))
-        self.mc_role_select_combo = QComboBox()
-        self.mc_role_select_combo.addItems(["新手 (Novice)", "專家 (Expert)"])
-        mc_top_layout.addWidget(self.mc_role_select_combo)
 
         mc_top_layout.addWidget(QLabel("模擬次數:"))
         self.mc_iterations_spinbox = QSpinBox()
@@ -864,14 +882,7 @@ class BirdmanQtApp(QMainWindow):
         # 甘特圖情境切換下拉選單
         gantt_top_layout = QHBoxLayout()
 
-        # 左邊角色選擇
-        role_label = QLabel("角色：")
-        gantt_top_layout.addWidget(role_label)
-        self.role_selection_combo = QComboBox()
-        self.role_selection_combo.addItems(["新手 (Novice)", "專家 (Expert)"])
-        gantt_top_layout.addWidget(self.role_selection_combo)
-
-        # 中間的顯示模式選擇
+        # 顯示模式選擇
         self.ganttDisplayCombo = QComboBox()
         self.ganttDisplayCombo.currentIndexChanged.connect(self.update_gantt_display)
         gantt_top_layout.addWidget(self.ganttDisplayCombo)
@@ -1770,6 +1781,19 @@ class BirdmanQtApp(QMainWindow):
             except (OSError, json.JSONDecodeError) as e:
                 QMessageBox.warning(self, "警告", f"無法保存設定：{e}")
 
+    def setGlobalRole(self, role):
+        """設定全域角色並更新相關顯示"""
+        self.selected_role = role
+
+        # 如果有現有的分析結果，重新更新顯示
+        if hasattr(self, 'cmpResults') and self.cmpResults:
+            # 更新甘特圖顯示
+            self.update_gantt_display()
+
+        # 顯示角色切換提示
+        role_name = "新手" if role == 'newbie' else "專家"
+        self.statusBar().showMessage(f"已切換至 {role_name} 模式", 3000)
+
     def toggle_dark_mode(self, checked):
         """切換深色/淺色模式"""
         try:
@@ -2057,11 +2081,7 @@ class BirdmanQtApp(QMainWindow):
         self.menuBar().setEnabled(False)
 
         self.mc_run_button.setEnabled(False)
-        roleKey = (
-            "newbie"
-            if self.mc_role_select_combo.currentText() == "新手 (Novice)"
-            else "expert"
-        )
+        roleKey = self.selected_role
         iterations = self.mc_iterations_spinbox.value()
         self.mc_progress_bar.setMaximum(iterations)
         self.mc_progress_bar.setValue(0)
@@ -2254,7 +2274,7 @@ class BirdmanQtApp(QMainWindow):
             )
 
         # 獲取模擬條件資訊
-        role_text = self.mc_role_select_combo.currentText()
+        role_text = "新手 (Novice)" if self.selected_role == 'newbie' else "專家 (Expert)"
         iterations = self.mc_iterations_spinbox.value()
 
         # 設定標題，包含模擬條件和圖表模式

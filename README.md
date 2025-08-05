@@ -31,6 +31,7 @@ python -m src.gui_qt
 ### 📊 時程分析與最佳化
 - **CPM 關鍵路徑分析**：自動計算最早/最晚時間與鬆弛時間
 - **蒙地卡羅風險模擬**：Beta-PERT 分佈的隨機工期分析 (支援 1000+ 次模擬)
+- **RACP 最小人力配置**：反推達成截止期限所需的最小人力資源配置
 - **RCPSP 資源受限排程**：使用 OR-Tools 進行資源最佳化配置
 - **多情境分析**：專家/新手 × 樂觀/最可能/悲觀/期望工時組合
 
@@ -41,8 +42,11 @@ python -m src.gui_qt
 - 多格式匯出：CSV、Excel、SVG、PNG (300 DPI)
 
 ### 🖥️ 使用者介面
-- **CLI 命令列**：適合批次處理與 CI/CD 整合
+- **CLI 命令列**：適合批次處理與 CI/CD 整合，支援 `--racp-opt` 參數
 - **PyQt5 GUI**：9 個分頁的完整圖形介面，整合所有功能
+  - 全域角色設定：主選單列統一控制所有分析的計算基準
+  - 進階分析分頁：RACP 人力配置與 RCPSP 資源排程
+  - 視覺化圖表：人力配置長條圖與詳細結果對話框
 
 ## 系統需求
 
@@ -74,6 +78,15 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json --monte-carlo 1000 --mc-confidence 0.85
 ```
 
+### RACP 最小人力配置
+```bash
+# 計算達成 120 小時截止期限所需的最小人力
+python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json --racp-opt 120
+
+# 指定工期欄位進行 RACP 分析
+python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json --racp-opt 150 --duration-field Te_expert
+```
+
 ### RCPSP 資源最佳化
 ```bash
 # 資源受限排程最佳化
@@ -98,15 +111,16 @@ python -m src.gui_qt
 
 ### 介面功能
 - **檔案管理**：DSM/WBS/Resources 檔案選擇與預覽
+- **全域角色設定**：主選單列「角色」選單統一控制分析基準
 - **即時分析**：一鍵執行所有分析功能
 - **多分頁檢視**：
   - 排序 WBS/DSM：拓樸排序結果
   - 依賴關係圖：互動式圖表檢視
   - 合併 WBS/DSM：SCC 合併結果
-  - CPM 分析結果：關鍵路徑詳細報告
+  - CPM 分析結果：關鍵路徑詳細分析
   - 甘特圖：8 種情境動態切換
-  - 蒙地卡羅模擬：次數/密度雙重圖表
-  - 進階分析：RCPSP 等高級功能
+  - 蒙地卡羅模擬：次數/密度雙重圖表與風險分析
+  - 進階分析：RACP 人力配置與 RCPSP 資源排程
 - **主題切換**：深色/淺色模式
 - **統一匯出**：檔案選單整合所有匯出功能
 

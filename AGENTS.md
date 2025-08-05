@@ -174,3 +174,88 @@ All AI agents must:
 2. Use the same coding standards defined here
 3. Update the documentation files consistently
 4. Respect the precedence: Requirements.md > AGENTS.md > other docs
+
+### Quick Commands and Shortcuts / 快捷指令
+
+**#all Command (專案全面分析指令)**
+當在 prompt 中輸入 `#all` 時，AI 應自動執行以下標準化流程：
+
+1. **專案現況分析**：
+   ```
+   閱讀並分析：
+   - docs/Requirements.md（技術規格）
+   - docs/AI_SYNC_README.md（現況與缺口）
+   - docs/AI_LOG.md（操作歷史）
+   - 最新的 git log（最近 5 次提交）
+   ```
+
+2. **進度確認與更新**：
+   ```
+   執行以下檢查：
+   - 確認所有已完成功能是否符合需求規格
+   - 識別新的功能缺口或技術債務
+   - 更新 docs/AI_SYNC_README.md 的現況摘要
+   - 評估下一步優先級
+   ```
+
+3. **回報格式**：
+   ```
+   ## 專案現況報告 (#all)
+   
+   ### ✅ 已完成功能
+   - [列出主要完成的功能模組]
+   
+   ### 🔄 進行中項目  
+   - [目前正在開發的功能]
+   
+   ### ❌ 待辦事項（按優先級排序）
+   - [高優先級待辦事項]
+   - [中優先級待辦事項]
+   
+   ### 📊 技術債務與改善建議
+   - [程式碼品質改善點]
+   - [架構優化建議]
+   
+   ### 🎯 建議下一步行動
+   - [具體可執行的下一步建議]
+   ```
+
+**自動 README 更新觸發器**
+當以下情況發生時，AI 應主動更新 README.md：
+- 新增主要功能模組
+- CLI 參數變更
+- GUI 介面重大改版
+- 新增重要使用案例
+
+**改進後的 Prompt 生成**
+每次完成重大功能改進後，AI 應自動生成適合下一個 AI 使用的 prompt：
+
+```
+## 下一階段開發 Prompt
+
+基於目前專案狀態，建議下一個 AI 代理使用以下 prompt：
+
+[Context]
+專案現況：[簡述當前已完成的功能]
+技術棧：[列出主要技術組件]
+
+[Task]
+優先任務：[明確的下一步任務描述]
+技術要求：[具體的技術實作要求]
+
+[Expected Output]
+預期成果：[明確的交付物描述]
+品質標準：[測試與品質要求]
+```
+
+### Enhanced Collaboration Features / 增強協作功能
+
+**跨 AI 系統狀態同步**
+- 所有 AI 操作必須更新 docs/AI_LOG.md
+- 重大決策需記錄到 docs/AI_SYNC_README.md
+- 功能完成後立即更新技術文件
+
+**智能提示與建議**
+- 檢測到技術衝突時主動提醒
+- 發現程式碼重複時建議重構
+- 識別效能瓶頸時提供最佳化建議
