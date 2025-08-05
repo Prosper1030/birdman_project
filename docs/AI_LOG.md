@@ -20,7 +20,7 @@
 - 目標：檢查並補充 src 目錄下所有函式的繁體中文 Google Style docstring
 - 結果：完成 docstring 統一與格式修正，並通過 pytest 與 flake8
 
-## 2025-01-09 | Claude Code：完善專案文件生態系統
+## 2025-08-05 | Claude Code：完善專案文件生態系統
 - 目標：全面優化專案文件結構與協作流程
 - 執行內容：
   - 更新 README.md：根據實際 CLI 功能重寫，新增完整使用範例與技術架構說明
@@ -29,7 +29,7 @@
   - 優化測試策略：區分程式碼變更與文件變更的測試需求，避免文件修改時執行不必要的測試
 - 結果：建立了更高效、更實用的專案文件生態系統，降低開發與協作成本
 
-## 2025-01-09 | Claude Code：重構 AGENTS.md 符合 Codex 規範
+## 2025-08-05 | Claude Code：重構 AGENTS.md 符合 Codex 規範
 - 目標：根據 OpenAI Codex 對 AGENTS.md 的規範要求，重構文件格式與內容
 - 執行內容：
   - 重新組織為 Codex 友善的指令格式
