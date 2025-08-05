@@ -322,6 +322,12 @@ class AcademicAvailabilityPredictor:
 
 **詳細技術規格與實作藍圖**：完整的互動邏輯狀態機設計、底層資料架構、佈局演算法原理分析與端到端實作指南，請參閱專門的技術分析文件：[視覺化 DSM 編輯器技術分析報告](designs/visual_dsm_editor_analysis.md)。
 
+**[開發者必讀] 互動功能實作指南**：
+
+關於此編輯器在 **PyQt5 QGraphicsScene** 框架下的具體實作細節，包括節點選取、拖曳、邊線創建狀態機、事件處理程式碼範例與 MVC 雙向同步的完整開發指南，請參閱：
+
+**[使用 PyQt5 打造互動式依賴關係編輯器之開發者指南](designs/visual_dsm_editor_implementation_guide.md)**
+
 ### WBS 資料互動與編輯
 
 **雙模式資料編輯功能**
