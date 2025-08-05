@@ -525,7 +525,7 @@ class BirdmanQtApp(QMainWindow):
         self.expert_action.triggered.connect(lambda: self.setGlobalRole('expert'))
 
         # 依賴關係編輯器
-        dsm_editor_action = QAction("依賴關係編輯器", self)
+        dsm_editor_action = QAction("依賴關係編輯器...", self)
         dsm_editor_action.triggered.connect(self.openDsmEditor)
         file_menu.addAction(dsm_editor_action)
         file_menu.addSeparator()

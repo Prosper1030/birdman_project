@@ -178,8 +178,8 @@ def parse_arguments():
     parser.add_argument(
         "--resources", metavar="PATH", help="Resources 檔案路徑")
     parser.add_argument(
-        "--resource-field", dest="resourceField", default="Category",
-        help="WBS 中資源欄位名稱 (預設 Category)")
+        "--resource-field", dest="resourceField", default="ResourceDemand",
+        help="WBS 中資源欄位名稱 (預設 ResourceDemand)")
     parser.add_argument(
         "--demand-field", dest="demandField", default="ResourceDemand",
         help="WBS 中資源需求欄位名稱 (預設 ResourceDemand)")
