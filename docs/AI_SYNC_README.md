@@ -9,6 +9,7 @@
 - **相依性管理改善**：requirements.txt 移除精確版本限制，使用相容性範圍
 - **文件聯動機制**：PROJECT_INTENT.md 已更新文件路徑與職責說明
 - **新增 GUI RCPSP 功能**：前端可設定資源並顯示求解結果
+- **docstring 已統一**：src 目錄所有函式皆具繁體中文 Google Style 說明
 
 ## 2. gap 分析
 - 所有主要文件現已同步一致，無重大落差

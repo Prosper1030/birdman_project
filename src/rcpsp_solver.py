@@ -16,18 +16,19 @@ def solveRcpsp(
     resourceCap: Dict[str, int] | None = None,
     timeLimit: int = 10,
 ) -> Dict[str, Any]:
-    """使用 OR-Tools 求解 RCPSP
+    """使用 OR-Tools 求解 RCPSP。
 
-    參數:
-        graph: 任務依賴圖
-        wbs:   任務資料表，需包含工期與資源欄位
-        durationField: 工期欄位名稱
-        resourceField: 資源分類欄位名稱
-        demandField:   資源需求量欄位名稱
-        resourceCap:   各資源可同時執行的數量，預設為 1
-        timeLimit:     求解時間上限 (秒)
+    Args:
+        graph: 任務依賴圖。
+        wbs: 任務資料表，需包含工期與資源欄位。
+        durationField: 工期欄位名稱。
+        resourceField: 資源分類欄位名稱。
+        demandField: 資源需求量欄位名稱。
+        resourceCap: 各資源可同時執行的數量，預設為 1。
+        timeLimit: 求解時間上限 (秒)。
 
-    回傳字典包含各任務開始時間與 ProjectEnd
+    Returns:
+        Dict[str, Any]: 各任務開始時間與 ProjectEnd。
     """
     if resourceCap is None:
         resourceCap = {}
