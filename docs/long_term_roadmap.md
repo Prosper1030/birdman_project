@@ -231,6 +231,33 @@ Subject to: g(x, ξ) ≤ 0, ∀ξ ∈ U
 - **Reinforcement learning** for continuous system improvement based on historical performance
 - **Hyper-heuristic approaches** for meta-level optimization of scheduling strategies
 
+## 7. Model Context Protocol (MCP) 整合與 AI 協作框架升級
+
+### 7.1 MCP 核心概念
+
+Model Context Protocol (MCP) 是一個專為大型語言模型 (LLM) 與外部數據源、工具互動而設計的開放標準協議。其核心目標是提供一個統一且高效的方式，讓 AI 系統能動態發現並利用外部資源。
+
+**主要特點：**
+* **LLM 專用協議**：相較於通用的 API，MCP 更專注於 LLM 的互動模式。
+* **動態發現 (Dynamic Discovery)**：允許 AI 在執行階段動態查詢伺服器可用的工具和數據，具備高度靈活性。
+* **開放標準**：作為一個開放協議，有利於建立一個跨模型、跨平台的 AI 工具生態系。
+
+### 7.2 MCP 為 Birdman 專案帶來的優勢
+
+將 MCP 引入本專案，與我們在 `AGENTS.md` 和 `PROJECT_INTENT.md` 中建立的 AI 協作理念高度契合，預期將帶來以下優勢：
+
+* **強化 AI Agent 自動化**：目前的 AI 協作依賴於讀取 Markdown 文件。未來透過 MCP，AI Agent 將能直接呼叫專案後端服務（如觸發 CPM 分析、執行 RACP 資源反推），實現更高層次的自動化與自主決策。
+* **提升決策支援能力**：MCP 能讓 AI 更輕易地存取即時外部數據。例如，AI 可自動查詢最新的材料科學數據庫來輔助結構設計、獲取即時天氣資訊來評估飛行測試風險，或分析供應商報價來優化採購策略。
+* **簡化未來 API 開發**：在規劃 RESTful API 的階段，可直接評估採用 MCP 作為核心協議，從而簡化 AI 與後端微服務的整合，降低開發複雜度。
+
+### 7.3 未來整合方向
+
+MCP 將作為本專案**第三開發階段**的關鍵技術引入。
+
+* **API 協議評估**：在開發後端微服務時，將 MCP 作為 RESTful API 的替代或補充方案進行評估與 PoC (概念驗證)。
+* **工具化核心演算法**：將專案中的核心演算法（如 `cpm_processor`, `rcpsp_solver`）封裝成可由 MCP 動態發現和呼叫的「工具」。
+* **建立自主分析流程**：最終目標是讓 AI Agent 能夠基於專案目標，自主規劃並執行一系列的分析工具組合（例如：先執行 WBS 合併 -> 再跑 CPM -> 最後根據結果提出風險報告），完成複雜的專案管理任務。
+
 ## Implementation Roadmap and Architecture
 
 ### System Architecture Overview

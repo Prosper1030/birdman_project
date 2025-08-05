@@ -4,6 +4,10 @@
 
 ## 格式範例（僅供參考，請依實際專案移除或覆蓋）
 
+## 2025-08-05 | ChatGPT：納入 Model Context Protocol 技術願景
+- 目標：在 long_term_roadmap.md 引入 MCP 作為未來技術方向
+- 結果：新增 MCP 整合章節，並同步更新 AI_LOG 與 AI_SYNC_README
+
 ## 2025-08-05 | ChatGPT：新增 visualizer 單元測試
 - 目標：提升視覺化模組測試覆蓋率
 - 結果：補充 layered_layout 與 create_dependency_graph_figure 測試，覆蓋率自 10% 提升至 81%
