@@ -20,8 +20,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 pytest              # 執行所有測試
 pytest -q           # 安靜模式執行測試
-flake8             # 使用 flake8 檢查程式碼格式
+flake8 src/ tests/ main.py --max-line-length=120  # 檢查程式碼格式，限制專案檔案範圍
 ```
+
+**重要行為準則**：
+- **純閱讀/分析任務**：不執行 pytest 或 flake8，避免浪費時間
+- **程式碼修改後**：必須執行測試與程式碼檢查確保品質
+- **文件修改**：通常不需要執行測試，除非涉及程式碼範例
 
 ### Running the Application / 執行應用程式
 ```bash

@@ -60,6 +60,7 @@ from .cpm_processor import (
 )
 from .rcpsp_solver import solveRcpsp
 from .resource_processor import readResources
+from .racp_solver import solve_racp_basic
 from . import visualizer
 
 
@@ -748,6 +749,36 @@ class BirdmanQtApp(QMainWindow):
         rcpsp_layout.addStretch()
         self.tab_advanced_analysis.layout().addWidget(rcpsp_group)
 
+        # --- RACP 人力配置區塊 ---
+        racp_group = QWidget()
+        racp_layout = QVBoxLayout()
+        racp_group.setLayout(racp_layout)
+
+        racp_title = QLabel("<h3>RACP 最小人力配置 (RACP Minimum Workforce)</h3>")
+        racp_layout.addWidget(racp_title)
+
+        # 截止時間輸入
+        deadline_layout = QHBoxLayout()
+        deadline_layout.addWidget(QLabel("專案截止時間 (小時):"))
+        self.racpDeadlineSpinBox = QSpinBox()
+        self.racpDeadlineSpinBox.setMinimum(1)
+        self.racpDeadlineSpinBox.setMaximum(9999)
+        self.racpDeadlineSpinBox.setValue(100)
+        deadline_layout.addWidget(self.racpDeadlineSpinBox)
+        deadline_layout.addStretch()
+        racp_layout.addLayout(deadline_layout)
+
+        self.runRacpButton = QPushButton("執行 RACP 人力分析")
+        racp_layout.addWidget(self.runRacpButton)
+
+        # RACP 結果顯示區域
+        self.racpResultLabel = QLabel("尚未執行 RACP 分析")
+        self.racpResultLabel.setStyleSheet("padding: 10px; border: 1px solid gray; background-color: #f0f0f0;")
+        racp_layout.addWidget(self.racpResultLabel)
+
+        racp_layout.addStretch()
+        self.tab_advanced_analysis.layout().addWidget(racp_group)
+
         # --- 蒙地卡羅模擬分頁 ---
         mc_main_layout = QVBoxLayout()
         self.tab_monte_carlo.setLayout(mc_main_layout)
@@ -828,6 +859,7 @@ class BirdmanQtApp(QMainWindow):
         self.mc_chart_mode_combo.currentIndexChanged.connect(self.on_chart_mode_changed)
         self.runRcpspButton.clicked.connect(self.runRcpspOptimization)
         self.configResourcesButton.clicked.connect(self.openResourceConfigDialog)
+        self.runRacpButton.clicked.connect(self.runRacpOptimization)
 
         # 甘特圖情境切換下拉選單
         gantt_top_layout = QHBoxLayout()
@@ -2393,6 +2425,130 @@ class BirdmanQtApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "排程失敗", f"執行 RCPSP 排程時發生錯誤：{e}")
             return None
+
+    def runRacpOptimization(self) -> None:
+        """執行 RACP 最小人力配置分析"""
+        if self.mergedGraph is None or self.mergedWbs is None:
+            QMessageBox.warning(self, "警告", "請先執行完整分析")
+            return
+
+        try:
+            # 檢查必要欄位
+            if "Eligible_Groups" not in self.mergedWbs.columns:
+                raise ValueError('WBS 缺少 "Eligible_Groups" 欄位')
+            if "ResourceDemand" not in self.mergedWbs.columns:
+                raise ValueError('WBS 缺少 "ResourceDemand" 欄位')
+
+            # 載入配置
+            with open("config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+            cmpParams = config.get("cmp_params", {})
+            durationField = cmpParams.get("default_duration_field", "Te_newbie")
+
+            if durationField not in self.mergedWbs.columns:
+                raise ValueError(f"WBS 缺少工期欄位 {durationField}")
+
+            # 獲取截止時間
+            deadline = self.racpDeadlineSpinBox.value()
+
+            # 執行 RACP 分析
+            result = solve_racp_basic(
+                self.mergedGraph,
+                self.mergedWbs,
+                deadline=deadline,
+                durationField=durationField,
+                demandField="ResourceDemand"
+            )
+
+            # 更新結果顯示
+            self.showRacpResult(result, deadline)
+
+        except Exception as e:
+            QMessageBox.critical(self, "RACP 分析失敗", f"執行 RACP 分析時發生錯誤：{e}")
+
+    def showRacpResult(self, result: dict[str, int], deadline: int) -> None:
+        """顯示 RACP 分析結果"""
+        total_workforce = sum(result.values())
+
+        # 格式化結果文本
+        result_text = "<b>RACP 最小人力配置結果</b><br>"
+        result_text += f"截止時間: {deadline} 小時<br>"
+        result_text += f"總人力需求: {total_workforce} 人<br><br>"
+        result_text += "<b>各群組人力配置:</b><br>"
+
+        for group, count in sorted(result.items()):
+            result_text += f"• {group}: {count} 人<br>"
+
+        # 更新結果標籤
+        self.racpResultLabel.setText(result_text)
+        self.racpResultLabel.setStyleSheet("padding: 10px; border: 1px solid green; background-color: #e8f5e8;")
+
+        # 顯示詳細結果對話框
+        dialog = QDialog(self)
+        dialog.setWindowTitle("RACP 人力配置結果")
+        dialog.setMinimumSize(600, 500)
+
+        layout = QVBoxLayout()
+
+        # 文字結果
+        textEdit = QTextEdit()
+        textEdit.setHtml(result_text)
+        textEdit.setReadOnly(True)
+        textEdit.setMaximumHeight(150)
+        layout.addWidget(textEdit)
+
+        # RACP 人力配置長條圖
+        try:
+            fig = self.createRacpBarChart(result, deadline)
+            canvas = FigureCanvas(fig)
+            layout.addWidget(canvas)
+        except Exception as e:
+            error_label = QLabel(f"圖表生成失敗: {e}")
+            layout.addWidget(error_label)
+
+        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttonBox.accepted.connect(dialog.accept)
+        layout.addWidget(buttonBox)
+
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def createRacpBarChart(self, result: dict[str, int], deadline: int) -> Figure:
+        """建立 RACP 人力配置長條圖"""
+        fig = Figure(figsize=(10, 6), dpi=100)
+        ax = fig.add_subplot(111)
+
+        # 準備資料
+        groups = list(result.keys())
+        counts = list(result.values())
+        total_workforce = sum(counts)
+
+        # 建立長條圖
+        bars = ax.bar(groups, counts, color='skyblue', alpha=0.8, edgecolor='navy', linewidth=1)
+
+        # 在每個長條上顯示數值
+        for bar, count in zip(bars, counts):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                    f'{count}人', ha='center', va='bottom', fontweight='bold')
+
+        # 設定標籤和標題
+        ax.set_xlabel('技能群組 (Skill Groups)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('人力需求 (Workforce Demand)', fontsize=12, fontweight='bold')
+        ax.set_title(f'RACP 最小人力配置 (截止時間: {deadline}h, 總人力: {total_workforce}人)',
+                     fontsize=14, pad=20, fontweight='bold')
+
+        # 設定網格
+        ax.grid(True, axis='y', linestyle='--', alpha=0.3)
+        ax.set_axisbelow(True)
+
+        # 設定 Y 軸從 0 開始
+        ax.set_ylim(0, max(counts) * 1.2 if counts else 1)
+
+        # 調整佈局
+        fig.tight_layout()
+
+        return fig
 
     def showRcpspResult(self, schedule: dict[str, float], durationField: str) -> None:
         """以對話框方式顯示 RCPSP 排程結果"""

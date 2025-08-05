@@ -5,7 +5,10 @@
       "Bash(git commit:*)",
       "Bash(git push:*)",
       "Bash(pytest:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(flake8:*)",
+      "Bash(find:*)",
+      "Bash(git pull:*)"
     ],
     "deny": []
   }
