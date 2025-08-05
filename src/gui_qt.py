@@ -63,6 +63,7 @@ from .rcpsp_solver import solveRcpsp
 from .resource_processor import readResources
 from .racp_solver import solve_racp_basic
 from . import visualizer
+from .ui.dsm_editor import DsmEditor
 
 
 class MonteCarloWorker(QObject):
@@ -292,6 +293,7 @@ class BirdmanQtApp(QMainWindow):
         self.dsmPath = ""
         self.wbsPath = ""
         self.resourcePath = ""
+        self.wbsDf: pd.DataFrame | None = None
         self.manualResourceCap: dict[str, int] = {}
         self.sortedWbs = None
         self.mergedWbs = None
@@ -521,6 +523,12 @@ class BirdmanQtApp(QMainWindow):
         self.expert_action = QAction("專家 (Expert)", self)
         self.expert_action.setCheckable(True)
         self.expert_action.triggered.connect(lambda: self.setGlobalRole('expert'))
+
+        # 依賴關係編輯器
+        dsm_editor_action = QAction("依賴關係編輯器", self)
+        dsm_editor_action.triggered.connect(self.openDsmEditor)
+        file_menu.addAction(dsm_editor_action)
+        file_menu.addSeparator()
 
         # 建立動作群組確保單選
         self.role_action_group = QActionGroup(self)
@@ -926,8 +934,9 @@ class BirdmanQtApp(QMainWindow):
             self.wbs_path_label.setText(path)
             try:
                 wbs = readWbs(path)
-                wbs = self._add_no_column(wbs)
-                model = PandasModel(wbs.head(100))
+                self.wbsDf = wbs.copy()
+                wbs_display = self._add_no_column(wbs)
+                model = PandasModel(wbs_display.head(100))
                 self.wbs_preview.setModel(model)
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, "錯誤", f"WBS 載入失敗：{e}")
@@ -947,6 +956,14 @@ class BirdmanQtApp(QMainWindow):
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, "錯誤", f"Resources 載入失敗：{e}")
 
+    def openDsmEditor(self) -> None:
+        """開啟視覺化依賴關係編輯器"""
+        if self.wbsDf is None:
+            QMessageBox.warning(self, "警告", "請先匯入 WBS 檔案")
+            return
+        editor = DsmEditor(self.wbsDf, self)
+        editor.exec_()
+
     def import_from_folder(self):
         """從資料夾匯入 WBS、DSM，若有 Resources 亦一併匯入"""
         folder = QFileDialog.getExistingDirectory(self, "選擇資料夾", "")
@@ -965,6 +982,7 @@ class BirdmanQtApp(QMainWindow):
         dsmPath = os.path.join(folder, dsmFiles[0])
         try:
             wbs = readWbs(wbsPath)
+            self.wbsDf = wbs.copy()
             wbs_display = self._add_no_column(wbs)
             dsm = readDsm(dsmPath)
         except (OSError, pd.errors.ParserError, ValueError):
@@ -1014,6 +1032,7 @@ class BirdmanQtApp(QMainWindow):
         try:
             dsm = readDsm(self.dsmPath)
             wbs = readWbs(self.wbsPath)
+            self.wbsDf = wbs.copy()
             # 預覽原始資料 (保留在預覽區，但不在分析結果顯示)
             model_dsm = PandasModel(dsm.head(100), dsmMode=True)
             self.dsm_preview.setModel(model_dsm)
