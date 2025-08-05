@@ -4,6 +4,17 @@
 
 ## 格式範例（僅供參考，請依實際專案移除或覆蓋）
 
+## 2025-01-09 | Claude Code：重構 AGENTS.md 符合 Codex 規範
+- 目標：根據 OpenAI Codex 對 AGENTS.md 的規範要求，重構文件格式與內容
+- 執行內容：
+  - 重新組織為 Codex 友善的指令格式
+  - 新增強制性程式檢查指令（pytest、flake8、應用程式測試）
+  - 明確定義程式碼風格、命名規範、檔案組織結構
+  - 補充技術架構說明與核心元件介紹
+  - 規範 Git/PR 流程與 commit message 格式
+  - 強化多 AI 系統間的協作規則
+- 結果：AGENTS.md 現在完全符合 Codex 期望，提供明確的技術指令與品質檢查要求
+
 ## 2025-01-09 | Claude Code：整合並完善 CLAUDE.md
 - 目標：根據 Requirements.md、AGENTS.md、PROJECT_INTENT.md 等主要文件，全面更新 CLAUDE.md
 - 執行內容：

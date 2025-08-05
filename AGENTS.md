@@ -1,376 +1,168 @@
-# 專案文件 (For AI Agents)
+# AGENTS.md
 
-## 專案概述
+## Instructions for AI Agents Working on Birdman Project
 
-`birdman_project` 是一個專案管理工具，使用 Python 開發，主要功能包括：
+This file provides instructions for AI agents (including OpenAI Codex, Claude Code, GitHub Copilot, etc.) working in this codebase. You MUST follow all instructions in this file.
 
-1. DSM（依賴結構矩陣）處理
-2. WBS（工作分解結構）處理
-3. 任務合併優化
-4. CPM（關鍵路徑）分析
-5. 視覺化呈現
+### Core Project Rules / 核心專案規則
 
-## 目前遇到的問題
+**CRITICAL: Read these documents first, in this order:**
+1. `docs/Requirements.md` - Complete technical specifications (MANDATORY READ)
+2. `docs/AI_SYNC_README.md` - Current project status, gaps, and pending tasks
+3. `docs/AI_LOG.md` - AI operation history and decision log
+4. `CLAUDE.md` - Additional guidance for Claude Code agents
 
-### 1. 合併後的依賴圖處理
+**Language Requirements:**
+- All code comments, commit messages, PR descriptions, and documentation MUST be in Traditional Chinese (繁體中文)
+- Variable names and function names use camelCase
+- English is acceptable for international communication but Traditional Chinese is required
 
-#### 1.1 問題描述
+### Code Style and Structure / 程式碼風格與結構
 
-- 在進行 CPM 分析時可能遇到循環依賴問題
-- 合併後的任務圖可能保留了不必要的依賴關係
-- 需要優化合併後的依賴關係處理邏輯
+**Python Code Standards:**
+- Follow PEP 8 with 120 character line limit
+- Use type hints for all function parameters and return values
+- All docstrings in Traditional Chinese
+- Import order: standard library, third-party, local imports
 
-#### 1.2 建議解決方向
+**File Organization:**
+- Core modules in `src/` directory
+- GUI components in `src/ui/`
+- Test files in `tests/` with `test_` prefix
+- Sample data in `sample_data/`
+- Documentation in `docs/`
 
-```python
-# 目前的邏輯
-merged_tasks = set(merged['Task ID'])
-merged_dsm = pd.DataFrame(0, index=list(merged_tasks), columns=list(merged_tasks))
+**Naming Conventions:**
+- Functions: camelCase (e.g., `readDsm`, `buildGraph`)
+- Classes: PascalCase (e.g., `TaskProcessor`, `ResourceManager`)
+- Constants: UPPER_SNAKE_CASE (e.g., `DEFAULT_CONFIG_PATH`)
+- Files: snake_case (e.g., `dsm_processor.py`, `cpm_analysis.py`)
 
-# 從原始 DSM 複製依賴關係
-for u, v in self.graph.edges():
-    if u in merged_tasks and v in merged_tasks:
-        merged_dsm.at[v, u] = 1
+### Technical Architecture / 技術架構
+
+**Core Components (You MUST understand these before making changes):**
+- `src/dsm_processor.py`: DSM dependency matrix processing, topological sorting, SCC analysis
+- `src/wbs_processor.py`: Work Breakdown Structure processing, task merging by SCC
+- `src/cpm_processor.py`: Critical Path Method analysis, Monte Carlo simulation
+- `src/rcpsp_solver.py`: Resource-Constrained Project Scheduling with OR-Tools
+- `src/visualizer.py`: Graph visualization, Gantt charts, SVG/PNG export
+- `src/gui_qt.py`: PyQt5 GUI with tabbed interface and theme switching
+
+**Data Format Requirements:**
+- DSM files: N×N matrix, CSV format, UTF-8 encoding
+- WBS files: Must include Task_ID, TRF, Property, work time estimates
+- Resources files: Group, Hr_Per_Week, Headcount_Cap fields required
+- All Task_IDs follow format: `[Property][Year]-[Number]` (e.g., A26-001)
+
+**Task Merging Algorithm:**
+- Tasks in same SCC are merged using formula: `k = base + sqrt((ΣTRF / n) * trf_scale / trf_divisor) + n_coef * (n - 1)`
+- Merged Task IDs format: `M<Year>-<Number>[<OriginalTaskIDs>]`
+- Configuration in `config.json` under `merge_k_params`
+
+### Required Workflow / 必須工作流程
+
+**BEFORE Starting Any Task:**
+1. Read `docs/Requirements.md` completely - this contains ALL technical specifications
+2. Check `docs/AI_SYNC_README.md` for current status and gaps
+3. Review `docs/AI_LOG.md` for recent changes and decisions
+4. Understand the specific module you're working on
+
+**DURING Task Execution:**
+- Follow the technical specifications in Requirements.md exactly
+- Use only the algorithms and data structures specified
+- Write all comments and docstrings in Traditional Chinese
+- Record any issues or questions in AI_SYNC_README.md
+
+**AFTER Task Completion (MANDATORY):**
+1. Update `docs/AI_LOG.md` with summary of changes made
+2. Update `docs/AI_SYNC_README.md` with current status and any remaining gaps
+3. If you discover specification conflicts, record them in AI_SYNC_README.md with "AI疑問" tag
+
+### Git and PR Requirements / Git 與 PR 要求
+
+**Branch Naming:**
+- `feature/[description]` - New features
+- `bugfix/[description]` - Bug fixes
+- `refactor/[description]` - Code refactoring
+- `docs/[description]` - Documentation updates
+- `ai/[description]` - AI-generated changes
+
+**Commit Messages (REQUIRED FORMAT):**
+```
+[type]: [Traditional Chinese description]
+
+[Optional detailed description in Traditional Chinese]
+
+🤖 Generated with [AI Tool Name]
+
+Co-Authored-By: [AI Agent] <noreply@company.com>
 ```
 
----
-
-## 1️⃣ 輸入資料規格
-
-### 1.1 DSM（Dependency Structure Matrix）
-
-- 格式：CSV 方陣，大小為 N×N
-- 標題：
-
-  - Row 0：第 0 欄空白，之後每一欄為 Task_ID
-  - Column 0：第 0 列為 Task_ID
-
-- 矩陣值：
-
-  - 0 → 無依賴
-  - 1 → row 任務必須等待 col 任務完成
-
-- 檢查要求：
-
-  - 必須是方陣
-  - Task_ID 唯一且與 WBS 對應
-  - 無多餘空白列或欄
-
-### 1.2 WBS（Work Breakdown Structure）
-
-- 格式：CSV
-- 必要欄位：
-
-  - Task_ID（第一欄，唯一識別碼）
-  - TRF（任務複雜度係數）
-
-- 其他可選時間欄位：
-
-  - O_expert、M_expert、P_expert、Te_expert
-  - O_newbie、M_newbie、P_newbie、Te_newbie
-
-### 1.3 設定檔（config.json）
-
-- 格式：JSON
-- 主要設定區塊：
-
-  1. `merge_k_params`：合併演算法參數
-
-     - `base`：基礎係數（固定為 1.0）
-     - `trf_scale`：轉換比例
-     - `trf_divisor`：轉換除數
-     - `n_coef`：數量係數
-     - `override`：可選的覆寫值
-
-  2. `visualization_params`：視覺化參數
-     - `node_color`：一般節點顏色
-     - `scc_color_palette`：SCC 群組顏色陣列
-     - `font_size`：字型大小
-
-## 2️⃣ GUI 介面功能
-
-### 2.1 主要介面元件
-
-1. **檔案操作區**
-
-   - DSM/WBS 檔案選擇按鈕
-   - 執行分析按鈕
-   - 檔案路徑顯示
-
-2. **頂端選單列**
-
-   - 設定選單：開啟 k 係數參數設定對話框
-   - 視圖選單：切換深色/淺色模式
-
-3. **分頁區域**
-
-   - 原始 DSM/WBS 預覽
-   - 排序後 DSM/WBS 預覽
-   - 合併後 WBS 預覽
-   - 分層式依賴關係圖視覺化（支援縮放與捲動）
-
-4. **匯出功能**
-   - 匯出排序 WBS（CSV）
-   - 匯出合併 WBS（CSV）
-   - 匯出排序 DSM（CSV）
-   - 匯出依賴圖（SVG/PNG）
-
-### 2.3 依賴關係圖功能
-
-1. **圖表佈局**
-
-   - 採用分層式佈局，從左到右展示任務依賴關係
-   - 支援大型圖表的垂直與水平捲動
-   - 自適應縮放，確保圖表完整顯示
-
-2. **圖表匯出**
-
-   - SVG 格式：向量圖，適合文件編輯與無損縮放
-   - PNG 格式：點陣圖，適合直接使用與分享
-   - 支援高解析度輸出（300 DPI）
-   - 自動移除多餘白邊，優化視覺效果
-
-3. **主題支援**
-   - 自動適應深色/淺色模式
-   - 在切換主題時即時更新圖表樣式
-   - 提供清晰的文字標籤與邊線
-
-### 2.2 特殊功能說明
-
-1. **k 係數參數設定**
-
-   - 透過專用對話框調整演算法參數
-   - 支援直接覆寫 k 值
-   - 設定值自動保存至 config.json
-
-2. **深色模式**
-
-   - 使用 qdarkstyle 實現專業的深色主題
-   - 同步切換介面與圖表樣式
-   - 設定即時生效，無需重啟
-
-3. **資料預覽**
-   - DSM 表格自動顯示 Task ID 行表頭
-   - 依賴關係以紅色醒目標示
-   - WBS 表格自動編號
-
-- 檢查要求：
-
-  - 所有 Task_ID 必須存在於 DSM
-  - TRF 必須為正數或 0
-  - 時間欄位若缺失，需給出提示或補 0
-
----
-
-## 2️⃣ 核心功能與流程
-
-### 2.1 DSM 下三角化與排序
-
-- 讀取 DSM 並驗證格式
-- 執行拓撲排序（Topological Sort）
-- 轉換 DSM 為下三角矩陣（保證所有依賴在左上方）
-- 產出排序後的 Task_ID 順序
-- 注意：若出現循環依賴（Cycle），需先進行 SCC 分析並給使用者提示
-
-### 2.2 強連通分量（SCC）與分層
-
-- 使用 Tarjan 或 Kosaraju 演算法計算 SCC
-- 為每個任務分配 SCC ID
-- 將任務依層次（Layer）排序，SCC 內的任務會在同層
-- 在 WBS 中新增一欄 SCC_ID 以標記結果
-
-### 2.3 WBS 重新排序與標記
-
-- 根據 DSM 排序結果與 SCC ID 將 WBS 重新排序
-- 新增 Layer 與 SCC_ID 欄位
-- 對於相同 SCC_ID 的任務以顏色標記（Excel）
-- 輸出 `sorted_wbs.csv` 及 `sorted_wbs.xlsx`
-
-### 2.4 任務合併與新 Task_ID 生成
-
-- 將相同 SCC_ID 的任務合併為單一新任務
-- 新任務命名規則：
-  `M<Year>-<流水號>[<原Task_ID列表>]`
-  例：`M25-001[A25-003,D25-006,C25-007]`
-
-  - <Year>：手動設定或由系統讀取
-  - <流水號>：由上到下，從 001 開始
-  - <原 Task_ID 列表>：用逗號分隔，順序為合併前在 WBS 的先後順序
-
-- 合併後將後續任務自動上移，保持連續編號
-
-### 2.5 工時計算公式
-
-- 對每個合併後任務，計算工時係數：
-
-  ```
-  k = 1 + sqrt((ΣTRF / n) * 10) / 10 + 0.05 * (n - 1)
-  ```
-
-  - ΣTRF：合併前所有任務 TRF 總和
-  - n：合併的任務數
-
-- 對每個時間欄位（O/M/P/Te 的 expert/newbie 版本）進行：
-
-  ```
-  合併時間 = 原時間總和 × k
-  ```
-
-### 2.6 輸出
-
-- 排序後的 WBS（含 SCC_ID 與 Layer）
-- 合併後的 WBS（含新 Task_ID、顏色標記、合併後時間）
-- 排序後的 DSM（`sorted_dsm.csv`）
-- 可視化 DSM 或簡單依賴圖（可選）
-
----
-
-## 3️⃣ GUI 功能
-
-- 選擇 DSM.csv 與 WBS.csv
-- 顯示排序與分層結果（可簡單表格）
-- 按鈕匯出：
-
-  - sorted_wbs.csv
-  - merged_wbs.csv（含顏色）
-  - sorted_dsm.csv
-
-- 可於執行後隨時點擊按鈕匯出上述檔案
-- 介面中央可預覽資料並提供放大、縮小功能
-- DSM 分頁會以 Task ID 作為行表頭，方便檢視依賴
-- 目前僅提供 PyQt5 版 GUI，請先安裝相關套件
-
----
-
-## 4️⃣ 錯誤處理
-
-- DSM 不是方陣 → 錯誤提示
-- Task_ID 不匹配 → 錯誤提示
-- 存在循環依賴 → 提示並顯示 SCC 內容
-
----
-
-## 5️⃣ 格式與溝通規範
-
-- **所有程式註解、說明、與使用者溝通皆需使用繁體中文**
-- 所有介面、提示訊息、文件說明皆採繁體中文
-- 程式碼撰寫需條理分明，註解清楚，每個核心步驟請加說明
-- 每次產生 code 請附上簡易功能說明與範例使用說明
-- 回答問題請條列重點、說明步驟，並盡量解釋原理
-- 程式碼命名請統一 camelCase（如無特殊需求）
-- 你可以根據需求隨時新增功能，只要補在 2️⃣ 核心功能與流程章節後即可
-
----
-
-## 6️⃣ 未來擴充說明
-
-- 本專案預留擴充性，未來可新增 CPM、Slack、蒙地卡羅/RCPSP 相關功能，請於 2️⃣ 核心功能與流程章節補充說明，並明確列出演算法、步驟與輸出規格。
-- 新功能規範、流程或格式要求，亦可在 5️⃣ 章節內補充。
-
----
-
-## 7️⃣ 分支與合併衝突處理規範（新手專用）
-
-- 每次要新增功能或修改程式，請**從最新 main 分支建立新分支**（如：feature/xxx）。
-  - 可請 AI 先執行：`git fetch origin && git checkout -b feature-xxx origin/main`
-- 每次 Pull Request（PR）**只處理一個功能或一個 bug**，功能驗證後立即合併 main，保持 main 分支永遠為最新狀態。
-- 若 PR 與 main 有衝突，請以「目前功能分支（AI 產生的版本）」為主自動解決衝突，不用保留 main 舊內容。
-  - 可請 AI 執行：`git merge -X ours origin/main`，或直接在衝突編輯器選擇 AI 版本、刪掉分隔線。
-- **建議每次功能完成馬上合併**，避免長時間累積後一次合併出現大量衝突。
-- 如遇到複雜狀況，可直接請 AI 產生新的完整檔案覆蓋，再重新推送（不用手動改程式內容）。
-- 本章節所有規定，請 AI/人類開發者務必遵守，確保版本管理與自動化流程順暢。
-
-（本章節可依需求隨時調整擴充）
-
----
-
-# Birdman Project AI 開發指南
-
-## 最新更新重點
-
-1. **Bug 修復與界面優化**：
-
-   - 修復切換主題時依賴關係圖出現額外視窗的問題
-   - 使用 `matplotlib.use('Agg')` 確保非交互式後端
-   - 簡化 CPM 分析界面，移除角色選擇，僅保留顯示模式切換
-   - 統一蒙地卡羅匯出功能到檔案選單，提升界面一致性
-
-2. **甘特圖功能優化**：
-
-   - 改進視窗縮放功能
-   - 優化捲動區域設定
-   - 增加外部邊距空間
-
-3. **CPM 分析改進**：
-   - 移除工時轉換天數邏輯
-   - 直接使用小時作為時間單位
-   - 優化時程計算邏輯
-   - 預設使用 'newbie' 角色進行分析
-
-## 需要注意的問題
-
-1. **主題切換與圖表渲染**：
-
-   ```python
-   # 確保使用 Agg backend 避免創建額外視窗
-   import matplotlib
-   matplotlib.use('Agg')
-   ```
-
-2. **甘特圖顯示**：
-
-   ```python
-   # 設定捲動區域時需注意容器的層級關係
-   container_layout = QVBoxLayout()
-   container_layout.setContentsMargins(20, 40, 20, 40)
-   ```
-
-3. **CPM 分析**：
-
-   ```python
-   # 時間單位統一使用小時，預設使用 newbie 角色
-   durations_hours = extractDurationFromWbs(
-       self.merged_wbs.drop(columns=['No.']), duration_field
-   )
-   role_suffix = 'newbie'  # 預設使用新手角色
-   ```
-
-4. **界面佈局優化**：
-   ```python
-   # CPM界面簡化，僅保留顯示模式選擇
-   cpm_display_label = QLabel('顯示模式：')
-   cpm_top_layout.addWidget(cpm_display_label)
-   self.cpm_display_combo = QComboBox()
-   ```
-
-## 開發建議
-
-1. **matplotlib 使用注意事項**：
-
-   - 在創建圖表時使用 `matplotlib.use('Agg')` 避免 GUI 衝突
-   - 確保圖表渲染不會創建額外的交互式視窗
-   - 主題切換時正確配置圖表顏色參數
-
-2. **QScrollArea 使用注意事項**：
-
-   - 設定適當的 MinimumSize
-   - 正確配置捲動條策略
-   - 處理好容器之間的層級關係
-
-3. **圖表繪製最佳實踐**：
-
-   - 使用 subplots_adjust 控制邊距
-   - 注意深色/淺色模式的切換
-   - 確保匯出時的圖表品質
-
-4. **界面設計原則**：
-
-   - 統一將匯出功能整合到檔案選單
-   - 簡化控制項，避免過多選擇造成混亂
-   - 保持界面元素的一致性
-
-5. **其他開發規範**：
-   - CPM 分析預設以 `Te_newbie` 欄位計算工期
-   - 每次修改程式碼後，請執行 `flake8` 確認格式
-   - 每次新增或修改功能時，必須同步更新 `README.md`
-   - 推送程式碼前請執行 `pytest` 與 `flake8`，確保測試與格式皆通過
+**PR Requirements:**
+- Title and description in Traditional Chinese
+- Include summary of changes and rationale
+- Reference any related issues or requirements
+- Add reviewers before merging
+
+### Testing and Quality Assurance / 測試與品質保證
+
+**MANDATORY: You MUST run these checks after ANY code change:**
+
+```bash
+# 1. Run all tests (REQUIRED)
+pytest -q
+
+# 2. Check code style for project files only (REQUIRED) 
+flake8 src/ tests/ main.py --max-line-length=120
+
+# 3. Verify application still works (REQUIRED)
+python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json
+
+# 4. Test GUI if GUI changes made (REQUIRED for GUI changes)
+python -m src.gui_qt
+```
+
+**Quality Requirements:**
+- All tests must pass before submitting changes
+- Code must pass flake8 linting
+- Application must run without errors on sample data
+- GUI must launch and function correctly if modified
+
+### Error Handling / 錯誤處理
+
+**If you encounter errors:**
+1. Document the error in `docs/AI_SYNC_README.md` under "AI疑問/人工待回覆"
+2. Include full error message and steps to reproduce
+3. Suggest potential solutions if possible
+4. Do not proceed with changes that cause test failures
+
+### File Modification Rules / 檔案修改規則
+
+**Files you can modify freely:**
+- Source code in `src/` directory
+- Test files in `tests/` directory
+- Documentation files in `docs/`
+- Configuration in `config.json`
+
+**Files requiring special care:**
+- `requirements.txt` - Only add dependencies if absolutely necessary
+- `main.py` - Preserve existing CLI interface
+- `sample_data/` - Do not modify, these are reference test files
+
+**Files you should NOT modify without explicit instruction:**
+- `.gitignore`
+- GitHub workflow files in `.github/`
+- Project root configuration files
+
+### AI Agent Coordination / AI 代理協調
+
+This project uses multiple AI systems:
+- **OpenAI Codex**: Primary code implementation (uses this AGENTS.md as main reference)  
+- **Claude Code**: Requirements analysis, code review, problem diagnosis
+- **GitHub Copilot**: Code completion assistance
+
+All AI agents must:
+1. Follow the same technical specifications in Requirements.md
+2. Use the same coding standards defined here
+3. Update the documentation files consistently
+4. Respect the precedence: Requirements.md > AGENTS.md > other docs
