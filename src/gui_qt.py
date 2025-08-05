@@ -322,7 +322,7 @@ class BirdmanQtApp(QMainWindow):
         self.mergedGraph = None
         self.mergedDsm = None
         # 儲存不同情境下的甘特圖資料
-        self.ganttResults = {}
+        self.ganttResults = {"newbie": {}, "expert": {}}
         # 儲存目前顯示的 CPM 報告 DataFrame
         self.currentDisplayCpmDf = None
 
@@ -754,6 +754,12 @@ class BirdmanQtApp(QMainWindow):
         cpm_display_label = QLabel("顯示模式：")
         cpm_top_layout.addWidget(cpm_display_label)
         self.cpmDisplayCombo = QComboBox()
+        self.cpmDisplayCombo.addItems([
+            "期望時間 (Te)",
+            "樂觀時間 (O)",
+            "悲觀時間 (P)",
+            "最可能時間 (M)",
+        ])
         self.cpmDisplayCombo.currentIndexChanged.connect(self.update_cpm_display)
         cpm_top_layout.addWidget(self.cpmDisplayCombo)
 
@@ -892,6 +898,12 @@ class BirdmanQtApp(QMainWindow):
 
         # 顯示模式選擇
         self.ganttDisplayCombo = QComboBox()
+        self.ganttDisplayCombo.addItems([
+            "期望時間 (Te)",
+            "樂觀時間 (O)",
+            "悲觀時間 (P)",
+            "最可能時間 (M)",
+        ])
         self.ganttDisplayCombo.currentIndexChanged.connect(self.update_gantt_display)
         gantt_top_layout.addWidget(self.ganttDisplayCombo)
 
@@ -1029,6 +1041,7 @@ class BirdmanQtApp(QMainWindow):
         Returns:
             bool: 分析成功則為 ``True``，失敗為 ``False``。
         """
+        self.notify = show_notification
         try:
             dsm = readDsm(self.dsmPath)
             wbs = readWbs(self.wbsPath)
@@ -1318,83 +1331,44 @@ class BirdmanQtApp(QMainWindow):
                     f"發現循環依賴：{cycle_str}\n" "請先解決循環依賴問題再進行 CPM 分析"
                 )
 
-            with open("config.json", "r", encoding="utf-8") as f:
-                config = json.load(f)
-            cmp_params = config.get("cmp_params", {})
-            baseField = cmp_params.get("default_duration_field", "Te_newbie")
+            mode_map = {
+                "期望時間 (Te)": "Te",
+                "樂觀時間 (O)": "O",
+                "悲觀時間 (P)": "P",
+                "最可能時間 (M)": "M",
+            }
+            timeKey = mode_map.get(self.ganttDisplayCombo.currentText(), "Te")
+            durationField = f"{timeKey}_{self.selected_role}"
 
-            # 使用預設角色 newbie，或者可以從其他設定獲取
-            role_suffix = "newbie"  # 預設使用新手角色
-            partsRole = baseField.split("_", 1)
-            if len(partsRole) == 2:
-                baseField = f"{partsRole[0]}_{role_suffix}"
-            else:
-                baseField = f"{baseField}_{role_suffix}"
+            durationsHours = extractDurationFromWbs(
+                self.mergedWbs.drop(columns=["No."]), durationField
+            )
+            forwardData = cpmForwardPass(self.mergedGraph, durationsHours)
+            projectEnd = max(ef for _, ef in forwardData.values())
+            backwardData = cpmBackwardPass(
+                self.mergedGraph, durationsHours, projectEnd
+            )
+            cpmResult = calculateSlack(
+                forwardData, backwardData, self.mergedGraph
+            )
 
-            # 解析使用者選擇的情境
-            choice = self.ganttDisplayCombo.currentText()
-            if choice == "All Scenarios":
-                scenarios = ["O", "P", "M", "Te"]
-            else:
-                key = choice.split("(")[-1].split(")")[0]
-                scenarios = ["Te" if key.upper() == "TE" else key]
-
-            self.ganttResults = {}
-
-            for sc in scenarios:
-                parts = baseField.split("_", 1)
-                if len(parts) == 2:
-                    durationField = f"{sc}_{parts[1]}"
-                else:
-                    durationField = sc
-
-                durationsHours = extractDurationFromWbs(
-                    self.mergedWbs.drop(columns=["No."]), durationField
+            wbsWithCpm = self.mergedWbs.copy()
+            for col in ["ES", "EF", "LS", "LF", "TF", "FF", "Critical"]:
+                wbsWithCpm[col] = (
+                    wbsWithCpm["Task ID"].map(cpmResult[col].to_dict()).fillna(0)
                 )
 
-                forwardData = cpmForwardPass(
-                    self.mergedGraph,
-                    durationsHours,
-                )
-                projectEnd = max(ef for _, ef in forwardData.values())
-                backwardData = cpmBackwardPass(
-                    self.mergedGraph,
-                    durationsHours,
-                    projectEnd,
-                )
-                cpmResult = calculateSlack(
-                    forwardData,
-                    backwardData,
-                    self.mergedGraph,
-                )
-                wbsWithCpm = self.mergedWbs.copy()
-                for col in ["ES", "EF", "LS", "LF", "TF", "FF", "Critical"]:
-                    wbsWithCpm[col] = (
-                        wbsWithCpm["Task ID"].map(cpmResult[col].to_dict()).fillna(0)
-                    )
+            self.ganttResults = {"newbie": {}, "expert": {}}
+            self.ganttResults[self.selected_role][timeKey] = (
+                cpmResult,
+                durationsHours,
+                wbsWithCpm,
+                projectEnd,
+            )
 
-                self.ganttResults[sc] = (
-                    cpmResult,
-                    durationsHours,
-                    wbsWithCpm,
-                    projectEnd,
-                )
-
-            # 更新情境下拉選單並顯示第一個結果
-            keys = list(self.ganttResults.keys())
-            self.ganttDisplayCombo.blockSignals(True)
-            self.cpmDisplayCombo.blockSignals(True)
-            self.ganttDisplayCombo.clear()
-            self.cpmDisplayCombo.clear()
-            self.ganttDisplayCombo.addItems(keys)
-            self.cpmDisplayCombo.addItems(keys)
-            self.ganttDisplayCombo.blockSignals(False)
-            self.cpmDisplayCombo.blockSignals(False)
-            self.ganttDisplayCombo.setCurrentIndex(0)
-            self.cpmDisplayCombo.setCurrentIndex(0)
             self.update_gantt_display()
-
-            QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
+            if self.notify:
+                QMessageBox.information(self, 'CPM 分析完成', 'CPM 分析已完成')
         except (ValueError, KeyError, nx.NetworkXError) as e:
             QMessageBox.critical(self, '錯誤', f'CPM 分析失敗：{e}')
 
@@ -1404,92 +1378,46 @@ class BirdmanQtApp(QMainWindow):
         if not success:
             return
 
-        try:
-            with open("config.json", "r", encoding="utf-8") as f:
-                config = json.load(f)
-            cmp_params = config.get("cmp_params", {})
-            baseField = cmp_params.get("default_duration_field", "Te_newbie")
-        except Exception as e:  # pylint: disable=broad-except
-            QMessageBox.critical(self, "錯誤", f"設定檔讀取失敗：{e}")
-            return
+        roles = {"新手": "newbie", "專家": "expert"}
+        time_types = {"期望時間": "Te", "樂觀時間": "O", "悲觀時間": "P", "最可能時間": "M"}
 
-        roles = {
-            "新手": "newbie",
-            "專家": "expert",
-        }
-        time_types = {
-            "樂觀時間": "O",
-            "悲觀時間": "P",
-            "最可能時間": "M",
-            "期望時間": "Te",
-        }
-
-        self.ganttResults = {}
+        self.ganttResults = {"newbie": {}, "expert": {}}
 
         for role_text, roleKey in roles.items():
-            # 依角色調整基準欄位名稱
-            partsRole = baseField.split("_", 1)
-            if len(partsRole) == 2:
-                baseField = f"{partsRole[0]}_{roleKey}"
-            else:
-                baseField = f"{baseField}_{roleKey}"
-
             for time_text, time_key in time_types.items():
                 durationField = f"{time_key}_{roleKey}"
-
                 durationsHours = extractDurationFromWbs(
                     self.mergedWbs.drop(columns=["No."]), durationField
                 )
-                forwardData = cpmForwardPass(
-                    self.mergedGraph,
-                    durationsHours,
-                )
+                forwardData = cpmForwardPass(self.mergedGraph, durationsHours)
                 projectEnd = max(ef for _, ef in forwardData.values())
                 backwardData = cpmBackwardPass(
-                    self.mergedGraph,
-                    durationsHours,
-                    projectEnd,
+                    self.mergedGraph, durationsHours, projectEnd
                 )
                 cpmResult = calculateSlack(
-                    forwardData,
-                    backwardData,
-                    self.mergedGraph,
+                    forwardData, backwardData, self.mergedGraph
                 )
-
                 wbsWithCpm = self.mergedWbs.copy()
                 for col in ["ES", "EF", "LS", "LF", "TF", "FF", "Critical"]:
                     wbsWithCpm[col] = (
                         wbsWithCpm["Task ID"].map(cpmResult[col].to_dict()).fillna(0)
                     )
-
-                key = f"{role_text} - {time_text} ({durationField})"
-                self.ganttResults[key] = (
+                self.ganttResults[roleKey][time_key] = (
                     cpmResult,
                     durationsHours,
                     wbsWithCpm,
                     projectEnd,
                 )
 
-        keys = list(self.ganttResults.keys())
-        self.ganttDisplayCombo.blockSignals(True)
-        self.cpmDisplayCombo.blockSignals(True)
-        self.ganttDisplayCombo.clear()
-        self.cpmDisplayCombo.clear()
-        self.ganttDisplayCombo.addItems(keys)
-        self.cpmDisplayCombo.addItems(keys)
-        self.ganttDisplayCombo.blockSignals(False)
-        self.cpmDisplayCombo.blockSignals(False)
-
-        default_key = "新手 - 期望時間 (Te_newbie)"
-        default_index = keys.index(default_key) if default_key in keys else 0
-        self.ganttDisplayCombo.setCurrentIndex(default_index)
-        self.cpmDisplayCombo.setCurrentIndex(default_index)
+        self.ganttDisplayCombo.setCurrentIndex(0)
+        self.cpmDisplayCombo.setCurrentIndex(0)
         self.update_gantt_display()
 
+        total = sum(len(v) for v in self.ganttResults.values())
         QMessageBox.information(
             self,
             "完整分析完成",
-            f"已完成所有情境的 CPM 分析，共生成 {len(self.ganttResults)} 種情境結果",
+            f"已完成所有情境的 CPM 分析，共生成 {total} 種情境結果",
         )
 
     def drawGanttChart(self, cpmData, durations, title, wbsDf):
@@ -1670,27 +1598,28 @@ class BirdmanQtApp(QMainWindow):
             return Figure()
 
     def update_gantt_display(self):
-        """根據下拉選單切換甘特圖與結果顯示"""
-        key = self.ganttDisplayCombo.currentText()
+        """根據選擇的角色與時間模式更新顯示"""
+        mode_map = {
+            "期望時間 (Te)": "Te",
+            "樂觀時間 (O)": "O",
+            "悲觀時間 (P)": "P",
+            "最可能時間 (M)": "M",
+        }
+        mode_text = self.ganttDisplayCombo.currentText()
+        time_key = mode_map.get(mode_text, "Te")
+
         if hasattr(self, "cpmDisplayCombo"):
             self.cpmDisplayCombo.blockSignals(True)
-            if self.cpmDisplayCombo.currentText() != key:
-                self.cpmDisplayCombo.setCurrentText(key)
+            if self.cpmDisplayCombo.currentText() != mode_text:
+                self.cpmDisplayCombo.setCurrentText(mode_text)
             self.cpmDisplayCombo.blockSignals(False)
-        if key not in self.ganttResults:
-            return
-        cpmDf, durations, wbsDf, projectEnd = self.ganttResults[key]
-        self.cmpResult = wbsDf
 
-        roleKey = "novice" if "新手" in key else "expert"
-        if "(O_" in key:
-            time_key = "O"
-        elif "(P_" in key:
-            time_key = "P"
-        elif "(M_" in key:
-            time_key = "M"
-        else:
-            time_key = "Te"
+        roleKey = self.selected_role
+        if roleKey not in self.ganttResults or time_key not in self.ganttResults[roleKey]:
+            return
+
+        cpmDf, durations, wbsDf, projectEnd = self.ganttResults[roleKey][time_key]
+        self.cmpResult = wbsDf
 
         self.currentDisplayCpmDf = self._create_cpm_display_df(wbsDf, roleKey, time_key)
         self.criticalPath = findCriticalPath(cpmDf)
@@ -1700,7 +1629,10 @@ class BirdmanQtApp(QMainWindow):
 
         self.cmp_result_view.setModel(PandasModel(self.currentDisplayCpmDf.head(100)))
         self.total_hours_label.setText(f"總工時：{projectEnd:.1f} 小時")
-        newTitle = f"{key}\n總工時: {projectEnd:.2f} 小時"
+        role_text = "新手" if roleKey == "newbie" else "專家"
+        mode_label_map = {"Te": "期望時間", "O": "樂觀時間", "P": "悲觀時間", "M": "最可能時間"}
+        key_title = f"{role_text} - {mode_label_map[time_key]} ({time_key}_{roleKey})"
+        newTitle = f"{key_title}\n總工時: {projectEnd:.2f} 小時"
 
         # 先清除舊的圖表
         layout = self.gantt_container.layout()
@@ -1803,15 +1735,9 @@ class BirdmanQtApp(QMainWindow):
     def setGlobalRole(self, role):
         """設定全域角色並更新相關顯示"""
         self.selected_role = role
-
-        # 如果有現有的分析結果，重新更新顯示
-        if hasattr(self, 'cmpResults') and self.cmpResults:
-            # 更新甘特圖顯示
-            self.update_gantt_display()
-
-        # 顯示角色切換提示
         role_name = "新手" if role == 'newbie' else "專家"
         self.statusBar().showMessage(f"已切換至 {role_name} 模式", 3000)
+        self.update_gantt_display()
 
     def toggle_dark_mode(self, checked):
         """切換深色/淺色模式"""
