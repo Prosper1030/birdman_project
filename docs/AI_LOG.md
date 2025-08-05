@@ -4,6 +4,10 @@
 
 ## 格式範例（僅供參考，請依實際專案移除或覆蓋）
 
+## 2025-08-05 | ChatGPT：新增 visualizer 單元測試
+- 目標：提升視覺化模組測試覆蓋率
+- 結果：補充 layered_layout 與 create_dependency_graph_figure 測試，覆蓋率自 10% 提升至 81%
+
 ## 2025-08-05 | ChatGPT：新增 RCPSP GUI 資源設定與結果顯示
 - 目標：在 GUI 中整合 RCPSP 求解結果並允許自訂資源容量
 - 結果：完成資源設定對話框與排程結果呈現，並加入單元測試驗證
