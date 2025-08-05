@@ -23,6 +23,7 @@ from src.cpm_processor import (
 import numpy as np
 from src.rcpsp_solver import solveRcpsp
 from src.resource_processor import readResources
+from src.racp_solver import solve_racp_basic
 from src import visualizer
 from matplotlib.figure import Figure
 import matplotlib
@@ -190,6 +191,9 @@ def parse_arguments():
         type=float, default=0.9, help="蒙地卡羅信心水準")
     parser.add_argument(
         "--rcpsp-opt", action="store_true", help="執行 RCPSP 資源優化排程")
+    parser.add_argument(
+        "--racp-opt", metavar="DEADLINE", type=int,
+        help="執行 RACP 反推最小人力配置")
     return parser.parse_args()
 
 
@@ -268,6 +272,24 @@ def generate_outputs(
             saveRcpspGanttChart(
                 merged, durationField, args.export_rcpsp_gantt, total_duration)
             print(f"已匯出 RCPSP 甘特圖至 {args.export_rcpsp_gantt}")
+
+    if args.racp_opt is not None:
+        if args.demandField not in merged.columns:
+            raise ValueError(f'WBS 缺少需求欄位 {args.demandField}')
+        if "Eligible_Groups" not in merged.columns:
+            raise ValueError("WBS 缺少 Eligible_Groups 欄位")
+        print("開始執行 RACP 分析...")
+        cmp_params = config.get("cmp_params", {})
+        durationField = args.durationField or cmp_params.get(
+            "default_duration_field", "Te_newbie")
+        cap = solve_racp_basic(
+            merged_graph,
+            merged,
+            args.racp_opt,
+            durationField=durationField,
+            demandField=args.demandField,
+        )
+        print(f"最小人力配置：{cap}")
 
     # 匯出依賴圖
     if args.export_graph:
