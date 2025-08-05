@@ -259,6 +259,7 @@ class BirdmanQtApp(QMainWindow):
         self.dsmPath = ""
         self.wbsPath = ""
         self.resourcePath = ""
+        self.manualResourceCap: dict[str, int] = {}
         self.sortedWbs = None
         self.mergedWbs = None
         self.sortedDsm = None
@@ -706,8 +707,11 @@ class BirdmanQtApp(QMainWindow):
         rcpsp_title = QLabel("<h3>RCPSP 資源排程 (RCPSP Resource Scheduling)</h3>")
         rcpsp_layout.addWidget(rcpsp_title)
 
-        self.run_rcpsp_button = QPushButton("執行 RCPSP 資源排程")
-        rcpsp_layout.addWidget(self.run_rcpsp_button)
+        self.configResourcesButton = QPushButton("設定資源容量")
+        rcpsp_layout.addWidget(self.configResourcesButton)
+
+        self.runRcpspButton = QPushButton("執行 RCPSP 資源排程")
+        rcpsp_layout.addWidget(self.runRcpspButton)
 
         rcpsp_layout.addStretch()
         self.tab_advanced_analysis.layout().addWidget(rcpsp_group)
@@ -790,7 +794,8 @@ class BirdmanQtApp(QMainWindow):
         # --- 按鈕連接 ---
         self.mc_run_button.clicked.connect(self.run_monte_carlo_simulation)
         self.mc_chart_mode_combo.currentIndexChanged.connect(self.on_chart_mode_changed)
-        self.run_rcpsp_button.clicked.connect(self.run_rcpsp_optimization)
+        self.runRcpspButton.clicked.connect(self.runRcpspOptimization)
+        self.configResourcesButton.clicked.connect(self.openResourceConfigDialog)
 
         # 甘特圖情境切換下拉選單
         gantt_top_layout = QHBoxLayout()
@@ -2302,20 +2307,20 @@ class BirdmanQtApp(QMainWindow):
         self.mcFigure.tight_layout()
         self.mcCanvas.draw()
 
-    def run_rcpsp_optimization(self):
-        """執行 RCPSP 資源排程"""
+    def runRcpspOptimization(self, showDialog: bool = True) -> dict[str, float] | None:
+        """執行 RCPSP 資源排程並可選擇是否顯示結果對話框"""
         if self.mergedGraph is None or self.mergedWbs is None:
             QMessageBox.warning(self, "警告", "請先執行完整分析")
-            return
+            return None
         if not self.resourcePath:
             QMessageBox.warning(self, "警告", "請先匯入 Resources 檔案")
-            return
+            return None
 
         try:
             with open("config.json", "r", encoding="utf-8") as f:
                 config = json.load(f)
-            cmp_params = config.get("cmp_params", {})
-            durationField = cmp_params.get("default_duration_field", "Te_newbie")
+            cmpParams = config.get("cmp_params", {})
+            durationField = cmpParams.get("default_duration_field", "Te_newbie")
 
             if durationField not in self.mergedWbs.columns:
                 raise ValueError(f"WBS 缺少工期欄位 {durationField}")
@@ -2326,6 +2331,8 @@ class BirdmanQtApp(QMainWindow):
 
             resourceCap = readResources(
                 self.resourcePath, self.mergedWbs, durationField)
+            if self.manualResourceCap:
+                resourceCap.update(self.manualResourceCap)
             schedule = solveRcpsp(
                 self.mergedGraph,
                 self.mergedWbs,
@@ -2335,50 +2342,93 @@ class BirdmanQtApp(QMainWindow):
                 resourceCap=resourceCap,
             )
 
-            projectEnd = schedule.pop("ProjectEnd", 0)
-            scheduleDf = self.mergedWbs[["Task ID", durationField]].copy()
-            scheduleDf["Start"] = scheduleDf["Task ID"].map(schedule).fillna(0)
-            scheduleDf["Finish"] = (
-                scheduleDf["Start"] + scheduleDf[durationField].fillna(0)
-            )
-            resultText = (
-                f"<b>RCPSP 排程結果 (總工期: {projectEnd:.2f} 小時):" "</b><br><br>"
-            )
-            resultText += "<table border='1' style='width:100%'>"
-            resultText += "<tr><th>任務 ID</th><th>開始時間 (小時)</th></tr>"
-            for task, startTime in sorted(schedule.items()):
-                resultText += f"<tr><td>{task}</td><td>{startTime}</td></tr>"
-            resultText += "</table>"
-
-            dialog = QDialog(self)
-            dialog.setWindowTitle("RCPSP 排程結果")
-            layout = QVBoxLayout()
-            textEdit = QTextEdit()
-            textEdit.setHtml(resultText)
-            textEdit.setReadOnly(True)
-            layout.addWidget(textEdit)
-
-            fig = self.drawRcpspGanttChart(
-                scheduleDf,
-                durationField,
-                f"RCPSP 排程 (總工期: {projectEnd:.2f} 小時)",
-            )
-            canvas = FigureCanvas(fig)
-            scrollArea = QScrollArea()
-            scrollArea.setWidget(canvas)
-            scrollArea.setWidgetResizable(True)
-            scrollArea.setMinimumHeight(400)
-            layout.addWidget(scrollArea)
-
-            buttonBox = QDialogButtonBox(QDialogButtonBox.Ok)
-            buttonBox.accepted.connect(dialog.accept)
-            layout.addWidget(buttonBox)
-            dialog.setLayout(layout)
-            dialog.resize(600, 500)
-            dialog.exec_()
+            if showDialog:
+                self.showRcpspResult(schedule, durationField)
+            return schedule
 
         except Exception as e:
             QMessageBox.critical(self, "排程失敗", f"執行 RCPSP 排程時發生錯誤：{e}")
+            return None
+
+    def showRcpspResult(self, schedule: dict[str, float], durationField: str) -> None:
+        """以對話框方式顯示 RCPSP 排程結果"""
+        projectEnd = schedule.get("ProjectEnd", 0)
+        scheduleDf = self.mergedWbs[["Task ID", durationField]].copy()
+        scheduleDf["Start"] = scheduleDf["Task ID"].map(schedule).fillna(0)
+        scheduleDf["Finish"] = (
+            scheduleDf["Start"] + scheduleDf[durationField].fillna(0)
+        )
+        resultText = (
+            f"<b>RCPSP 排程結果 (總工期: {projectEnd:.2f} 小時):" "</b><br><br>"
+        )
+        resultText += "<table border='1' style='width:100%'>"
+        resultText += "<tr><th>任務 ID</th><th>開始時間 (小時)</th></tr>"
+        for task, startTime in sorted(schedule.items()):
+            if task == "ProjectEnd":
+                continue
+            resultText += f"<tr><td>{task}</td><td>{startTime}</td></tr>"
+        resultText += "</table>"
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("RCPSP 排程結果")
+        layout = QVBoxLayout()
+        textEdit = QTextEdit()
+        textEdit.setHtml(resultText)
+        textEdit.setReadOnly(True)
+        layout.addWidget(textEdit)
+
+        fig = self.drawRcpspGanttChart(
+            scheduleDf,
+            durationField,
+            f"RCPSP 排程 (總工期: {projectEnd:.2f} 小時)",
+        )
+        canvas = FigureCanvas(fig)
+        scrollArea = QScrollArea()
+        scrollArea.setWidget(canvas)
+        scrollArea.setWidgetResizable(True)
+        scrollArea.setMinimumHeight(400)
+        layout.addWidget(scrollArea)
+
+        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttonBox.accepted.connect(dialog.accept)
+        layout.addWidget(buttonBox)
+        dialog.setLayout(layout)
+        dialog.resize(600, 500)
+        dialog.exec_()
+
+    def openResourceConfigDialog(self) -> None:
+        """開啟資源容量設定對話框"""
+        if self.mergedWbs is None or not self.resourcePath:
+            QMessageBox.warning(self, "警告", "請先完成分析並匯入 Resources 檔案")
+            return
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+            cmpParams = config.get("cmp_params", {})
+            durationField = cmpParams.get("default_duration_field", "Te_newbie")
+            resourceCap = readResources(
+                self.resourcePath, self.mergedWbs, durationField)
+        except Exception as e:
+            QMessageBox.critical(self, "錯誤", f"讀取資源資料失敗：{e}")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("設定資源容量")
+        form = QFormLayout(dialog)
+        spinBoxes: dict[str, QSpinBox] = {}
+        for group, cap in resourceCap.items():
+            spin = QSpinBox()
+            spin.setMinimum(1)
+            spin.setValue(self.manualResourceCap.get(group, cap))
+            form.addRow(QLabel(group), spin)
+            spinBoxes[group] = spin
+
+        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        form.addRow(buttonBox)
+        buttonBox.accepted.connect(dialog.accept)
+        buttonBox.rejected.connect(dialog.reject)
+        if dialog.exec_() == QDialog.Accepted:
+            self.manualResourceCap = {g: s.value() for g, s in spinBoxes.items()}
 
 
 def main():
