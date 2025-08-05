@@ -8,7 +8,8 @@
       "Bash(python:*)",
       "Bash(flake8:*)",
       "Bash(find:*)",
-      "Bash(git pull:*)"
+      "Bash(git pull:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }

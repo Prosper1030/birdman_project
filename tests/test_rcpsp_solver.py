@@ -19,7 +19,7 @@ def test_solve_rcpsp_basic():
         {
             "Task ID": ["A", "B"],
             "Te_newbie": [2, 3],
-            "Category": ["R1", "R2"],
+            "Property": ["R1", "R2"],
             "ResourceDemand": [1, 1],
         }
     )
@@ -41,7 +41,7 @@ def test_resource_demand_affects_schedule():
         {
             "Task ID": ["A", "B"],
             "Te_newbie": [2, 3],
-            "Category": ["R1", "R1"],
+            "Property": ["R1", "R1"],
             "ResourceDemand": [2, 1],
         }
     )

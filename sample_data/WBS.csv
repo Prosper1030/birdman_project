@@ -1,4 +1,4 @@
-﻿Task ID,Name,Category,Eligible_Groups,Novelty,Complexity,Dependency,TRF,M_expert,O_expert,P_expert,Te_expert,K_base,K_adj,O_newbie,M_newbie,P_newbie,Te_newbie,ResourceDemand
+﻿Task ID,Name,Property,Eligible_Groups,Novelty,Complexity,Dependency,TRF,M_expert,O_expert,P_expert,Te_expert,K_base,K_adj,O_newbie,M_newbie,P_newbie,Te_newbie,ResourceDemand
 0X26-001,全機總體佈局與性能目標定義,0X,ALL,5,5,5,1,80,80,200,100,3,3.45,276,276,690,345,1
 A26-001,全機空氣動力學概念設計與分析,A,AER,5,5,5,1,120,120,300,150,3,3.45,414,414,1035,517.5,1
 S26-001,全機結構概念與載重路徑設計,S,STR,5,5,5,1,100,100,250,125,3,3.45,345,345,862.5,431.25,1

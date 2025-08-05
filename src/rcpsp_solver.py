@@ -11,7 +11,7 @@ def solveRcpsp(
     graph: nx.DiGraph,
     wbs: pd.DataFrame,
     durationField: str = "Te_newbie",
-    resourceField: str = "Category",
+    resourceField: str = "Property",
     demandField: str = "ResourceDemand",
     resourceCap: Dict[str, int] | None = None,
     timeLimit: int = 10,

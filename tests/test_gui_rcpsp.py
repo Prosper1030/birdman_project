@@ -17,7 +17,7 @@ def test_rcpsp_schedule_with_custom_capacity():
         {
             "Task ID": ["T1", "T2"],
             "Te_newbie": [3, 3],
-            "Category": ["AER", "AER"],
+            "Property": ["AER", "AER"],
             "ResourceDemand": [1, 1],
         }
     )

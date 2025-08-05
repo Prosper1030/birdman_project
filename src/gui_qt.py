@@ -2365,8 +2365,8 @@ class BirdmanQtApp(QMainWindow):
 
             if durationField not in self.mergedWbs.columns:
                 raise ValueError(f"WBS 缺少工期欄位 {durationField}")
-            if "Category" not in self.mergedWbs.columns:
-                raise ValueError('WBS 缺少 "Category" 欄位')
+            if "Property" not in self.mergedWbs.columns:
+                raise ValueError('WBS 缺少 "Property" 欄位')
             if "ResourceDemand" not in self.mergedWbs.columns:
                 raise ValueError('WBS 缺少 "ResourceDemand" 欄位')
 
@@ -2378,7 +2378,7 @@ class BirdmanQtApp(QMainWindow):
                 self.mergedGraph,
                 self.mergedWbs,
                 durationField=durationField,
-                resourceField="Category",
+                resourceField="Property",
                 demandField="ResourceDemand",
                 resourceCap=resourceCap,
             )
