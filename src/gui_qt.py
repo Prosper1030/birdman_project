@@ -77,6 +77,15 @@ class MonteCarloWorker(QObject):
         iterations: int,
         parent: QObject | None = None,
     ) -> None:
+        """初始化背景工作者。
+
+        Args:
+            wbsDf: 任務資料表。
+            graph: 依賴關係圖。
+            roleKey: 角色鍵值。
+            iterations: 模擬次數。
+            parent: 父物件，預設為 ``None``。
+        """
         super().__init__(parent)
         self.wbsDf = wbsDf
         self.graph = graph
@@ -133,25 +142,34 @@ class MonteCarloWorker(QObject):
 
 
 class PandasModel(QAbstractTableModel):
-    def __init__(self, df: DataFrame, dsmMode=False):
+    """用於顯示 DataFrame 的 Qt 模型。"""
+
+    def __init__(self, df: DataFrame, dsmMode: bool = False) -> None:
+        """初始化模型。
+
+        Args:
+            df: 欲顯示的資料表。
+            dsmMode: 是否為 DSM 模式。
+        """
         super().__init__()
         self._df = df
         self._dsmMode = dsmMode
 
     def rowCount(self, parent=None):
+        """回傳列數。"""
         return self._df.shape[0]
 
     def columnCount(self, parent=None):
+        """回傳欄數。"""
         return self._df.shape[1]
 
     def data(self, index, role=Qt.DisplayRole):
+        """提供儲存格資料與背景顏色。"""
         if not index.isValid():
             return None
         value = self._df.iloc[index.row(), index.column()]
-        # 顯示內容
         if role == Qt.DisplayRole:
             return str(value)
-        # 只有DSM分頁才標紅依賴格子
         if self._dsmMode and role == Qt.BackgroundRole:
             """若值為 1 則以紅色標示，避免解析失敗"""
             try:
@@ -164,25 +182,31 @@ class PandasModel(QAbstractTableModel):
 
                     return QColor(255, 120, 120)
             except (ValueError, TypeError):
-                # 轉型失敗時忽略，避免整體流程中斷
                 pass
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
+        """提供表頭顯示文字。"""
         if role == Qt.DisplayRole:
             if orientation == Qt.Horizontal:
                 return str(self._df.columns[section])
             else:
-                # DSM 模式下，直接使用索引作為行表頭（Task ID）
                 if self._dsmMode:
                     return str(self._df.index[section])
-                # 其他情況維持 1 起始的列號
                 return str(section + 1)
         return None
 
 
 class SettingsDialog(QDialog):
+    """設定 k 係數的對話框。"""
+
     def __init__(self, current_params, parent=None):
+        """初始化對話框。
+
+        Args:
+            current_params: 目前的參數設定。
+            parent: 父視窗，預設為 ``None``。
+        """
         super().__init__(parent)
         self.setWindowTitle("k 係數參數設定")
         self.setModal(True)
@@ -229,7 +253,11 @@ class SettingsDialog(QDialog):
             self.overrideInput.setText(str(current_params["override"]))
 
     def get_settings(self):
-        """獲取使用者輸入的設定值"""
+        """取得使用者輸入的設定值。
+
+        Returns:
+            dict | None: 包含參數設定的字典，若輸入無效則回傳 ``None``。
+        """
         try:
             settings = {
                 "base": 1.0,  # 固定值
@@ -250,7 +278,10 @@ class SettingsDialog(QDialog):
 
 
 class BirdmanQtApp(QMainWindow):
-    def __init__(self):
+    """Birdman 專案的 Qt 應用程式。"""
+
+    def __init__(self) -> None:
+        """初始化主視窗。"""
         super().__init__()
         self.setWindowTitle("Birdman Project 進階 GUI")
         # 設定更合適的初始窗口尺寸和最小尺寸
@@ -427,7 +458,8 @@ class BirdmanQtApp(QMainWindow):
         # 接受關閉事件
         event.accept()
 
-    def initUI(self):
+    def initUI(self) -> None:
+        """建立介面佈局與控制項。"""
         main_widget = QWidget()
         main_layout = QVBoxLayout()
 
@@ -826,7 +858,8 @@ class BirdmanQtApp(QMainWindow):
         # 初始化圖表主題配置
         self.configure_chart_theme()
 
-    def chooseDsm(self):
+    def chooseDsm(self) -> None:
+        """選擇 DSM 檔案並預覽。"""
         path, _ = QFileDialog.getOpenFileName(
             self, "選擇 DSM 檔案", "", "CSV Files (*.csv)"
         )
@@ -840,7 +873,8 @@ class BirdmanQtApp(QMainWindow):
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, "錯誤", f"DSM 載入失敗：{e}")
 
-    def chooseWbs(self):
+    def chooseWbs(self) -> None:
+        """選擇 WBS 檔案並預覽。"""
         path, _ = QFileDialog.getOpenFileName(
             self, "選擇 WBS 檔案", "", "CSV Files (*.csv)"
         )
@@ -855,13 +889,13 @@ class BirdmanQtApp(QMainWindow):
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, "錯誤", f"WBS 載入失敗：{e}")
 
-    def chooseResources(self):
+    def chooseResources(self) -> None:
+        """選擇 Resources 檔案並預覽。"""
         path, _ = QFileDialog.getOpenFileName(
             self, "選擇 Resources 檔案", "", "CSV Files (*.csv)"
         )
         if path:
             try:
-                # 讀取並預覽 Resources 資料
                 resources = pd.read_csv(path, encoding="utf-8-sig")
                 model = PandasModel(resources.head(100))
                 self.resources_preview.setModel(model)
@@ -925,7 +959,15 @@ class BirdmanQtApp(QMainWindow):
                     self, "錯誤", "Resources 檔案格式不正確，將忽略。"
                 )
 
-    def runAnalysis(self, show_notification=True):
+    def runAnalysis(self, show_notification: bool = True) -> bool:
+        """執行資料分析並更新各分頁。
+
+        Args:
+            show_notification: 是否顯示完成通知。
+
+        Returns:
+            bool: 分析成功則為 ``True``，失敗為 ``False``。
+        """
         try:
             dsm = readDsm(self.dsmPath)
             wbs = readWbs(self.wbsPath)
@@ -1020,11 +1062,12 @@ class BirdmanQtApp(QMainWindow):
             # 執行流程中可能發生多種錯誤，此處統一彙整顯示訊息
             QMessageBox.critical(self, "錯誤", str(e))
             return False
+            return False
 
-    def _add_no_column(self, df):
+    def _add_no_column(self, df: pd.DataFrame) -> pd.DataFrame:
+        """若無 ``No.`` 欄位則新增連續編號。"""
         # 僅針對 WBS 及其衍生表格加 No. 欄，且不覆蓋 Task ID
         df = df.copy()
-        # 若最左欄是純數字且不是 Task ID，移除
         first_col = df.columns[0]
         if first_col != "Task ID" and first_col != "No.":
             try:
@@ -1032,7 +1075,6 @@ class BirdmanQtApp(QMainWindow):
                 if as_num.notnull().all():
                     df = df.drop(columns=[first_col])
             except (ValueError, TypeError):
-                # 轉型失敗時直接忽略
                 pass
         df.insert(0, "No.", range(1, len(df) + 1))
         return df
@@ -1064,16 +1106,17 @@ class BirdmanQtApp(QMainWindow):
         display_df = full_results_df[existing_cols].copy()
         return display_df
 
-    def exportSortedWbs(self):
+    def exportSortedWbs(self) -> None:
+        """匯出排序後的 WBS。"""
         if self.sortedWbs is None:
-            QMessageBox.warning(self, "警告", "請先執行分析")
+            QMessageBox.warning(self, "警告", "請先執行分析產生排序後的 WBS")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "匯出排序 WBS", "", "CSV Files (*.csv)"
+            self, "匯出排序後 WBS", "sorted_wbs.csv", "CSV Files (*.csv)"
         )
         if path:
             self.sortedWbs.to_csv(path, index=False, encoding="utf-8-sig")
-            QMessageBox.information(self, "完成", f"已匯出 {path}")
+            QMessageBox.information(self, "完成", "排序後 WBS 已匯出")
 
     def exportMergedWbs(self, fmt="csv"):
         """匯出合併後的 WBS"""
@@ -1103,16 +1146,17 @@ class BirdmanQtApp(QMainWindow):
             self.mergedWbs.to_csv(path, encoding="utf-8-sig", index=False)
         QMessageBox.information(self, "完成", f"已匯出 {path}")
 
-    def exportSortedDsm(self):
+    def exportSortedDsm(self) -> None:
+        """匯出排序後的 DSM。"""
         if self.sortedDsm is None:
-            QMessageBox.warning(self, "警告", "請先執行分析")
+            QMessageBox.warning(self, "警告", "請先執行分析產生排序後的 DSM")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "匯出排序 DSM", "", "CSV Files (*.csv)"
+            self, "匯出排序後 DSM", "sorted_dsm.csv", "CSV Files (*.csv)"
         )
         if path:
             self.sortedDsm.to_csv(path, encoding="utf-8-sig")
-            QMessageBox.information(self, "完成", f"已匯出 {path}")
+            QMessageBox.information(self, "完成", "排序後 DSM 已匯出")
 
     def exportMergedDsm(self, fmt="csv"):
         """匯出合併後的 DSM"""
@@ -2432,9 +2476,8 @@ class BirdmanQtApp(QMainWindow):
 
 
 def main():
+    """啟動 Birdman Qt 應用程式。"""
     app = QApplication(sys.argv)
-
-    # 設置應用程式退出時清理所有 QThread
     app.setQuitOnLastWindowClosed(True)
 
     window = BirdmanQtApp()
@@ -2443,12 +2486,11 @@ def main():
     try:
         exit_code = app.exec_()
     finally:
-        # 確保在應用程式退出時所有線程都被正確清理
         if hasattr(window, "mcThread") and window.mcThread is not None:
             try:
                 if window.mcThread.isRunning():
                     window.mcThread.terminate()
-                    window.mcThread.wait(2000)  # 等待2秒
+                    window.mcThread.wait(2000)
             except (RuntimeError, AttributeError):
                 pass
 

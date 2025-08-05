@@ -25,6 +25,15 @@ class MonteCarloWorker(QObject):
         iterations: int,
         parent: QObject | None = None,
     ) -> None:
+        """初始化背景工作者。
+
+        Args:
+            wbs_df: 任務資料表。
+            graph: 依賴關係圖。
+            role_key: 角色鍵值（newbie 或 expert）。
+            iterations: 模擬次數。
+            parent: 父物件，預設為 ``None``。
+        """
         super().__init__(parent)
         self.wbs_df = wbs_df
         self.graph = graph

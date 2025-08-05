@@ -9,7 +9,15 @@ def cpmForwardPass(
     G: nx.DiGraph,
     durations: Dict[str, float],
 ) -> Dict[str, Tuple[float, float]]:
-    """CPM 正向計算，回傳最早開始與最早完成時間"""
+    """執行 CPM 正向計算，回傳最早開始與最早完成時間。
+
+    Args:
+        G: 任務依賴圖。
+        durations: 各任務工期的字典。
+
+    Returns:
+        Dict[str, Tuple[float, float]]: 每個任務的最早開始與最早完成時間。
+    """
     es: Dict[str, float] = {}
     ef: Dict[str, float] = {}
     for node in nx.topological_sort(G):
@@ -27,7 +35,16 @@ def cpmBackwardPass(
     durations: Dict[str, float],
     projectEnd: float,
 ) -> Dict[str, Tuple[float, float]]:
-    """CPM 反向計算，回傳最晚開始與最晚完成時間"""
+    """執行 CPM 反向計算，回傳最晚開始與最晚完成時間。
+
+    Args:
+        G: 任務依賴圖。
+        durations: 各任務工期的字典。
+        projectEnd: 專案預期完工時間。
+
+    Returns:
+        Dict[str, Tuple[float, float]]: 每個任務的最晚開始與最晚完成時間。
+    """
     ls: Dict[str, float] = {}
     lf: Dict[str, float] = {}
     order = list(nx.topological_sort(G))
@@ -46,7 +63,16 @@ def calculateSlack(
     backwardData: Dict[str, Tuple[float, float]],
     G: nx.DiGraph,
 ) -> pd.DataFrame:
-    """計算總鬆弛與自由鬆弛時間"""
+    """計算總鬆弛與自由鬆弛時間。
+
+    Args:
+        forwardData: 正向計算結果。
+        backwardData: 反向計算結果。
+        G: 任務依賴圖。
+
+    Returns:
+        pd.DataFrame: 各任務的時間參數與鬆弛時間。
+    """
     records = []
     for node in G.nodes:
         es, ef = forwardData[node]
@@ -72,7 +98,14 @@ def calculateSlack(
 
 
 def findCriticalPath(slackData: pd.DataFrame) -> List[str]:
-    """根據總鬆弛時間為 0 識別關鍵路徑"""
+    """根據總鬆弛時間為 0 識別關鍵路徑。
+
+    Args:
+        slackData: 各任務鬆弛時間資料。
+
+    Returns:
+        List[str]: 關鍵路徑上的 Task ID。
+    """
     critical = slackData[slackData["TF"] == 0]
     critical = critical.sort_values("ES")
     return critical.index.tolist()
@@ -84,12 +117,28 @@ def convertHoursToDays(
     hours: float,
     workHoursPerDay: float = 8,
 ) -> float:
-    """將工時轉換為工作天數"""
+    """將工時轉換為工作天數。
+
+    Args:
+        hours: 工時數。
+        workHoursPerDay: 每日工作時數。
+
+    Returns:
+        float: 對應的工作天數。
+    """
     return hours / workHoursPerDay
 
 
 def addWorkingDays(startDate: str, days: float) -> str:
-    """計算加入工作天數後的日期（排除週末）"""
+    """計算加入工作天數後的日期，排除週末。
+
+    Args:
+        startDate: 起始日期字串（YYYY-MM-DD）。
+        days: 需加入的工作天數。
+
+    Returns:
+        str: 計算後的日期字串。
+    """
     date = datetime.strptime(startDate, "%Y-%m-%d")
     full_days = int(days)
     remaining = days - full_days
@@ -106,7 +155,15 @@ def extractDurationFromWbs(
     wbs: pd.DataFrame,
     durationField: str = "Te_expert",
 ) -> Dict[str, float]:
-    """從 WBS 資料框提取工期資訊"""
+    """從 WBS 資料框提取工期資訊。
+
+    Args:
+        wbs: 任務資料表。
+        durationField: 工期欄位名稱。
+
+    Returns:
+        Dict[str, float]: Task ID 與工期的對應字典。
+    """
     if durationField not in wbs.columns:
         raise KeyError(f"WBS 缺少 {durationField} 欄位")
     return dict(zip(wbs["Task ID"], wbs[durationField].astype(float)))
@@ -120,21 +177,22 @@ def monteCarloSchedule(
     nIterations: int = 100,
     confidence: float = 0.9,
 ) -> Dict[str, Any]:
-    """蒙地卡羅模擬計算專案完工時間
+    """蒙地卡羅模擬計算專案完工時間。
 
     以三點估算法的 O、M、P 值為基礎，使用 Beta-PERT 分佈進行隨機抽樣後
     執行 CPM，取得專案完工時間的統計資料。
 
-    參數:
-        G: 依賴關係圖
-        oDurations: 樂觀工期
-        mDurations: 最可能工期
-        pDurations: 悲觀工期
-        nIterations: 模擬次數
-        confidence: 信心水準 (0~1)
+    Args:
+        G: 依賴關係圖。
+        oDurations: 樂觀工期。
+        mDurations: 最可能工期。
+        pDurations: 悲觀工期。
+        nIterations: 模擬次數。
+        confidence: 信心水準 (0~1)。
 
-    回傳值:
-        包含平均工期、標準差、最短與最長工期，以及對應信心水準的工期
+    Returns:
+        Dict[str, Any]: 包含平均工期、標準差、最短與最長工期，
+            以及對應信心水準的工期等統計資訊。
     """
 
     results: List[float] = []

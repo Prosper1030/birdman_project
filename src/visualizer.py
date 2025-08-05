@@ -7,9 +7,15 @@ from matplotlib.figure import Figure
 import networkx as nx
 
 
-def layered_layout(G, layer_map):
-    """
-    根據節點的 'Layer' 屬性計算分層佈局位置。
+def layered_layout(G: nx.DiGraph, layer_map: dict) -> dict:
+    """根據節點的 ``Layer`` 屬性計算分層佈局位置。
+
+    Args:
+        G: 任務依賴圖。
+        layer_map: 節點與層次對應的字典。
+
+    Returns:
+        dict: 節點座標的字典。
     """
     pos = {}
     layers = defaultdict(list)
@@ -35,7 +41,18 @@ def create_dependency_graph_figure(
     viz_params: dict,
     critical_path_edges: set = None,
 ) -> Figure:
-    """建立任務依賴關係圖 (使用分層佈局)"""
+    """建立任務依賴關係圖（使用分層佈局）。
+
+    Args:
+        G: 任務依賴圖。
+        scc_map: 節點對應的 SCC ID。
+        layer_map: 節點與層次對應的字典。
+        viz_params: 視覺化參數設定。
+        critical_path_edges: 關鍵路徑邊集合，預設為 ``None``。
+
+    Returns:
+        Figure: Matplotlib 圖表物件。
+    """
 
     # 嘗試設定支援中文的字體
     try:

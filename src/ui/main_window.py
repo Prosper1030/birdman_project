@@ -30,6 +30,7 @@ class MainWindow(QWidget):
     """主視窗，負責建立各個分頁"""
 
     def __init__(self) -> None:
+        """初始化主視窗。"""
         super().__init__()
         self.merged_graph: nx.DiGraph | None = None
         self.merged_wbs: DataFrame | None = None
