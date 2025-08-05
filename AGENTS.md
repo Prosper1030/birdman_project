@@ -106,27 +106,35 @@ Co-Authored-By: [AI Agent] <noreply@company.com>
 
 ### Testing and Quality Assurance / 測試與品質保證
 
-**MANDATORY: You MUST run these checks after ANY code change:**
+**Code Changes (src/, tests/, main.py, config.json): You MUST run these checks:**
 
 ```bash
-# 1. Run all tests (REQUIRED)
+# 1. Run all tests (REQUIRED for code changes)
 pytest -q
 
-# 2. Check code style for project files only (REQUIRED) 
+# 2. Check code style for project files only (REQUIRED for code changes) 
 flake8 src/ tests/ main.py --max-line-length=120
 
-# 3. Verify application still works (REQUIRED)
+# 3. Verify application still works (REQUIRED for functional changes)
 python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json
 
-# 4. Test GUI if GUI changes made (REQUIRED for GUI changes)
+# 4. Test GUI if GUI changes made (REQUIRED for GUI changes only)
 python -m src.gui_qt
 ```
 
+**Documentation Changes (*.md files, docs/): Simplified checks:**
+
+```bash
+# For documentation-only changes, you only need to:
+# 1. Verify file syntax and formatting
+# 2. Update AI_LOG.md and AI_SYNC_README.md as required
+# 3. No need to run pytest or application tests for pure documentation changes
+```
+
 **Quality Requirements:**
-- All tests must pass before submitting changes
-- Code must pass flake8 linting
-- Application must run without errors on sample data
-- GUI must launch and function correctly if modified
+- **Code changes**: All tests must pass, flake8 must pass, application must work
+- **Documentation changes**: Must maintain consistent formatting and update tracking files
+- **Mixed changes**: Follow code change requirements
 
 ### Error Handling / 錯誤處理
 
