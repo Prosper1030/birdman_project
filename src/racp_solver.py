@@ -50,6 +50,8 @@ def _solveRcpspWithAlt(
         demand = int(float(row.get(demandField, 1)))
         assigns = []
         for g in elig:
+            if resourceCap.get(g, 0) <= 0:
+                continue
             if g not in resourceMap:
                 resourceMap[g] = ([], [])
             boolVar = model.NewBoolVar(f"use_{tid}_{g}")
@@ -61,6 +63,8 @@ def _solveRcpspWithAlt(
             assigns.append(boolVar)
         if assigns:
             model.Add(sum(assigns) == 1)
+        else:
+            raise ValueError("缺少 Eligible_Groups")
 
     for u, v in graph.edges():
         if u in endVars and v in startVars:
@@ -104,7 +108,10 @@ def solve_racp_basic(
 
     lower: Dict[str, int] = {g: 0 for g in allGroups}
     for _, row in wbs.iterrows():
-        elig = _parseEligibleGroups(str(row.get("Eligible_Groups", "")), allGroups)
+        raw = row.get("Eligible_Groups", "")
+        if pd.isna(raw) or not str(raw).strip():
+            raise ValueError("缺少 Eligible_Groups")
+        elig = _parseEligibleGroups(str(raw), allGroups)
         demand = int(float(row.get(demandField, 1)))
         if len(elig) == 1:
             g = elig[0]
@@ -114,8 +121,6 @@ def solve_racp_basic(
     for _, row in wbs.iterrows():
         elig = _parseEligibleGroups(str(row.get("Eligible_Groups", "")), allGroups)
         demand = int(float(row.get(demandField, 1)))
-        if not elig:
-            continue
         if all(capacity.get(g, 0) < demand for g in elig):
             capacity[elig[0]] = max(capacity.get(elig[0], 0), demand)
 
@@ -123,8 +128,8 @@ def solve_racp_basic(
         makespan = _solveRcpspWithAlt(
             graph, wbs, capacity, durationField, demandField, timeLimit, allGroups
         )
-    except RuntimeError as e:
-        raise RuntimeError("初始排程失敗") from e
+    except (RuntimeError, ValueError):
+        makespan = deadline + 1
 
     maxIter = 20
     iterCount = 0
@@ -144,9 +149,12 @@ def solve_racp_basic(
         while low < high:
             mid = (low + high) // 2
             capacity[g] = mid
-            m = _solveRcpspWithAlt(
-                graph, wbs, capacity, durationField, demandField, timeLimit, allGroups
-            )
+            try:
+                m = _solveRcpspWithAlt(
+                    graph, wbs, capacity, durationField, demandField, timeLimit, allGroups
+                )
+            except (RuntimeError, ValueError):
+                m = deadline + 1
             if m <= deadline:
                 high = mid
             else:
