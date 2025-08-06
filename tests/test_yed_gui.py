@@ -5,8 +5,13 @@ yEd 風格 GUI 測試腳本
 """
 
 import sys
+import os
 import pandas as pd
 from PyQt5.QtWidgets import QApplication
+
+# 添加專案根目錄到路徑
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from src.ui.dsm_editor import DsmEditor
 
 def create_test_data():
