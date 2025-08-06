@@ -1389,6 +1389,16 @@ class DsmEditor(QDialog):
         super().__init__(parent)
         self.setWindowTitle("依賴關係編輯器")
         self.resize(1200, 800)
+        
+        # 設定視窗標誌，允許最大化、最小化和關閉按鈕
+        self.setWindowFlags(
+            Qt.Window |
+            Qt.WindowTitleHint |
+            Qt.WindowSystemMenuHint |
+            Qt.WindowMinimizeButtonHint |
+            Qt.WindowMaximizeButtonHint |
+            Qt.WindowCloseButtonHint
+        )
 
         # 初始化狀態
         self.state = EditorState.IDLE
