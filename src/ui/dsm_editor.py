@@ -12,8 +12,8 @@ from enum import Enum
 
 import pandas as pd
 import networkx as nx
-from PyQt5.QtCore import Qt, QPointF, QTimer, QRectF, pyqtSignal, QObject, QEvent
-from PyQt5.QtGui import QColor, QPen, QBrush, QPainter, QPainterPath, QFont, QKeySequence, QCursor
+from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtGui import QColor, QPen, QBrush, QPainter, QPainterPath, QFont, QKeySequence
 from PyQt5.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -29,14 +29,7 @@ from PyQt5.QtWidgets import (
     QMenu,
     QAction,
     QMenuBar,
-    QLineEdit,
-    QGraphicsTextItem,
-    QLabel,
-    QSpinBox,
-    QFormLayout,
     QGroupBox,
-    QComboBox,
-    QDialogButtonBox,
     QRubberBand,
 )
 
@@ -137,20 +130,62 @@ class RemoveEdgeCommand(Command):
             self.editor.edges.add((self.src.taskId, self.dst.taskId))
 
 
+class MoveNodeCommand(Command):
+    """移動節點命令"""
+    def __init__(self, node: 'TaskNode', old_pos: QPointF, new_pos: QPointF):
+        self.node = node
+        self.old_pos = old_pos
+        self.new_pos = new_pos
+
+    def execute(self) -> None:
+        self.node.setPos(self.new_pos)
+        # 更新所有相關連線
+        for edge in self.node.edges:
+            edge.updatePath()
+
+    def undo(self) -> None:
+        self.node.setPos(self.old_pos)
+        # 更新所有相關連線
+        for edge in self.node.edges:
+            edge.updatePath()
+
+
+class ResizeNodeCommand(Command):
+    """調整節點大小命令"""
+    def __init__(self, node: 'TaskNode', old_rect: QRectF, new_rect: QRectF):
+        self.node = node
+        self.old_rect = old_rect
+        self.new_rect = new_rect
+
+    def execute(self) -> None:
+        self.node.setRect(self.new_rect)
+        self.node._updateHandlesPosition()
+        # 更新所有相關連線
+        for edge in self.node.edges:
+            edge.updatePath()
+
+    def undo(self) -> None:
+        self.node.setRect(self.old_rect)
+        self.node._updateHandlesPosition()
+        # 更新所有相關連線
+        for edge in self.node.edges:
+            edge.updatePath()
+
+
 class ResizeHandle(QGraphicsRectItem):
     """yEd 風格的調整大小把手 - 正確實現版"""
-    
+
     HANDLE_SIZE = 6  # 把手視覺大小 - 符合 yEd 風格
     HANDLE_DISTANCE = 5  # 把手距離節點邊緣的固定距離
     HOVER_DETECTION_RANGE = 8  # 懸停檢測範圍（比把手稍大）
     MIN_NODE_SIZE = 50  # 最小節點尺寸
-    
+
     def __init__(self, parent_node: 'TaskNode', handle_index: int):
         # 使用懸停檢測範圍初始化（用於事件檢測）
         half_detection = self.HOVER_DETECTION_RANGE / 2
-        super().__init__(-half_detection, -half_detection, 
-                        self.HOVER_DETECTION_RANGE, self.HOVER_DETECTION_RANGE, parent_node)
-        
+        super().__init__(-half_detection, -half_detection,
+                         self.HOVER_DETECTION_RANGE, self.HOVER_DETECTION_RANGE, parent_node)
+
         self.parent_node = parent_node
         self.handle_index = handle_index
         self.resizing = False
@@ -158,11 +193,11 @@ class ResizeHandle(QGraphicsRectItem):
         self.initial_rect = QRectF()
         self.initial_pos = QPointF()
         self._is_hovered = False
-        
+
         # 設定視覺樣式 - yEd 風格黑色小方塊
         self.setBrush(QBrush(Qt.black))
         self.setPen(QPen(Qt.black, 1))
-        
+
         # 設定游標樣式
         cursor_map = {
             0: Qt.SizeFDiagCursor,  # 左上
@@ -175,26 +210,26 @@ class ResizeHandle(QGraphicsRectItem):
             7: Qt.SizeHorCursor,    # 左中
         }
         self.setCursor(cursor_map.get(handle_index, Qt.SizeAllCursor))
-        
+
         # 設定 Z 值確保在最上層（比父節點更高）
         self.setZValue(2000)  # 提高 Z 值
-        
+
         # 啟用事件處理
         self.setFlag(QGraphicsItem.ItemIsSelectable, False)
         self.setFlag(QGraphicsItem.ItemIsMovable, False)
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations, False)
         self.setFlag(QGraphicsItem.ItemStacksBehindParent, False)  # 確保不在父節點後面
         self.setAcceptHoverEvents(True)
-        
+
         # 確保把手能接收滑鼠事件
         self.setEnabled(True)
-        
+
     def updatePosition(self):
         """更新把手位置 - yEd 風格：把手位於節點外圍固定距離"""
         rect = self.parent_node.rect()
         distance = self.HANDLE_DISTANCE
         half_detection = self.HOVER_DETECTION_RANGE / 2
-        
+
         # 計算把手中心位置（距離節點邊緣固定距離）
         positions = [
             # 左上角：向左上偏移
@@ -214,17 +249,17 @@ class ResizeHandle(QGraphicsRectItem):
             # 左中：向左偏移
             (rect.left() - distance - half_detection, rect.center().y() - half_detection),
         ]
-        
+
         if self.handle_index < len(positions):
             x, y = positions[self.handle_index]
             self.setPos(x, y)
-    
+
     def paint(self, painter, option, widget=None):
         """自訂繪製 - 繪製 yEd 風格的黑色小方塊把手"""
         # 計算實際把手在檢測範圍中央的位置
         detection_center = self.HOVER_DETECTION_RANGE / 2
         handle_half = self.HANDLE_SIZE / 2
-        
+
         # 繪製黑色小方塊把手
         handle_rect = QRectF(
             detection_center - handle_half,
@@ -232,17 +267,17 @@ class ResizeHandle(QGraphicsRectItem):
             self.HANDLE_SIZE,
             self.HANDLE_SIZE
         )
-        
+
         painter.setBrush(self.brush())
         painter.setPen(self.pen())
         painter.drawRect(handle_rect)
-    
+
     def hoverEnterEvent(self, event):
         """滑鼠懸停進入事件"""
         self._is_hovered = True
         print(f"🖱️ 把手 {self.handle_index} 懸停進入")  # 調試輸出
         super().hoverEnterEvent(event)
-    
+
     def hoverLeaveEvent(self, event):
         """滑鼠懸停離開事件"""
         # 只有在不調整大小時才設定為非懸停狀態
@@ -250,11 +285,11 @@ class ResizeHandle(QGraphicsRectItem):
             self._is_hovered = False
             print(f"🖱️ 把手 {self.handle_index} 懸停離開")  # 調試輸出
         super().hoverLeaveEvent(event)
-    
+
     def mousePressEvent(self, event):
         """滑鼠按下事件 - 只有在懸停狀態下才響應"""
         print(f"🖱️ 把手 {self.handle_index} 按下事件, 懸停狀態: {self._is_hovered}, 按鈕: {event.button()}")  # 調試輸出
-        
+
         if event.button() == Qt.LeftButton:
             if self._is_hovered:
                 print(f"🔧 開始調整大小 - 把手 {self.handle_index}")  # 調試輸出
@@ -262,73 +297,79 @@ class ResizeHandle(QGraphicsRectItem):
                 self.resize_start_pos = event.scenePos()
                 self.initial_rect = self.parent_node.rect()
                 self.initial_pos = self.parent_node.pos()
-                
+
                 # 通知編輯器進入調整大小狀態
                 if hasattr(self.parent_node.editor, 'state'):
                     self.parent_node.editor.state = EditorState.RESIZING
-                
+
                 event.accept()  # 確保事件被接受
                 return
             else:
                 print(f"❌ 把手 {self.handle_index} 未在懸停狀態，忽略點擊")
-        
+
         # 如果不是我們處理的事件，傳遞給父類
         super().mousePressEvent(event)
-    
+
     def mouseMoveEvent(self, event):
         """滑鼠移動事件"""
         if self.resizing:
             current_pos = event.scenePos()
             delta = current_pos - self.resize_start_pos
-            
+
             # 減少調試輸出頻率以提升性能
             if not hasattr(self, '_debug_counter'):
                 self._debug_counter = 0
             self._debug_counter += 1
             if self._debug_counter % 5 == 0:  # 每5次移動才輸出一次
                 print(f"📏 調整大小中 - 把手 {self.handle_index}, delta: ({delta.x():.1f}, {delta.y():.1f})")
-            
+
             # 在場景坐標中處理
             self._resizeParentNode(delta)
             event.accept()
         else:
             super().mouseMoveEvent(event)
-    
+
     def mouseReleaseEvent(self, event):
         """滑鼠釋放事件"""
         if event.button() == Qt.LeftButton and self.resizing:
+            # 記錄調整大小的命令
+            current_rect = self.parent_node.rect()
+            if (current_rect != self.initial_rect):
+                resize_command = ResizeNodeCommand(self.parent_node, self.initial_rect, current_rect)
+                self.parent_node.editor.executeCommand(resize_command)
+
             self.resizing = False
             self._is_hovered = False  # 重設懸停狀態
-            
+
             # 恢復編輯器狀態
             if hasattr(self.parent_node.editor, 'state'):
                 self.parent_node.editor.state = EditorState.IDLE
-            
+
             # 最終更新連接的邊（批量執行）
             if hasattr(self.parent_node, '_edges_need_update') and self.parent_node._edges_need_update:
                 for edge in self.parent_node.edges:
                     edge.updatePath()
                 self.parent_node._edges_need_update = False
-            
+
             event.accept()
         else:
             super().mouseReleaseEvent(event)
-    
+
     def _resizeParentNode(self, delta):
         """調整父節點大小 - yEd 風格：保持中心點固定，平滑調整"""
         rect = self.initial_rect
         node_pos = self.initial_pos
-        
+
         # 計算原始中心點（在場景座標中）
         original_center = QPointF(
             node_pos.x() + rect.center().x(),
             node_pos.y() + rect.center().y()
         )
-        
+
         # 計算新的寬度和高度變化
         width_delta = 0
         height_delta = 0
-        
+
         # 根據把手位置計算尺寸變化
         if self.handle_index == 0:  # 左上
             width_delta = -delta.x() * 2  # 左邊拉動，影響總寬度
@@ -350,106 +391,106 @@ class ResizeHandle(QGraphicsRectItem):
             height_delta = delta.y() * 2  # 下邊拉動，影響總高度
         elif self.handle_index == 7:  # 左中
             width_delta = -delta.x() * 2  # 左邊拉動，影響總寬度
-        
+
         # 計算新尺寸
         new_width = max(rect.width() + width_delta, self.MIN_NODE_SIZE)
         new_height = max(rect.height() + height_delta, self.MIN_NODE_SIZE)
-        
+
         # 創建以(0,0)為左上角的新矩形
         new_rect = QRectF(0, 0, new_width, new_height)
-        
+
         # 計算新的位置，確保中心點保持不變
         new_pos = QPointF(
             original_center.x() - new_rect.center().x(),
             original_center.y() - new_rect.center().y()
         )
-        
+
         # 批量更新：僅在真正需要時呼叫 prepareGeometryChange
         current_rect = self.parent_node.rect()
         current_pos = self.parent_node.pos()
-        
+
         # 檢查是否有實際變化（避免不必要的重繪）
-        if (abs(current_rect.width() - new_width) > 1 or 
-            abs(current_rect.height() - new_height) > 1 or
-            abs(current_pos.x() - new_pos.x()) > 1 or
-            abs(current_pos.y() - new_pos.y()) > 1):
-            
+        if (abs(current_rect.width() - new_width) > 1 or
+                abs(current_rect.height() - new_height) > 1 or
+                abs(current_pos.x() - new_pos.x()) > 1 or
+                abs(current_pos.y() - new_pos.y()) > 1):
+
             # 使用 setFlag 暫時停用 ItemSendsGeometryChanges 來避免多次重繪
             old_flags = self.parent_node.flags()
             self.parent_node.setFlag(QGraphicsItem.ItemSendsGeometryChanges, False)
-            
+
             # 更新幾何形狀
             self.parent_node.prepareGeometryChange()
             self.parent_node.setRect(new_rect)
             self.parent_node.setPos(new_pos)
-            
+
             # 恢復旗標
             self.parent_node.setFlags(old_flags)
-            
+
             # 批量更新把手位置（不觸發個別重繪）
             self.parent_node._updateHandlesPositionQuiet()
-        
+
         # 標記需要更新連線（但不立即更新，避免頻繁重繪）
         self.parent_node._edges_need_update = True
 
 
 class CanvasView(QGraphicsView):
     """提供縮放與平移功能的畫布視圖 - 效能優化版"""
-    
+
     def __init__(self, scene: QGraphicsScene) -> None:
         super().__init__(scene)
-        
+
         # 效能優化設定
         self.setRenderHint(QPainter.Antialiasing, True)
         self.setRenderHint(QPainter.TextAntialiasing, True)
         self.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        
+
         # 使用 OpenGL 加速（如果可用）
         try:
             from PyQt5.QtWidgets import QOpenGLWidget
             self.setViewport(QOpenGLWidget())
         except ImportError:
             pass
-        
+
         # 設定更新模式為最小區域更新
         self.setViewportUpdateMode(QGraphicsView.MinimalViewportUpdate)
-        
+
         # 設定拖拽模式
         self.setDragMode(QGraphicsView.NoDrag)
-        
+
         # 平移相關
         self._panning = False
         self._panStart = QPointF()
-        
+
         # 網格設定
         self.showGrid = True
         self.gridSize = 20
         self.snapToGrid = True
         self.snapDistance = 8
-        
+
         # 對齊輔助線
         self.alignmentLines = []
         self.showAlignmentLines = True
-        
+
         # 橡皮筋框選
         self._rubberBand = None
         self._rubberBandStart = QPointF()
         self._selecting = False
-        
+
         # 緩存背景
         self._backgroundCache = None
         self._cacheValid = False
-    
+
     def setGridVisible(self, visible: bool) -> None:
         """設定網格可見性"""
         self.showGrid = visible
         self._cacheValid = False
         self.viewport().update()
-    
+
     def setSnapToGrid(self, snap: bool) -> None:
         """設定是否對齊網格"""
         self.snapToGrid = snap
-    
+
     def snapPointToGrid(self, point: QPointF) -> QPointF:
         """將點對齊到網格"""
         if not self.snapToGrid:
@@ -457,45 +498,45 @@ class CanvasView(QGraphicsView):
         x = round(point.x() / self.gridSize) * self.gridSize
         y = round(point.y() / self.gridSize) * self.gridSize
         return QPointF(x, y)
-    
+
     def drawBackground(self, painter: QPainter, rect):
         """繪製背景與網格 - 使用緩存優化"""
         # 繪製白色背景
         painter.fillRect(rect, QColor(255, 255, 255))
-        
+
         if not self.showGrid:
             return
-        
+
         # 簡化網格繪製 - 使用黑色網格線
         painter.setPen(QPen(QColor(200, 200, 200), 1, Qt.SolidLine))
-        
+
         left = int(rect.left()) - (int(rect.left()) % self.gridSize)
         top = int(rect.top()) - (int(rect.top()) % self.gridSize)
-        
+
         lines = []
-        
+
         # 收集所有線條
         x = left
         while x < rect.right():
             lines.append(QPointF(x, rect.top()))
             lines.append(QPointF(x, rect.bottom()))
             x += self.gridSize
-        
+
         y = top
         while y < rect.bottom():
             lines.append(QPointF(rect.left(), y))
             lines.append(QPointF(rect.right(), y))
             y += self.gridSize
-        
+
         # 批量繪製
         if lines:
             painter.drawLines(lines)
-    
+
     def wheelEvent(self, event):
         """滾輪縮放"""
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
         self.scale(factor, factor)
-    
+
     def mousePressEvent(self, event):
         """滑鼠按下事件 - 支援橡皮筋框選"""
         if event.button() == Qt.MiddleButton:
@@ -503,33 +544,33 @@ class CanvasView(QGraphicsView):
             self._panStart = QPointF(event.pos())
             self.setCursor(Qt.ClosedHandCursor)
             event.accept()
-            
+
         elif event.button() == Qt.LeftButton:
             # 檢查是否點擊在空白區域
             scene_pos = self.mapToScene(event.pos())
             item = self.scene().itemAt(scene_pos, self.transform())
-            
+
             # 只有點擊在真正的空白區域才開始橡皮筋框選
             # ResizeHandle 不應該被視為空白區域
             if not item:
                 # 清除選取（除非按住 Ctrl/Shift）
                 if not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
                     self.scene().clearSelection()
-                
+
                 # 開始框選
                 self._selecting = True
                 self._rubberBandStart = scene_pos
-                
+
                 if not self._rubberBand:
                     self._rubberBand = QRubberBand(QRubberBand.Rectangle, self)
-                
+
                 self._rubberBand.setGeometry(event.pos().x(), event.pos().y(), 0, 0)
                 self._rubberBand.show()
                 event.accept()
                 return
-            
+
         super().mousePressEvent(event)
-    
+
     def mouseMoveEvent(self, event):
         """滑鼠移動事件"""
         if self._panning:
@@ -542,66 +583,66 @@ class CanvasView(QGraphicsView):
                 self.verticalScrollBar().value() - int(delta.y())
             )
             event.accept()
-            
+
         elif self._selecting and self._rubberBand:
             # 更新橡皮筋框選區域
             start_view = self.mapFromScene(self._rubberBandStart)
             current = event.pos()
-            
+
             # 計算矩形
             x = min(start_view.x(), current.x())
             y = min(start_view.y(), current.y())
             w = abs(current.x() - start_view.x())
             h = abs(current.y() - start_view.y())
-            
+
             self._rubberBand.setGeometry(x, y, w, h)
             event.accept()
-            
+
         else:
             super().mouseMoveEvent(event)
-    
+
     def mouseReleaseEvent(self, event):
         """滑鼠釋放事件"""
         if event.button() == Qt.MiddleButton:
             self._panning = False
             self.setCursor(Qt.ArrowCursor)
             event.accept()
-            
+
         elif event.button() == Qt.LeftButton and self._selecting:
             # 完成框選
             if self._rubberBand:
                 # 計算選取區域
                 end_pos = self.mapToScene(event.pos())
                 selection_rect = QRectF(self._rubberBandStart, end_pos).normalized()
-                
+
                 # 選取框內的所有節點
                 for item in self.scene().items(selection_rect, Qt.IntersectsItemShape):
                     if isinstance(item, TaskNode):
                         item.setSelected(True)
-                
+
                 self._rubberBand.hide()
                 self._selecting = False
             event.accept()
-            
+
         else:
             super().mouseReleaseEvent(event)
 
 
 class TaskNode(QGraphicsRectItem):
     """代表任務節點的圖形物件 - 完整修正版"""
-    
+
     DEFAULT_WIDTH = 120
     DEFAULT_HEIGHT = 60
-    
+
     def __init__(self, taskId: str, text: str, color: QColor, editor: 'DsmEditor') -> None:
-        super().__init__(-self.DEFAULT_WIDTH / 2, -self.DEFAULT_HEIGHT / 2, 
-                        self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
-        
+        super().__init__(-self.DEFAULT_WIDTH / 2, -self.DEFAULT_HEIGHT / 2,
+                         self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
+
         self.taskId = taskId
         self.text = text
         self.editor = editor
         self.edges: List[EdgeItem] = []
-        
+
         # 狀態管理
         self.isEditing = False
         self.isHovered = False
@@ -609,46 +650,46 @@ class TaskNode(QGraphicsRectItem):
         self.isConnecting = False
         self._is_highlighted = False
         self._canMove = False  # 只有選中的節點才能移動
-        
+
         # 連線檢測參數
         self.dragStartPos = QPointF()
         self.dragStartTime = 0
         self.connectionThreshold = 8  # 降低閾值，更容易觸發連線
-        
+
         # 選取把手
         self._selection_handles = []
         self._handles_visible = False
-        
+
         # yEd 風格顏色 - 高彩度亮黃色與選取時的溫和米黃色
         self.yedYellow = QColor(255, 255, 0)  # 高彩度亮黃色
         self.selectedYellow = QColor(255, 245, 160)  # 選取時的溫和米黃色（比原來亮一些）
-        
+
         self.normalBrush = QBrush(self.yedYellow)  # 未選取：高彩度亮黃色
         self.selectedBrush = QBrush(self.selectedYellow)  # 選取：溫和米黃色
         self.hoverBrush = QBrush(self.yedYellow.lighter(110))
         self.highlightBrush = QBrush(QColor(46, 204, 113))
-        
+
         self.normalPen = QPen(Qt.black, 1)
         self.selectedPen = QPen(Qt.black, 2)
         self.hoverPen = QPen(Qt.black, 1)
         self.highlightPen = QPen(QColor(46, 204, 113), 2, Qt.DashLine)
-        
+
         # 設定初始樣式
         self.setBrush(self.normalBrush)
         self.setPen(self.normalPen)
-        
+
         # 設定 Z 值
         self.setZValue(10)
-        
+
         # 設定互動旗標 - 初始不可移動
         self.setFlag(QGraphicsItem.ItemIsMovable, False)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setAcceptHoverEvents(True)
-        
+
         # 初始化選取把手
         self._createSelectionHandles()
-        
+
         # 自訂屬性
         self.customData = {
             "assignee": "",
@@ -656,19 +697,19 @@ class TaskNode(QGraphicsRectItem):
             "duration": 0,
             "priority": "Medium"
         }
-    
+
     def _createSelectionHandles(self) -> None:
         """建立 8 個選取把手"""
         for i in range(8):
             handle = ResizeHandle(self, i)
             handle.setVisible(False)
             self._selection_handles.append(handle)
-    
+
     def _updateHandlesPosition(self) -> None:
         """更新把手位置"""
         for handle in self._selection_handles:
             handle.updatePosition()
-    
+
     def _updateHandlesPositionQuiet(self) -> None:
         """靜默更新把手位置（不觸發重繪事件）"""
         for handle in self._selection_handles:
@@ -677,17 +718,17 @@ class TaskNode(QGraphicsRectItem):
             handle.setFlag(QGraphicsItem.ItemSendsGeometryChanges, False)
             handle.updatePosition()
             handle.setFlags(old_flags)
-    
+
     def _updateHandlesVisibility(self, visible: bool) -> None:
         """更新選取把手的可見性"""
         self._handles_visible = visible
         for handle in self._selection_handles:
             handle.setVisible(visible)
-        
+
         # 根據選取狀態設定是否可移動
         self._canMove = visible
         self.setFlag(QGraphicsItem.ItemIsMovable, visible)
-    
+
     def itemChange(self, change, value):
         """處理項目變化"""
         if change == QGraphicsItem.ItemSelectedChange:
@@ -697,120 +738,205 @@ class TaskNode(QGraphicsRectItem):
             self.update()
             if self.scene():
                 self.scene().update(self.sceneBoundingRect())
-            
+
         elif change == QGraphicsItem.ItemPositionChange:
             # 位置變化 - 對齊網格
             if hasattr(self.editor, 'view') and self.editor.view.snapToGrid:
                 value = self.editor.view.snapPointToGrid(value)
-                
+
         elif change == QGraphicsItem.ItemPositionHasChanged:
             # 位置已變化 - 更新連線和把手
             self._updateHandlesPosition()
             for edge in self.edges:
                 edge.updatePath()
-                
+
         return super().itemChange(change, value)
-    
+
     def mousePressEvent(self, event):
-        """滑鼠按下事件 - 優化連線觸發"""
+        """滑鼠按下事件 - yEd 標準行為"""
         if event.button() == Qt.LeftButton:
             self.dragStartPos = event.scenePos()
+            self.initialPos = self.pos()  # 記錄初始位置用於撤銷
             self.dragStartTime = time.time()
-            
-            # 如果未選中，先選中節點
-            if not self.isSelected():
-                self.scene().clearSelection()
-                self.setSelected(True)
-                event.accept()
+            self.pressedInNode = True  # 標記按下時在節點內
+            self.leftNodeBounds = False  # 標記是否已離開節點邊界
+
+            # 檢查是否點擊在調整把手上
+            clicked_item = self.scene().itemAt(event.scenePos(), self.scene().views()[0].transform())
+            if isinstance(clicked_item, ResizeHandle):
+                # 點擊把手，讓把手處理
+                super().mousePressEvent(event)
                 return
-            
-            # 如果已選中，準備移動或連線
+
+            # 重置狀態
             self.isDragging = False
             self.isConnecting = False
-            
-        super().mousePressEvent(event)
-    
+
+            # 阻止預設的選取行為 - 不調用 super()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
     def mouseMoveEvent(self, event):
-        """滑鼠移動事件 - 快速檢測連線意圖"""
-        if event.buttons() & Qt.LeftButton:
+        """滑鼠移動事件 - yEd 標準行為"""
+        if event.buttons() & Qt.LeftButton and hasattr(self, 'pressedInNode'):
             current_pos = event.scenePos()
-            distance = (current_pos - self.dragStartPos).manhattanLength()
-            
-            # 快速檢測是否要建立連線
-            if not self.isDragging and not self.isConnecting:
-                if distance > self.connectionThreshold:
-                    # 檢查移動方向和速度來判斷意圖
-                    elapsed = time.time() - self.dragStartTime
-                    speed = distance / max(elapsed, 0.001)
-                    
-                    # 如果快速拖拽，視為連線意圖
-                    if speed > 500 or distance > 20:
-                        self.startConnectionMode()
-                        event.accept()
-                        return
-                    else:
-                        # 緩慢移動，視為拖拽
-                        self.isDragging = True
-            
+
+            # 檢查是否正在調整把手
+            if any(handle.resizing for handle in self._selection_handles if hasattr(handle, 'resizing')):
+                super().mouseMoveEvent(event)
+                return  # 把手調整中，讓把手處理
+
+            # 檢查滑鼠是否離開了節點邊界（擴大檢測範圍）
+            node_rect = self.sceneBoundingRect()
+            # 縮小檢測矩形，讓邊緣附近也能觸發連線
+            shrink_amount = 5  # 縮小5像素
+            detection_rect = node_rect.adjusted(shrink_amount, shrink_amount, -shrink_amount, -shrink_amount)
+
+            if not self.leftNodeBounds and not detection_rect.contains(current_pos):
+                # 第一次離開節點有效區域 - 立即觸發連線模式
+                self.leftNodeBounds = True
+                self.startConnectionMode()
+                print(f"觸發連線模式：滑鼠位置 ({current_pos.x():.1f}, {current_pos.y():.1f})")
+                event.accept()
+                return
+
             # 如果在連線模式，更新預覽
             if self.isConnecting:
                 if hasattr(self.editor.scene, 'updateTempConnection'):
                     self.editor.scene.updateTempConnection(current_pos)
                 event.accept()
                 return
-        
-        super().mouseMoveEvent(event)
-    
+
+            # 如果已選中且仍在節點內移動，準備拖動
+            if self.isSelected() and detection_rect.contains(current_pos):
+                distance = (current_pos - self.dragStartPos).manhattanLength()
+                if distance > 5:  # 小閾值避免抖動
+                    self.isDragging = True
+                    # 允許預設拖動行為
+                    super().mouseMoveEvent(event)
+                    return
+
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
     def mouseReleaseEvent(self, event):
-        """滑鼠釋放事件"""
-        if event.button() == Qt.LeftButton:
+        """滑鼠釋放事件 - yEd 標準行為"""
+        if event.button() == Qt.LeftButton and hasattr(self, 'pressedInNode'):
+            current_pos = event.scenePos()
+
             if self.isConnecting:
-                # 完成連線
-                item = self.scene().itemAt(event.scenePos(), self.scene().views()[0].transform())
+                # 在連線模式中放開
+                item = self.scene().itemAt(current_pos, self.scene().views()[0].transform())
                 if isinstance(item, TaskNode) and item != self:
-                    self.editor.scene.finishConnection(item)
+                    # 完成連線
+                    if hasattr(self.editor.scene, 'finishConnection'):
+                        self.editor.scene.finishConnection(item)
                 else:
-                    self.editor.scene.cancelConnectionMode()
-            
+                    # 在空白處放開 - 轉為兩階段連線模式
+                    if hasattr(self.editor.scene, 'enterSecondPhaseConnection'):
+                        self.editor.scene.enterSecondPhaseConnection(current_pos)
+                    else:
+                        # 如果沒有兩階段模式，就取消連線
+                        if hasattr(self.editor.scene, 'cancelConnectionMode'):
+                            self.editor.scene.cancelConnectionMode()
+                        self.stopConnectionMode()
+
+            elif not self.leftNodeBounds:
+                # 在節點上按下並在節點上放開 - 進入選取模式
+                node_rect = self.sceneBoundingRect()
+                if node_rect.contains(current_pos):
+                    if not self.isSelected():
+                        self.scene().clearSelection()
+                        self.setSelected(True)
+                        self.updateVisualState()  # 顯示把手
+                    event.accept()
+
+            # 檢查是否有移動並記錄撤銷命令
+            if hasattr(self, 'initialPos') and self.isDragging:
+                final_pos = self.pos()
+                if (final_pos - self.initialPos).manhattanLength() > 2:  # 只有移動距離超過2像素才記錄
+                    move_command = MoveNodeCommand(self, self.initialPos, final_pos)
+                    self.editor.executeCommand(move_command)
+
+            # 重置狀態
             self.isDragging = False
-            self.isConnecting = False
-        
+            if not hasattr(self.editor.scene, 'enterSecondPhaseConnection') or not self.isConnecting:
+                self.isConnecting = False
+            delattr(self, 'pressedInNode')
+            if hasattr(self, 'leftNodeBounds'):
+                delattr(self, 'leftNodeBounds')
+
         super().mouseReleaseEvent(event)
-    
+
     def startConnectionMode(self) -> None:
-        """開始連線模式"""
+        """開始連線模式 - 增強視覺回饋"""
         self.isConnecting = True
         self.setCursor(Qt.CrossCursor)
-        
-        # 設定節點為不可移動
+
+        # 設定節點為不可移動（連線期間）
         self.setFlag(QGraphicsItem.ItemIsMovable, False)
-        
-        # 視覺回饋
-        self.updateVisualState()
-        
-        # 通知場景
+
+        # 增強視覺回饋 - 邊框高亮
+        self.setPen(QPen(QColor(255, 100, 100), 3, Qt.SolidLine))  # 紅色高亮邊框
+
+        # 隱藏調整把手，避免干擾連線操作
+        for handle in self._selection_handles:
+            handle.setVisible(False)
+
+        # 添加連線提示效果（可選）
+        self.setOpacity(0.8)  # 半透明效果表示連線模式
+
+        # 通知場景開始連線
         if hasattr(self.editor, 'scene'):
             self.editor.scene.startConnectionMode(self)
-    
+
+        # 在狀態欄或控制台顯示提示
+        print(f"連線模式：從節點 '{self.text}' 拖拽到目標節點")
+
+    def stopConnectionMode(self) -> None:
+        """結束連線模式 - 恢復正常狀態"""
+        self.isConnecting = False
+        self.setCursor(Qt.ArrowCursor)
+
+        # 恢復節點可移動
+        self.setFlag(QGraphicsItem.ItemIsMovable, True)
+
+        # 恢復正常視覺狀態
+        self.setOpacity(1.0)  # 恢復不透明
+
+        # 如果仍然選中，顯示調整把手
+        if self.isSelected():
+            for handle in self._selection_handles:
+                handle.setVisible(True)
+            # 恢復選中狀態的邊框
+            self.setPen(self.selectedPen)
+        else:
+            # 恢復正常邊框
+            self.setPen(self.normalPen)
+
+        print("連線模式已結束")
+
     def hoverEnterEvent(self, event):
         """滑鼠懸停進入"""
         self.isHovered = True
         self.updateVisualState()
         self.setCursor(Qt.SizeAllCursor)
         super().hoverEnterEvent(event)
-    
+
     def hoverLeaveEvent(self, event):
         """滑鼠懸停離開"""
         self.isHovered = False
         self.updateVisualState()
         self.setCursor(Qt.ArrowCursor)
         super().hoverLeaveEvent(event)
-    
+
     def set_highlight(self, highlighted: bool) -> None:
         """設定高亮狀態"""
         self._is_highlighted = highlighted
         self.updateVisualState()
-    
+
     def _updateSelectionState(self, is_selected: bool) -> None:
         """同步更新選取狀態的所有視覺效果"""
         if is_selected:
@@ -830,7 +956,7 @@ class TaskNode(QGraphicsRectItem):
             else:
                 self.setBrush(self.normalBrush)
                 self.setPen(self.normalPen)
-    
+
     def updateVisualState(self) -> None:
         """更新視覺狀態 - 立即反應選取狀態變化"""
         if self._is_highlighted:
@@ -845,13 +971,13 @@ class TaskNode(QGraphicsRectItem):
         else:
             self.setBrush(self.normalBrush)
             self.setPen(self.normalPen)
-        
+
         # 立即強制重繪以確保快速反應
         self.update()
         # 強制場景也立即更新
         if self.scene():
             self.scene().update(self.sceneBoundingRect())
-    
+
     def paint(self, painter, option, widget=None):
         """繪製節點"""
         # 避免預設的選取框
@@ -859,12 +985,12 @@ class TaskNode(QGraphicsRectItem):
         opt = QStyleOptionGraphicsItem(option)
         if opt.state & QStyle.State_Selected:
             opt.state &= ~QStyle.State_Selected
-        
+
         # 繪製節點
         painter.setBrush(self.brush())
         painter.setPen(self.pen())
         painter.drawRect(self.rect())
-        
+
         # 繪製文字
         font = QFont()
         font.setPointSize(9)
@@ -872,21 +998,21 @@ class TaskNode(QGraphicsRectItem):
         painter.setFont(font)
         painter.setPen(QPen(Qt.black))
         painter.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap, self.text)
-    
+
     def contextMenuEvent(self, event):
         """右鍵選單"""
         menu = QMenu()
-        
+
         editAction = menu.addAction("編輯標籤")
         editAction.triggered.connect(self.startTextEdit)
-        
+
         menu.addSeparator()
-        
+
         deleteAction = menu.addAction("刪除節點")
         deleteAction.triggered.connect(self.deleteNode)
-        
+
         menu.exec_(event.screenPos())
-    
+
     def startTextEdit(self):
         """開始編輯文字"""
         from PyQt5.QtWidgets import QInputDialog
@@ -894,49 +1020,49 @@ class TaskNode(QGraphicsRectItem):
         if ok:
             self.text = text
             self.update()
-    
+
     def deleteNode(self):
         """刪除節點"""
         edges_to_remove = self.edges.copy()
         for edge in edges_to_remove:
             self.editor.removeEdge(edge)
-        
+
         self.scene().removeItem(self)
         del self.editor.nodes[self.taskId]
 
 
 class EdgeItem(QGraphicsPathItem):
     """代表依賴關係的箭頭連線 - 效能優化版"""
-    
+
     def __init__(self, src: TaskNode, dst: TaskNode) -> None:
         super().__init__()
         self.src = src
         self.dst = dst
         self.label = ""
         self.isTemporary = False
-        
+
         # 樣式設定
         self.normalPen = QPen(Qt.black, 2, Qt.SolidLine)
         self.hoverPen = QPen(Qt.black, 3, Qt.SolidLine)
         self.selectedPen = QPen(Qt.blue, 3, Qt.SolidLine)
         self.tempPen = QPen(Qt.gray, 2, Qt.DashLine)
-        
+
         self.setPen(self.normalPen)
         self.setZValue(1)
-        
+
         # 設定旗標
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setAcceptHoverEvents(True)
-        
+
         # 建立箭頭
         self.arrowHead = QGraphicsPathItem()
         self.arrowHead.setBrush(QBrush(Qt.black))
         self.arrowHead.setPen(QPen(Qt.black, 1))
         self.arrowHead.setZValue(2)
         self.arrowHead.setParentItem(self)
-        
+
         self.updatePath()
-    
+
     def setTemporary(self, temporary: bool) -> None:
         """設定是否為臨時連線"""
         self.isTemporary = temporary
@@ -946,49 +1072,49 @@ class EdgeItem(QGraphicsPathItem):
         else:
             self.setPen(self.normalPen)
             self.arrowHead.setBrush(QBrush(Qt.black))
-    
+
     def updatePath(self) -> None:
         """更新路徑 - 效能優化版"""
         if not self.src or not self.dst:
             return
-        
+
         # 使用快取的邊界矩形
         srcRect = self.src.sceneBoundingRect()
         dstRect = self.dst.sceneBoundingRect()
-        
+
         srcCenter = srcRect.center()
         dstCenter = dstRect.center()
-        
+
         # 計算方向
         dx = dstCenter.x() - srcCenter.x()
         dy = dstCenter.y() - srcCenter.y()
         length = math.sqrt(dx * dx + dy * dy)
-        
+
         if length < 1:
             return
-        
+
         # 正規化
         dx /= length
         dy /= length
-        
+
         # 計算連接點
         srcPos = self.getConnectionPoint(srcRect, srcCenter, dx, dy)
         dstPos = self.getConnectionPoint(dstRect, dstCenter, -dx, -dy)
-        
+
         # 建立路徑
         path = QPainterPath()
         path.moveTo(srcPos)
         path.lineTo(dstPos)
         self.setPath(path)
-        
+
         # 更新箭頭
         self.updateArrowHead(srcPos, dstPos)
-    
+
     def getConnectionPoint(self, rect, center, dx, dy):
         """計算與矩形邊界的交點"""
         halfWidth = rect.width() / 2
         halfHeight = rect.height() / 2
-        
+
         if abs(dx) > abs(dy):
             if dx > 0:
                 x = center.x() + halfWidth
@@ -1003,27 +1129,27 @@ class EdgeItem(QGraphicsPathItem):
             else:
                 y = center.y() - halfHeight
                 x = center.x() - dx * halfHeight / abs(dy)
-        
+
         return QPointF(x, y)
-    
+
     def updateArrowHead(self, srcPos, dstPos):
         """更新箭頭"""
         dx = dstPos.x() - srcPos.x()
         dy = dstPos.y() - srcPos.y()
         length = math.sqrt(dx * dx + dy * dy)
-        
+
         if length < 1:
             return
-        
+
         dx /= length
         dy /= length
-        
+
         arrowSize = 15
         arrowAngle = math.pi / 6
-        
+
         tip = dstPos
         angle = math.atan2(dy, dx)
-        
+
         left = QPointF(
             tip.x() - arrowSize * math.cos(angle - arrowAngle),
             tip.y() - arrowSize * math.sin(angle - arrowAngle)
@@ -1032,21 +1158,21 @@ class EdgeItem(QGraphicsPathItem):
             tip.x() - arrowSize * math.cos(angle + arrowAngle),
             tip.y() - arrowSize * math.sin(angle + arrowAngle)
         )
-        
+
         arrowPath = QPainterPath()
         arrowPath.moveTo(tip)
         arrowPath.lineTo(left)
         arrowPath.lineTo(right)
         arrowPath.closeSubpath()
-        
+
         self.arrowHead.setPath(arrowPath)
-    
+
     def hoverEnterEvent(self, event):
         """滑鼠懸停進入"""
         if not self.isTemporary:
             self.setPen(self.hoverPen)
         super().hoverEnterEvent(event)
-    
+
     def hoverLeaveEvent(self, event):
         """滑鼠懸停離開"""
         if not self.isTemporary:
@@ -1055,19 +1181,19 @@ class EdgeItem(QGraphicsPathItem):
             else:
                 self.setPen(self.normalPen)
         super().hoverLeaveEvent(event)
-    
+
     def contextMenuEvent(self, event):
         """右鍵選單"""
         if self.isTemporary:
             return
-        
+
         menu = QMenu()
-        
+
         deleteAction = menu.addAction("刪除依賴")
         deleteAction.triggered.connect(self.deleteEdge)
-        
+
         menu.exec_(event.screenPos())
-    
+
     def deleteEdge(self):
         """刪除邊"""
         if not self.isTemporary and self.src and self.dst:
@@ -1081,7 +1207,7 @@ class EdgeItem(QGraphicsPathItem):
                     parent = parent.parent()
                 if editor:
                     break
-            
+
             if editor:
                 command = RemoveEdgeCommand(editor, self)
                 editor.executeCommand(command)
@@ -1089,110 +1215,214 @@ class EdgeItem(QGraphicsPathItem):
 
 class DsmScene(QGraphicsScene):
     """支援連線操作的場景 - 優化版"""
-    
+
     def __init__(self, editor: 'DsmEditor') -> None:
         super().__init__()
         self.editor = editor
-        
+
         # 狀態管理
         self.connectionMode = False
         self.sourceNode = None
         self.tempEdge = None
         self.last_hovered_target = None
-    
+
+        # 兩階段連線模式
+        self.secondPhase = False
+        self.fixedPoint = None
+
     def startConnectionMode(self, sourceNode: TaskNode) -> None:
         """開始連線模式"""
         self.connectionMode = True
         self.sourceNode = sourceNode
-        
+
         # 建立臨時邊
         self.tempEdge = EdgeItem(sourceNode, sourceNode)
         self.tempEdge.setTemporary(True)
         self.addItem(self.tempEdge)
-        
+
         # 設定游標
         for view in self.views():
             view.setCursor(Qt.CrossCursor)
-        
+
         # 視覺回饋
         sourceNode.updateVisualState()
-    
+
     def updateTempConnection(self, mousePos: QPointF) -> None:
-        """更新臨時連線"""
+        """更新臨時連線 - 支援兩階段模式"""
         if not self.tempEdge or not self.sourceNode:
             return
-        
-        # 更新路徑
-        srcRect = self.sourceNode.sceneBoundingRect()
-        srcCenter = srcRect.center()
-        
-        dx = mousePos.x() - srcCenter.x()
-        dy = mousePos.y() - srcCenter.y()
-        length = math.sqrt(dx * dx + dy * dy)
-        
-        if length > 1:
-            dx /= length
-            dy /= length
-            
-            srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
-            
+
+        # 檢查是否在兩階段模式
+        if hasattr(self, 'secondPhase') and self.secondPhase:
+            # 第二階段：從固定點到滑鼠位置
             path = QPainterPath()
-            path.moveTo(srcPos)
+            path.moveTo(self.fixedPoint)
             path.lineTo(mousePos)
             self.tempEdge.setPath(path)
-            
+
             if hasattr(self.tempEdge, 'updateArrowHead'):
-                self.tempEdge.updateArrowHead(srcPos, mousePos)
-        
-        # 高亮目標節點
+                self.tempEdge.updateArrowHead(self.fixedPoint, mousePos)
+        else:
+            # 非目標節點區域 - 線條直接指向滑鼠位置
+            if hasattr(self, 'secondPhase') and self.secondPhase:
+                # 第二階段：從固定點到滑鼠位置
+                path = QPainterPath()
+                path.moveTo(self.fixedPoint)
+                path.lineTo(mousePos)
+                self.tempEdge.setPath(path)
+
+                if hasattr(self.tempEdge, 'updateArrowHead'):
+                    self.tempEdge.updateArrowHead(self.fixedPoint, mousePos)
+            else:
+                # 第一階段：從源節點到滑鼠位置
+                srcRect = self.sourceNode.sceneBoundingRect()
+                srcCenter = srcRect.center()
+
+                dx = mousePos.x() - srcCenter.x()
+                dy = mousePos.y() - srcCenter.y()
+                length = math.sqrt(dx * dx + dy * dy)
+
+                if length > 1:
+                    dx /= length
+                    dy /= length
+
+                    srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
+
+                    path = QPainterPath()
+                    path.moveTo(srcPos)
+                    path.lineTo(mousePos)
+                    self.tempEdge.setPath(path)
+
+                    if hasattr(self.tempEdge, 'updateArrowHead'):
+                        self.tempEdge.updateArrowHead(srcPos, mousePos)
+
+        # 高亮目標節點並調整箭頭位置
         targetItem = self.itemAt(mousePos, self.views()[0].transform())
-        
+
         if self.last_hovered_target and self.last_hovered_target != targetItem:
             self.last_hovered_target.set_highlight(False)
             self.last_hovered_target = None
-        
+
         if isinstance(targetItem, TaskNode) and targetItem != self.sourceNode:
             targetItem.set_highlight(True)
             self.last_hovered_target = targetItem
-    
+
+            # 當鼠標在目標節點上時，調整箭頭位置到節點邊緣
+            targetRect = targetItem.sceneBoundingRect()
+            targetCenter = targetRect.center()
+
+            if hasattr(self, 'secondPhase') and self.secondPhase:
+                # 第二階段：從固定點到目標節點邊緣
+                dx = targetCenter.x() - self.fixedPoint.x()
+                dy = targetCenter.y() - self.fixedPoint.y()
+                length = math.sqrt(dx * dx + dy * dy)
+
+                if length > 1:
+                    dx /= length
+                    dy /= length
+                    targetPos = self.tempEdge.getConnectionPoint(targetRect, targetCenter, -dx, -dy)
+
+                    path = QPainterPath()
+                    path.moveTo(self.fixedPoint)
+                    path.lineTo(targetPos)
+                    self.tempEdge.setPath(path)
+
+                    if hasattr(self.tempEdge, 'updateArrowHead'):
+                        self.tempEdge.updateArrowHead(self.fixedPoint, targetPos)
+            else:
+                # 第一階段：從源節點到目標節點邊緣
+                srcRect = self.sourceNode.sceneBoundingRect()
+                srcCenter = srcRect.center()
+
+                dx = targetCenter.x() - srcCenter.x()
+                dy = targetCenter.y() - srcCenter.y()
+                length = math.sqrt(dx * dx + dy * dy)
+
+                if length > 1:
+                    dx /= length
+                    dy /= length
+
+                    srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
+                    targetPos = self.tempEdge.getConnectionPoint(targetRect, targetCenter, -dx, -dy)
+
+                    path = QPainterPath()
+                    path.moveTo(srcPos)
+                    path.lineTo(targetPos)
+                    self.tempEdge.setPath(path)
+
+                    if hasattr(self.tempEdge, 'updateArrowHead'):
+                        self.tempEdge.updateArrowHead(srcPos, targetPos)
+
     def finishConnection(self, targetNode: TaskNode) -> None:
         """完成連線"""
         if not self.connectionMode or not self.sourceNode or targetNode == self.sourceNode:
             self.cancelConnectionMode()
             return
-        
+
         # 檢查是否已存在連線
         if (self.sourceNode.taskId, targetNode.taskId) not in self.editor.edges:
             self.editor.addDependency(self.sourceNode, targetNode)
-        
+
         self.cancelConnectionMode()
-    
+
     def cancelConnectionMode(self) -> None:
         """取消連線模式"""
         # 清理高亮
         if self.last_hovered_target:
             self.last_hovered_target.set_highlight(False)
             self.last_hovered_target = None
-        
+
         # 移除臨時邊
         if self.tempEdge:
             self.removeItem(self.tempEdge)
             self.tempEdge = None
-        
+
         # 重設狀態
         self.connectionMode = False
-        
+        self.secondPhase = False
+        self.fixedPoint = None
+
         # 恢復源節點狀態
         if self.sourceNode:
-            self.sourceNode.isConnecting = False
-            self.sourceNode.setFlag(QGraphicsItem.ItemIsMovable, self.sourceNode.isSelected())
-            self.sourceNode.updateVisualState()
+            self.sourceNode.stopConnectionMode()  # 使用新的方法來恢復狀態
             self.sourceNode = None
-        
+
         # 恢復游標
         for view in self.views():
             view.setCursor(Qt.ArrowCursor)
-    
+
+    def enterSecondPhaseConnection(self, fixedPoint):
+        """進入兩階段連線模式 - yEd 標準行為"""
+        if not self.connectionMode or not self.tempEdge:
+            return
+
+        # 記錄固定點
+        self.fixedPoint = fixedPoint
+        self.secondPhase = True
+
+        # 更新臨時邊，從源節點到固定點
+        srcRect = self.sourceNode.sceneBoundingRect()
+        srcCenter = srcRect.center()
+
+        dx = fixedPoint.x() - srcCenter.x()
+        dy = fixedPoint.y() - srcCenter.y()
+        length = math.sqrt(dx * dx + dy * dy)
+
+        if length > 1:
+            dx /= length
+            dy /= length
+            srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
+
+            path = QPainterPath()
+            path.moveTo(srcPos)
+            path.lineTo(fixedPoint)
+            self.tempEdge.setPath(path)
+
+            if hasattr(self.tempEdge, 'updateArrowHead'):
+                self.tempEdge.updateArrowHead(srcPos, fixedPoint)
+
+        print(f"進入兩階段連線模式，固定點：({fixedPoint.x():.1f}, {fixedPoint.y():.1f})")
+
     def mouseMoveEvent(self, event):
         """場景滑鼠移動事件"""
         if self.connectionMode and self.tempEdge:
@@ -1200,14 +1430,19 @@ class DsmScene(QGraphicsScene):
             event.accept()
         else:
             super().mouseMoveEvent(event)
-    
+
     def mouseReleaseEvent(self, event):
-        """場景滑鼠釋放事件"""
+        """場景滑鼠釋放事件 - yEd 風格行為"""
         if self.connectionMode:
             target = self.itemAt(event.scenePos(), self.views()[0].transform())
             if isinstance(target, TaskNode) and target != self.sourceNode:
+                # 連線到節點
                 self.finishConnection(target)
+            elif not hasattr(self, 'secondPhase') or not self.secondPhase:
+                # 第一次在畫布上放開 - 建立固定點進入第二階段
+                self.enterSecondPhaseConnection(event.scenePos())
             else:
+                # 第二階段在畫布上放開 - 取消連線
                 self.cancelConnectionMode()
             event.accept()
         else:
@@ -1216,12 +1451,12 @@ class DsmScene(QGraphicsScene):
 
 class DsmEditor(QDialog):
     """視覺化 DSM 編輯器 - 主視窗"""
-    
+
     def __init__(self, wbsDf: pd.DataFrame, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("依賴關係編輯器")
         self.resize(1200, 800)
-        
+
         # 設定視窗標誌
         self.setWindowFlags(
             Qt.Window |
@@ -1231,79 +1466,79 @@ class DsmEditor(QDialog):
             Qt.WindowMaximizeButtonHint |
             Qt.WindowCloseButtonHint
         )
-        
+
         # 初始化狀態
         self.state = EditorState.IDLE
         self.commandHistory: List[Command] = []
         self.commandIndex = -1
-        
+
         self.nodes: Dict[str, TaskNode] = {}
         self.edges: Set[tuple[str, str]] = set()
-        
+
         self.setupUI()
         self.loadWbs(wbsDf)
-    
+
     def setupUI(self) -> None:
         """設定使用者介面"""
         layout = QVBoxLayout(self)
-        
+
         # 選單列
         menuBar = QMenuBar(self)
         layout.setMenuBar(menuBar)
-        
+
         # 檔案選單
         fileMenu = menuBar.addMenu("檔案(&F)")
-        
+
         exportAction = QAction("匯出 DSM(&E)...", self)
         exportAction.setShortcut(QKeySequence.SaveAs)
         exportAction.triggered.connect(self.exportDsm)
         fileMenu.addAction(exportAction)
-        
+
         # 編輯選單
         editMenu = menuBar.addMenu("編輯(&E)")
-        
+
         self.undoAction = QAction("撤銷(&U)", self)
         self.undoAction.setShortcut(QKeySequence.Undo)
         self.undoAction.triggered.connect(self.undo)
         self.undoAction.setEnabled(False)
         editMenu.addAction(self.undoAction)
-        
+
         self.redoAction = QAction("重做(&R)", self)
         self.redoAction.setShortcut(QKeySequence.Redo)
         self.redoAction.triggered.connect(self.redo)
         self.redoAction.setEnabled(False)
         editMenu.addAction(self.redoAction)
-        
+
         # 佈局選單
         layoutMenu = menuBar.addMenu("佈局(&L)")
-        
+
         hierarchicalAction = QAction("階層式佈局(&H)", self)
         hierarchicalAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.HIERARCHICAL))
         layoutMenu.addAction(hierarchicalAction)
-        
+
         orthogonalAction = QAction("正交式佈局(&O)", self)
         orthogonalAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.ORTHOGONAL))
         layoutMenu.addAction(orthogonalAction)
-        
+
         forceAction = QAction("力導向佈局(&F)", self)
         forceAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.FORCE_DIRECTED))
         layoutMenu.addAction(forceAction)
-        
+
         # 檢視選單
         viewMenu = menuBar.addMenu("檢視(&V)")
-        
+
         self.gridAction = QAction("顯示網格(&G)", self)
         self.gridAction.setCheckable(True)
         self.gridAction.setChecked(True)
         self.gridAction.triggered.connect(self.toggleGrid)
         viewMenu.addAction(self.gridAction)
-        
+
         self.snapAction = QAction("對齊網格(&S)", self)
         self.snapAction.setCheckable(True)
         self.snapAction.setChecked(True)
         self.snapAction.triggered.connect(self.toggleSnapToGrid)
         viewMenu.addAction(self.snapAction)
-        
+
         # 建立場景和視圖
         self.scene = DsmScene(self)
         self.scene.setSceneRect(-5000, -5000, 10000, 10000)
@@ -1311,65 +1546,65 @@ class DsmEditor(QDialog):
         self.scene.setBackgroundBrush(QBrush(QColor(255, 255, 255)))
         self.view = CanvasView(self.scene)
         layout.addWidget(self.view)
-        
+
         # 工具列
         toolLayout = QHBoxLayout()
-        
+
         # 佈局按鈕群組
         layoutGroup = QGroupBox("自動佈局")
         layoutGroupLayout = QHBoxLayout(layoutGroup)
-        
+
         hierarchicalBtn = QPushButton("階層式")
         hierarchicalBtn.clicked.connect(lambda: self.applyLayout(LayoutAlgorithm.HIERARCHICAL))
         layoutGroupLayout.addWidget(hierarchicalBtn)
-        
+
         orthogonalBtn = QPushButton("正交式")
         orthogonalBtn.clicked.connect(lambda: self.applyLayout(LayoutAlgorithm.ORTHOGONAL))
         layoutGroupLayout.addWidget(orthogonalBtn)
-        
+
         forceBtn = QPushButton("力導向")
         forceBtn.clicked.connect(lambda: self.applyLayout(LayoutAlgorithm.FORCE_DIRECTED))
         layoutGroupLayout.addWidget(forceBtn)
-        
+
         toolLayout.addWidget(layoutGroup)
-        
+
         # 控制按鈕群組
         controlGroup = QGroupBox("控制")
         controlGroupLayout = QHBoxLayout(controlGroup)
-        
+
         exportBtn = QPushButton("匯出 DSM")
         exportBtn.clicked.connect(self.exportDsm)
         controlGroupLayout.addWidget(exportBtn)
-        
+
         toolLayout.addWidget(controlGroup)
         toolLayout.addStretch()
-        
+
         layout.addLayout(toolLayout)
-    
+
     def loadWbs(self, wbsDf: pd.DataFrame) -> None:
         """載入 WBS 資料"""
         if wbsDf.empty:
             return
-        
+
         yedYellow = QColor(255, 215, 0)
-        
+
         cols = 5
         for i, row in wbsDf.iterrows():
             taskId = str(row.get("Task ID", f"Task_{i}"))
             name = str(row.get("Name", "未命名任務"))
             prop = str(row.get("Property", ""))
-            
+
             if prop and prop != "nan":
                 text = f"[{prop}] {name}"
             else:
                 text = name
-            
+
             node = TaskNode(taskId, text, yedYellow, self)
             node.setPos((i % cols) * 180, (i // cols) * 120)
-            
+
             self.scene.addItem(node)
             self.nodes[taskId] = node
-    
+
     def executeCommand(self, command: Command) -> None:
         """執行命令並加入歷史記錄"""
         self.commandHistory = self.commandHistory[:self.commandIndex + 1]
@@ -1377,45 +1612,45 @@ class DsmEditor(QDialog):
         self.commandHistory.append(command)
         self.commandIndex += 1
         self.updateUndoRedoState()
-    
+
     def undo(self) -> None:
         """撤銷"""
         if self.commandIndex >= 0:
             self.commandHistory[self.commandIndex].undo()
             self.commandIndex -= 1
             self.updateUndoRedoState()
-    
+
     def redo(self) -> None:
         """重做"""
         if self.commandIndex < len(self.commandHistory) - 1:
             self.commandIndex += 1
             self.commandHistory[self.commandIndex].execute()
             self.updateUndoRedoState()
-    
+
     def updateUndoRedoState(self) -> None:
         """更新撤銷/重做按鈕狀態"""
         self.undoAction.setEnabled(self.commandIndex >= 0)
         self.redoAction.setEnabled(self.commandIndex < len(self.commandHistory) - 1)
-    
+
     def toggleGrid(self) -> None:
         """切換網格顯示"""
         self.view.setGridVisible(self.gridAction.isChecked())
-    
+
     def toggleSnapToGrid(self) -> None:
         """切換網格對齊"""
         self.view.setSnapToGrid(self.snapAction.isChecked())
-    
+
     def addDependency(self, src: TaskNode, dst: TaskNode) -> None:
         """新增依賴關係"""
         if (src.taskId, dst.taskId) not in self.edges:
             command = AddEdgeCommand(self, src, dst)
             self.executeCommand(command)
-    
+
     def removeEdge(self, edge: EdgeItem) -> None:
         """移除邊"""
         command = RemoveEdgeCommand(self, edge)
         self.executeCommand(command)
-    
+
     def applyLayout(self, algorithm: LayoutAlgorithm) -> None:
         """套用佈局演算法"""
         if algorithm == LayoutAlgorithm.HIERARCHICAL:
@@ -1424,7 +1659,7 @@ class DsmEditor(QDialog):
             self.applyOrthogonalLayout()
         elif algorithm == LayoutAlgorithm.FORCE_DIRECTED:
             self.applyForceDirectedLayout()
-    
+
     def applyHierarchicalLayout(self) -> None:
         """階層式佈局"""
         graph = nx.DiGraph()
@@ -1432,7 +1667,7 @@ class DsmEditor(QDialog):
             graph.add_node(taskId)
         for src, dst in self.edges:
             graph.add_edge(src, dst)
-        
+
         try:
             layers = {}
             for node in nx.topological_sort(graph):
@@ -1441,69 +1676,69 @@ class DsmEditor(QDialog):
                     layers[node] = 0
                 else:
                     layers[node] = max(layers[pred] for pred in predecessors) + 1
-            
+
             level_groups = {}
             for node, level in layers.items():
                 if level not in level_groups:
                     level_groups[level] = []
                 level_groups[level].append(node)
-            
+
             level_spacing = 200
             node_spacing = 150
-            
+
             for level, nodes in level_groups.items():
                 y = level * level_spacing
                 start_x = -(len(nodes) - 1) * node_spacing / 2
-                
+
                 for i, nodeId in enumerate(nodes):
                     x = start_x + i * node_spacing
                     if nodeId in self.nodes:
                         self.nodes[nodeId].setPos(x, y)
-        
+
         except nx.NetworkXError:
             self.applySimpleHierarchicalLayout()
-    
+
     def applySimpleHierarchicalLayout(self) -> None:
         """簡單階層式佈局"""
         nodes = list(self.nodes.values())
         level_spacing = 200
         node_spacing = 150
         nodes_per_level = 4
-        
+
         for i, node in enumerate(nodes):
             level = i // nodes_per_level
             pos_in_level = i % nodes_per_level
-            
+
             start_x = -(nodes_per_level - 1) * node_spacing / 2
             x = start_x + pos_in_level * node_spacing
             y = level * level_spacing
-            
+
             node.setPos(x, y)
-    
+
     def applyOrthogonalLayout(self) -> None:
         """正交式佈局"""
         nodes = list(self.nodes.values())
         if not nodes:
             return
-        
+
         node_count = len(nodes)
         cols = max(1, int(math.sqrt(node_count) * 1.5))
-        
+
         spacing_x = 180
         spacing_y = 120
-        
+
         total_width = (cols - 1) * spacing_x
         start_x = -total_width / 2
-        
+
         for i, node in enumerate(nodes):
             row = i // cols
             col = i % cols
-            
+
             x = start_x + col * spacing_x
             y = row * spacing_y
-            
+
             node.setPos(x, y)
-    
+
     def applyForceDirectedLayout(self) -> None:
         """力導向佈局"""
         graph = nx.Graph()
@@ -1511,10 +1746,10 @@ class DsmEditor(QDialog):
             graph.add_node(taskId)
         for src, dst in self.edges:
             graph.add_edge(src, dst)
-        
+
         if not graph.nodes():
             return
-        
+
         try:
             pos = nx.spring_layout(
                 graph,
@@ -1522,14 +1757,14 @@ class DsmEditor(QDialog):
                 iterations=100,
                 scale=300
             )
-            
+
             for nodeId, (x, y) in pos.items():
                 if nodeId in self.nodes:
                     self.nodes[nodeId].setPos(x, y)
-        
+
         except Exception:
             self.applyOrthogonalLayout()
-    
+
     def buildDsmMatrix(self) -> pd.DataFrame:
         """建立 DSM 矩陣"""
         taskIds = list(self.nodes.keys())
@@ -1537,7 +1772,7 @@ class DsmEditor(QDialog):
         for src, dst in self.edges:
             matrix.loc[dst, src] = 1
         return matrix
-    
+
     def exportDsm(self) -> None:
         """匯出 DSM"""
         path, _ = QFileDialog.getSaveFileName(self, "匯出 DSM", "", "CSV Files (*.csv)")
@@ -1547,7 +1782,7 @@ class DsmEditor(QDialog):
                 QMessageBox.information(self, "完成", f"已匯出 DSM：{path}")
             except OSError as e:
                 QMessageBox.critical(self, "錯誤", f"匯出失敗：{e}")
-    
+
     def keyPressEvent(self, event):
         """鍵盤事件處理"""
         if event.key() == Qt.Key_Escape:
