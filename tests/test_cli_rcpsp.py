@@ -17,9 +17,9 @@ def test_cli_rcpsp(tmp_path):
     dsm_path.write_text(dsm_data, encoding="utf-8")
 
     wbs_data = (
-        "Task ID,TRF,Te_newbie,Property,ResourceDemand\n"
-        "A,1,2,R1,1\n"
-        "B,1,3,R1,1\n"
+        "Task ID,TRF,Te_newbie,Property,ResourceDemand,Category\n"
+        "A,1,2,R1,1,X\n"
+        "B,1,3,R1,1,X\n"
     )
     wbs_path.write_text(wbs_data, encoding="utf-8")
 
