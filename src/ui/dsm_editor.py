@@ -6,7 +6,7 @@ from enum import Enum
 
 import pandas as pd
 import networkx as nx
-from PyQt5.QtCore import Qt, QPointF, QTimer, QRectF
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QColor, QPen, QBrush, QPainter, QPainterPath, QFont, QKeySequence
 from PyQt5.QtWidgets import (
     QDialog,
@@ -219,6 +219,12 @@ class CanvasView(QGraphicsView):
         self.snapToGrid = True  # 預設啟用對齊
         self.snapDistance = 8  # 吸附距離
 
+        # 效能最佳化設定
+        self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
+        self.setCacheMode(QGraphicsView.CacheBackground)
+        self.setOptimizationFlag(QGraphicsView.DontAdjustForAntialiasing, True)
+        self.setOptimizationFlag(QGraphicsView.DontSavePainterState, True)
+
         # 對齊輔助線系統
         self.alignmentLines = []
         self.showAlignmentLines = True
@@ -356,7 +362,7 @@ class CanvasView(QGraphicsView):
 
 class ResizeHandle(QGraphicsRectItem):
     """可調整大小的把手"""
-    
+
     def __init__(self, x, y, width, height, parent_node, handle_index):
         super().__init__(x, y, width, height, parent_node)
         self.parent_node = parent_node
@@ -364,7 +370,8 @@ class ResizeHandle(QGraphicsRectItem):
         self.resizing = False
         self.resize_start_pos = QPointF()
         self.initial_rect = QRectF()
-        
+        self._parent_movable = bool(parent_node.flags() & QGraphicsItem.ItemIsMovable)
+
         # 設定游標樣式
         cursor_map = {
             0: Qt.SizeFDiagCursor,  # 左上
@@ -377,34 +384,38 @@ class ResizeHandle(QGraphicsRectItem):
             7: Qt.SizeHorCursor,    # 左中
         }
         self.setCursor(cursor_map.get(handle_index, Qt.SizeAllCursor))
-        
+
         # 讓把手可以處理滑鼠事件
         self.setFlag(QGraphicsItem.ItemIsSelectable, False)
         self.setAcceptHoverEvents(True)
-        
+        self.setZValue(1000)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.resizing = True
             self.resize_start_pos = event.scenePos()
             self.initial_rect = self.parent_node.rect()
+            self._parent_movable = bool(self.parent_node.flags() & QGraphicsItem.ItemIsMovable)
+            self.parent_node.setFlag(QGraphicsItem.ItemIsMovable, False)
             event.accept()
-        
+
     def mouseMoveEvent(self, event):
         if self.resizing:
             delta = event.scenePos() - self.resize_start_pos
             self._resizeParent(delta)
             event.accept()
-            
+
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.resizing = False
+            self.parent_node.setFlag(QGraphicsItem.ItemIsMovable, self._parent_movable)
             event.accept()
-            
+
     def _resizeParent(self, delta):
         """根據把手拖動調整父節點大小"""
         rect = self.initial_rect
         min_size = 50  # 最小尺寸
-        
+
         # 根據把手位置調整矩形
         if self.handle_index == 0:  # 左上
             new_x = rect.x() + delta.x()
@@ -448,18 +459,18 @@ class ResizeHandle(QGraphicsRectItem):
             new_height = rect.height()
         else:
             return
-            
+
         # 限制最小尺寸
         if new_width < min_size or new_height < min_size:
             return
-            
+
         # 更新節點矩形
         new_rect = QRectF(new_x, new_y, new_width, new_height)
         self.parent_node.setRect(new_rect)
-        
+
         # 更新把手位置
         self.parent_node._updateHandlesPosition()
-        
+
         # 更新連接的邊
         for edge in self.parent_node.edges:
             if hasattr(edge, 'updatePath'):
@@ -484,12 +495,10 @@ class TaskNode(QGraphicsRectItem):
         self.isHovered = False
         self.isDragging = False
         self.isConnecting = False
-        self.dragStartTime = 0
-        self.longPressThreshold = 400  # ms for long press detection (改為400ms符合標準)
-        self.longPressTimer = None
         self.mousePressPos = QPointF()  # 記錄按下位置
-        self.connectionThreshold = 8   # 降低連線觸發閾值，更容易觸發
-        self.dragThreshold = 12        # 提高拖動觸發閾值
+        self.connectionThreshold = 8   # 連線觸發閾值
+        self.dragThreshold = 12        # 拖動觸發閾值
+        self._was_selected = False
 
         # 新增目標高亮狀態與選取把手
         self._is_highlighted = False
@@ -562,25 +571,25 @@ class TaskNode(QGraphicsRectItem):
         self._handles_visible = visible
         for handle in self._selection_handles:
             handle.setVisible(visible)
-    
+
     def _updateHandlesPosition(self) -> None:
         """更新把手位置以匹配節點大小"""
         if not self._selection_handles:
             return
-            
+
         rect = self.rect()
         handle_size = 6
         positions = [
             (rect.left(), rect.top()),         # 左上
             (rect.center().x(), rect.top()),   # 上中
             (rect.right(), rect.top()),        # 右上
-            (rect.right(), rect.center().y()), # 右中
-            (rect.right(), rect.bottom()),     # 右下
-            (rect.center().x(), rect.bottom()),# 下中
+            (rect.right(), rect.center().y()),  # 右中
+            (rect.right(), rect.bottom()),      # 右下
+            (rect.center().x(), rect.bottom()),  # 下中
             (rect.left(), rect.bottom()),      # 左下
-            (rect.left(), rect.center().y()),  # 左中
+            (rect.left(), rect.center().y()),   # 左中
         ]
-        
+
         for i, (handle, (x, y)) in enumerate(zip(self._selection_handles, positions)):
             handle.setRect(
                 x - handle_size/2,
@@ -664,54 +673,37 @@ class TaskNode(QGraphicsRectItem):
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        """滑鼠按下事件 - yEd 風格長壓檢測"""
+        """滑鼠按下事件 - 先選取再允許移動"""
         if event.button() == Qt.LeftButton:
-            # 記錄按下時間和位置，用於長壓檢測
-            import time
-            self.dragStartTime = time.time() * 1000
             self.mousePressPos = event.scenePos()
+            self._was_selected = self.isSelected()
 
-            # 設定長壓計時器
-            if self.longPressTimer:
-                self.longPressTimer.stop()
-
-            self.longPressTimer = QTimer()
-            self.longPressTimer.timeout.connect(self.startConnectionMode)
-            self.longPressTimer.setSingleShot(True)
-            self.longPressTimer.start(self.longPressThreshold)
-
-            # yEd 風格多選處理
-            if event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier):
-                # Ctrl 或 Shift 多選：切換選取狀態
-                self.setSelected(not self.isSelected())
+            if not self.isSelected():
+                # 第一次點擊僅進行選取
+                self.scene().clearSelection()
+                self.setSelected(True)
+                self.updateVisualState()
+                event.accept()
+                return
             else:
-                # 單選：如果這個節點還沒被選取，清除其他選取並選取這個
-                if not self.isSelected():
-                    self.scene().clearSelection()
-                    self.setSelected(True)
+                # 已選取狀態下才允許拖動
+                self.isDragging = True
 
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
-        """滑鼠移動事件 - 處理拖動與連線"""
-        if self.longPressTimer and self.longPressTimer.isActive():
+        """滑鼠移動事件 - 判斷連線或拖動"""
+        if event.buttons() & Qt.LeftButton:
             distance = (event.scenePos() - self.mousePressPos).manhattanLength()
-            
-            # 如果移動距離超過連線閾值，立即啟動連線模式
-            if distance > self.connectionThreshold:
-                self.longPressTimer.stop()
+
+            if not self._was_selected and distance > self.connectionThreshold and not self.isConnecting:
+                # 未選取狀態下拖曳進入連線模式
                 self.startConnectionMode()
                 return
-            # 如果移動距離超過拖動閾值，開始拖動
-            elif distance > self.dragThreshold:
-                self.longPressTimer.stop()
-                self.isDragging = True
 
-        # 如果是拖動模式，顯示對齊輔助線
-        if self.isDragging:
-            self._showAlignmentGuides(event.scenePos())
+            if self.isDragging and distance > self.dragThreshold:
+                self._showAlignmentGuides(event.scenePos())
 
-        # 如果在連線模式，更新連線預覽
         if self.isConnecting and hasattr(self.scene(), 'connectionMode'):
             self.scene().updateTempConnection(event.scenePos())
 
@@ -719,9 +711,6 @@ class TaskNode(QGraphicsRectItem):
 
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
         """滑鼠釋放事件"""
-        if self.longPressTimer and self.longPressTimer.isActive():
-            self.longPressTimer.stop()
-
         # 清除對齊輔助線
         if self.isDragging:
             self._clearAlignmentGuides()
@@ -737,18 +726,20 @@ class TaskNode(QGraphicsRectItem):
                 self.scene().cancelConnectionMode()
 
         super().mouseReleaseEvent(event)
+        self._was_selected = False
 
     def startConnectionMode(self) -> None:
-        """開始連線模式（長壓觸發）"""
-        if self.editor and hasattr(self.editor, 'startConnectionMode'):
+        """開始連線模式"""
+        if self.scene() and hasattr(self.scene(), 'startConnectionMode'):
             self.isConnecting = True
             self.updateVisualState()
-            
-            # 增強視覺回饋 - 立即變更游標為連線模式
+
+            # 視覺回饋
             self.setCursor(Qt.CrossCursor)
-            
-            # 調用統一的連線邏輯
-            self.editor.startConnectionMode(self)
+            if hasattr(self.editor, 'view'):
+                self.editor.view.setCursor(Qt.CrossCursor)
+
+            self.scene().startConnectionMode(self)
 
     def mouseDoubleClickEvent(self, event) -> None:  # type: ignore[override]
         """雙擊編輯文字"""
@@ -776,10 +767,10 @@ class TaskNode(QGraphicsRectItem):
         # 確保把手已創建
         if not self._selection_handles:
             self._createSelectionHandles()
-            
+
         # 更新選取把手的顯示狀態
         self._updateHandlesVisibility(self.isSelected())
-        
+
         # 如果選中，也更新把手位置
         if self.isSelected():
             self._updateHandlesPosition()
@@ -944,7 +935,7 @@ class EdgeItem(QGraphicsPathItem):
 
         # 將箭頭設為此邊線的子物件
         self.arrowHead.setParentItem(self)
-        
+
         self.updatePath()
 
     def adjust(self) -> None:
@@ -1281,6 +1272,10 @@ class DsmScene(QGraphicsScene):
 
         # 重設狀態
         self.mode = self.MODE_IDLE
+        if self.source_node:
+            self.source_node.isConnecting = False
+            self.source_node.setCursor(Qt.ArrowCursor)
+            self.source_node.updateVisualState()
         self.source_node = None
 
         # 清理相容性屬性
