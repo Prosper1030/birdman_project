@@ -754,13 +754,15 @@ class TaskNode(QGraphicsRectItem):
         return super().itemChange(change, value)
 
     def mousePressEvent(self, event):
-        """滑鼠按下事件 - yEd 標準行為"""
+        """滑鼠按下事件 - yEd 標準邏輯"""
         if event.button() == Qt.LeftButton:
+            # 記錄按下位置和時間，準備判斷後續行為
             self.dragStartPos = event.scenePos()
             self.initialPos = self.pos()  # 記錄初始位置用於撤銷
             self.dragStartTime = time.time()
             self.pressedInNode = True  # 標記按下時在節點內
             self.leftNodeBounds = False  # 標記是否已離開節點邊界
+            self.mouseReleased = False  # 追蹤是否已經放開滑鼠
 
             # 檢查是否點擊在調整把手上
             clicked_item = self.scene().itemAt(event.scenePos(), self.scene().views()[0].transform())
@@ -773,10 +775,9 @@ class TaskNode(QGraphicsRectItem):
             self.isDragging = False
             self.isConnecting = False
 
-            # yEd 行為：只有未選中的節點才可以觸發連線模式
-            if self.isSelected():
-                # 選中的節點：不觸發連線，等待移動模式
-                print(f"選中的節點 '{self.taskId}' 無法觸發連線模式")
+            # yEd 邏輯：不管選取狀態如何，都準備等待後續行為
+            # 不立即改變選取狀態，等到 mouseReleaseEvent 再決定
+            print(f"節點 '{self.taskId}' 按下，等待判斷行為（選取或連線）")
 
             # 阻止預設的選取行為 - 不調用 super()
             event.accept()
@@ -784,7 +785,7 @@ class TaskNode(QGraphicsRectItem):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """滑鼠移動事件 - yEd 標準行為"""
+        """滑鼠移動事件 - yEd 標準邏輯"""
         if event.buttons() & Qt.LeftButton and hasattr(self, 'pressedInNode'):
             current_pos = event.scenePos()
 
@@ -793,24 +794,36 @@ class TaskNode(QGraphicsRectItem):
                 super().mouseMoveEvent(event)
                 return  # 把手調整中，讓把手處理
 
-            # 檢查滑鼠是否離開了節點邊界（擴大檢測範圍）
+            # yEd 關鍵邏輯：選取狀態下優先處理拖動，絕不觸發連線
+            if self.isSelected():
+                # 已選取的節點：只能拖動移動，絕對不能開始連線
+                distance = (current_pos - self.dragStartPos).manhattanLength()
+                if distance > 8:  # 拖動閾值
+                    if not self.isDragging:
+                        self.isDragging = True
+                        print(f"節點 '{self.taskId}' 開始拖動")
+                    
+                    # 允許標準拖動行為
+                    super().mouseMoveEvent(event)
+                    return
+                else:
+                    # 在閾值內，不移動但也不觸發其他行為
+                    event.accept()
+                    return
+
+            # 只有未選取的節點才處理連線邏輯
             node_rect = self.sceneBoundingRect()
-            # 縮小檢測矩形，讓邊緣附近也能觸發連線
             shrink_amount = 5  # 縮小5像素
             detection_rect = node_rect.adjusted(shrink_amount, shrink_amount, -shrink_amount, -shrink_amount)
 
             if not self.leftNodeBounds and not detection_rect.contains(current_pos):
-                # 第一次離開節點有效區域
+                # 第一次離開節點有效區域，且節點未被選取
                 self.leftNodeBounds = True
                 
-                # yEd 行為：只有未選中的節點才觸發連線模式
-                if not self.isSelected():
-                    # 未選中節點：觸發連線模式
+                # 只有未選取的節點才能觸發連線模式
+                if not self.isConnecting:
                     self.startConnectionMode()
-                    print(f"觸發連線模式：滑鼠位置 ({current_pos.x():.1f}, {current_pos.y():.1f})")
-                else:
-                    # 選中節點：不觸發連線，可能需要移動
-                    print(f"選中節點 '{self.taskId}' 離開邊界，但不觸發連線")
+                    print(f"開始連線模式：從節點 '{self.taskId}' 拖拽")
                 
                 event.accept()
                 return
@@ -821,15 +834,6 @@ class TaskNode(QGraphicsRectItem):
                     self.editor.scene.updateTempConnection(current_pos)
                 event.accept()
                 return
-
-            # 如果已選中且仍在節點內移動，準備拖動
-            if self.isSelected() and detection_rect.contains(current_pos):
-                distance = (current_pos - self.dragStartPos).manhattanLength()
-                if distance > 5:  # 小閾值避免抖動
-                    self.isDragging = True
-                    # 允許預設拖動行為
-                    super().mouseMoveEvent(event)
-                    return
 
             event.accept()
         else:
@@ -857,14 +861,38 @@ class TaskNode(QGraphicsRectItem):
                             self.editor.scene.cancelConnectionMode()
                         self.stopConnectionMode()
 
-            elif not self.leftNodeBounds:
-                # 在節點上按下並在節點上放開 - 進入選取模式
+    def mouseReleaseEvent(self, event):
+        """滑鼠釋放事件 - yEd 標準邏輯：關鍵判斷點"""
+        if event.button() == Qt.LeftButton and hasattr(self, 'pressedInNode'):
+            current_pos = event.scenePos()
+            self.mouseReleased = True
+
+            if self.isConnecting:
+                # 在連線模式中放開 - 完成連線或建立固定點
+                item = self.scene().itemAt(current_pos, self.scene().views()[0].transform())
+                if isinstance(item, TaskNode) and item != self:
+                    # 完成連線
+                    if hasattr(self.editor.scene, 'finishConnection'):
+                        self.editor.scene.finishConnection(item)
+                else:
+                    # 在空白處放開 - 轉為兩階段連線模式
+                    if hasattr(self.editor.scene, 'enterSecondPhaseConnection'):
+                        self.editor.scene.enterSecondPhaseConnection(current_pos)
+                    else:
+                        # 如果沒有兩階段模式，就取消連線
+                        if hasattr(self.editor.scene, 'cancelConnectionMode'):
+                            self.editor.scene.cancelConnectionMode()
+                        self.stopConnectionMode()
+
+            elif not self.leftNodeBounds and not self.isDragging:
+                # yEd 關鍵邏輯：在節點上按下並在節點上放開，且沒有拖動 = 選取操作
                 node_rect = self.sceneBoundingRect()
                 if node_rect.contains(current_pos):
-                    if not self.isSelected():
-                        self.scene().clearSelection()
-                        self.setSelected(True)
-                        self.updateVisualState()  # 顯示把手
+                    # 清除其他選取，選中當前節點
+                    self.scene().clearSelection()
+                    self.setSelected(True)
+                    self.updateVisualState()  # 顯示把手
+                    print(f"節點 '{self.taskId}' 被選取")
                     event.accept()
 
             # 檢查是否有移動並記錄撤銷命令
@@ -873,6 +901,7 @@ class TaskNode(QGraphicsRectItem):
                 if (final_pos - self.initialPos).manhattanLength() > 2:  # 只有移動距離超過2像素才記錄
                     move_command = MoveNodeCommand(self, self.initialPos, final_pos)
                     self.editor.executeCommand(move_command)
+                    print(f"節點 '{self.taskId}' 拖動完成")
 
             # 重置狀態
             self.isDragging = False
@@ -881,11 +910,18 @@ class TaskNode(QGraphicsRectItem):
             delattr(self, 'pressedInNode')
             if hasattr(self, 'leftNodeBounds'):
                 delattr(self, 'leftNodeBounds')
+            if hasattr(self, 'mouseReleased'):
+                delattr(self, 'mouseReleased')
 
         super().mouseReleaseEvent(event)
 
     def startConnectionMode(self) -> None:
         """開始連線模式 - 增強視覺回饋"""
+        # yEd 關鍵規則：選取狀態下絕對不能開始連線模式
+        if self.isSelected():
+            print(f"節點 '{self.taskId}' 處於選取狀態，無法開始連線模式")
+            return
+            
         self.isConnecting = True
         self.setCursor(Qt.CrossCursor)
 
@@ -933,16 +969,20 @@ class TaskNode(QGraphicsRectItem):
         print("連線模式已結束")
 
     def hoverEnterEvent(self, event):
-        """滑鼠懸停進入"""
+        """滑鼠懸停進入 - yEd 標準行為"""
         self.isHovered = True
         self.updateVisualState()
-        self.setCursor(Qt.SizeAllCursor)
+        # yEd 邏輯：只有選取狀態下才顯示移動游標，否則保持箭頭
+        if self.isSelected():
+            self.setCursor(Qt.SizeAllCursor)  # 選取狀態：顯示移動游標
+        # 未選取狀態：不改變游標，保持預設箭頭
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        """滑鼠懸停離開"""
+        """滑鼠懸停離開 - yEd 標準行為"""
         self.isHovered = False
         self.updateVisualState()
+        # 離開時恢復預設游標
         self.setCursor(Qt.ArrowCursor)
         super().hoverLeaveEvent(event)
 
@@ -960,9 +1000,10 @@ class TaskNode(QGraphicsRectItem):
             # 立即切換到選取顏色
             self.setBrush(self.selectedBrush)
             self.setPen(self.selectedPen)
-            # 進入 yEd 風格移動模式：節點跟隨滑鼠
-            self.moveMode = True
-            print(f"節點 '{self.taskId}' 進入移動模式")
+            # 更新鼠標樣式為移動模式
+            if self.isHovered:
+                self.setCursor(Qt.SizeAllCursor)
+            print(f"節點 '{self.taskId}' 已選中，可拖動移動")
         else:
             # 取消選中：立即隱藏把手並恢復原色
             self._updateHandlesVisibility(False)
@@ -970,13 +1011,12 @@ class TaskNode(QGraphicsRectItem):
             if self.isHovered:
                 self.setBrush(self.hoverBrush)
                 self.setPen(self.hoverPen)
+                # 恢復一般鼠標
+                self.setCursor(Qt.ArrowCursor)
             else:
                 self.setBrush(self.normalBrush)
                 self.setPen(self.normalPen)
-            # 離開 yEd 風格移動模式
-            if self.moveMode:
-                self.moveMode = False
-                print(f"節點 '{self.taskId}' 離開移動模式")
+            print(f"節點 '{self.taskId}' 取消選中")
 
     def updateVisualState(self) -> None:
         """更新視覺狀態 - 立即反應選取狀態變化"""
@@ -1436,29 +1476,12 @@ class DsmScene(QGraphicsScene):
             print("連線模式已結束")
 
     def mouseMoveEvent(self, event):
-        """場景滑鼠移動事件 - yEd 風格節點跟隨"""
+        """場景滑鼠移動事件 - 標準拖放行為"""
         if self.connectionMode and self.tempEdge:
             self.updateTempConnection(event.scenePos())
             event.accept()
         else:
-            # yEd 風格：檢查是否有選中的節點處於移動模式
-            for item in self.selectedItems():
-                if isinstance(item, TaskNode) and getattr(item, 'moveMode', False):
-                    # 節點跟隨滑鼠移動（不需要按住滑鼠）
-                    new_pos = event.scenePos()
-                    old_pos = item.pos()
-                    
-                    # 只有當位置有明顯改變時才移動
-                    if (new_pos - old_pos).manhattanLength() > 3:
-                        # 記錄移動命令用於撤銷
-                        move_command = MoveNodeCommand(item, old_pos, new_pos)
-                        self.editor.executeCommand(move_command)
-                        
-                        print(f"節點 '{item.taskId}' 跟隨滑鼠移動到 ({new_pos.x():.1f}, {new_pos.y():.1f})")
-                    
-                    event.accept()
-                    return
-            
+            # 標準行為：讓節點自己處理拖動，場景不主動移動節點
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
