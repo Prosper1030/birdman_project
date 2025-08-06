@@ -648,6 +648,7 @@ class TaskNode(QGraphicsRectItem):
         self.isHovered = False
         self.isDragging = False
         self.isConnecting = False
+        self.moveMode = False  # yEd 風格節點跟隨滑鼠模式
         self._is_highlighted = False
         self._canMove = False  # 只有選中的節點才能移動
 
@@ -772,6 +773,11 @@ class TaskNode(QGraphicsRectItem):
             self.isDragging = False
             self.isConnecting = False
 
+            # yEd 行為：只有未選中的節點才可以觸發連線模式
+            if self.isSelected():
+                # 選中的節點：不觸發連線，等待移動模式
+                print(f"選中的節點 '{self.taskId}' 無法觸發連線模式")
+
             # 阻止預設的選取行為 - 不調用 super()
             event.accept()
         else:
@@ -794,10 +800,18 @@ class TaskNode(QGraphicsRectItem):
             detection_rect = node_rect.adjusted(shrink_amount, shrink_amount, -shrink_amount, -shrink_amount)
 
             if not self.leftNodeBounds and not detection_rect.contains(current_pos):
-                # 第一次離開節點有效區域 - 立即觸發連線模式
+                # 第一次離開節點有效區域
                 self.leftNodeBounds = True
-                self.startConnectionMode()
-                print(f"觸發連線模式：滑鼠位置 ({current_pos.x():.1f}, {current_pos.y():.1f})")
+                
+                # yEd 行為：只有未選中的節點才觸發連線模式
+                if not self.isSelected():
+                    # 未選中節點：觸發連線模式
+                    self.startConnectionMode()
+                    print(f"觸發連線模式：滑鼠位置 ({current_pos.x():.1f}, {current_pos.y():.1f})")
+                else:
+                    # 選中節點：不觸發連線，可能需要移動
+                    print(f"選中節點 '{self.taskId}' 離開邊界，但不觸發連線")
+                
                 event.accept()
                 return
 
@@ -938,7 +952,7 @@ class TaskNode(QGraphicsRectItem):
         self.updateVisualState()
 
     def _updateSelectionState(self, is_selected: bool) -> None:
-        """同步更新選取狀態的所有視覺效果"""
+        """同步更新選取狀態的所有視覺效果 - yEd 風格"""
         if is_selected:
             # 被選中：立即顯示把手並更新顏色
             self._updateHandlesVisibility(True)
@@ -946,6 +960,9 @@ class TaskNode(QGraphicsRectItem):
             # 立即切換到選取顏色
             self.setBrush(self.selectedBrush)
             self.setPen(self.selectedPen)
+            # 進入 yEd 風格移動模式：節點跟隨滑鼠
+            self.moveMode = True
+            print(f"節點 '{self.taskId}' 進入移動模式")
         else:
             # 取消選中：立即隱藏把手並恢復原色
             self._updateHandlesVisibility(False)
@@ -956,6 +973,10 @@ class TaskNode(QGraphicsRectItem):
             else:
                 self.setBrush(self.normalBrush)
                 self.setPen(self.normalPen)
+            # 離開 yEd 風格移動模式
+            if self.moveMode:
+                self.moveMode = False
+                print(f"節點 '{self.taskId}' 離開移動模式")
 
     def updateVisualState(self) -> None:
         """更新視覺狀態 - 立即反應選取狀態變化"""
@@ -1226,9 +1247,8 @@ class DsmScene(QGraphicsScene):
         self.tempEdge = None
         self.last_hovered_target = None
 
-        # 兩階段連線模式
-        self.secondPhase = False
-        self.fixedPoint = None
+        # 多固定點連線模式
+        self.fixedPoints = []  # 存儲多個固定點的列表
 
     def startConnectionMode(self, sourceNode: TaskNode) -> None:
         """開始連線模式"""
@@ -1248,53 +1268,46 @@ class DsmScene(QGraphicsScene):
         sourceNode.updateVisualState()
 
     def updateTempConnection(self, mousePos: QPointF) -> None:
-        """更新臨時連線 - 支援兩階段模式"""
+        """更新臨時連線 - 支援多個固定點折線"""
         if not self.tempEdge or not self.sourceNode:
             return
 
-        # 檢查是否在兩階段模式
-        if hasattr(self, 'secondPhase') and self.secondPhase:
-            # 第二階段：從固定點到滑鼠位置
-            path = QPainterPath()
-            path.moveTo(self.fixedPoint)
-            path.lineTo(mousePos)
-            self.tempEdge.setPath(path)
-
-            if hasattr(self.tempEdge, 'updateArrowHead'):
-                self.tempEdge.updateArrowHead(self.fixedPoint, mousePos)
+        # 建立完整路徑：源節點 → 所有固定點 → 滑鼠位置
+        path = QPainterPath()
+        
+        # 起始點：源節點邊緣
+        srcRect = self.sourceNode.sceneBoundingRect()
+        srcCenter = srcRect.center()
+        
+        # 計算到第一個目標的方向（固定點或滑鼠位置）
+        first_target = self.fixedPoints[0] if self.fixedPoints else mousePos
+        dx = first_target.x() - srcCenter.x()
+        dy = first_target.y() - srcCenter.y()
+        length = math.sqrt(dx * dx + dy * dy)
+        
+        if length > 1:
+            dx /= length
+            dy /= length
+            srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
         else:
-            # 非目標節點區域 - 線條直接指向滑鼠位置
-            if hasattr(self, 'secondPhase') and self.secondPhase:
-                # 第二階段：從固定點到滑鼠位置
-                path = QPainterPath()
-                path.moveTo(self.fixedPoint)
-                path.lineTo(mousePos)
-                self.tempEdge.setPath(path)
-
-                if hasattr(self.tempEdge, 'updateArrowHead'):
-                    self.tempEdge.updateArrowHead(self.fixedPoint, mousePos)
-            else:
-                # 第一階段：從源節點到滑鼠位置
-                srcRect = self.sourceNode.sceneBoundingRect()
-                srcCenter = srcRect.center()
-
-                dx = mousePos.x() - srcCenter.x()
-                dy = mousePos.y() - srcCenter.y()
-                length = math.sqrt(dx * dx + dy * dy)
-
-                if length > 1:
-                    dx /= length
-                    dy /= length
-
-                    srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
-
-                    path = QPainterPath()
-                    path.moveTo(srcPos)
-                    path.lineTo(mousePos)
-                    self.tempEdge.setPath(path)
-
-                    if hasattr(self.tempEdge, 'updateArrowHead'):
-                        self.tempEdge.updateArrowHead(srcPos, mousePos)
+            srcPos = srcCenter
+        
+        # 從源節點開始
+        path.moveTo(srcPos)
+        
+        # 連接所有固定點
+        for fixed_point in self.fixedPoints:
+            path.lineTo(fixed_point)
+        
+        # 最後連接到滑鼠位置
+        path.lineTo(mousePos)
+        
+        self.tempEdge.setPath(path)
+        
+        # 更新箭頭（從最後一個點到滑鼠位置）
+        last_point = self.fixedPoints[-1] if self.fixedPoints else srcPos
+        if hasattr(self.tempEdge, 'updateArrowHead'):
+            self.tempEdge.updateArrowHead(last_point, mousePos)
 
         # 高亮目標節點並調整箭頭位置
         targetItem = self.itemAt(mousePos, self.views()[0].transform())
@@ -1307,51 +1320,31 @@ class DsmScene(QGraphicsScene):
             targetItem.set_highlight(True)
             self.last_hovered_target = targetItem
 
-            # 當鼠標在目標節點上時，調整箭頭位置到節點邊緣
+            # 當鼠標在目標節點上時，調整最後一段線到節點邊緣
             targetRect = targetItem.sceneBoundingRect()
             targetCenter = targetRect.center()
-
-            if hasattr(self, 'secondPhase') and self.secondPhase:
-                # 第二階段：從固定點到目標節點邊緣
-                dx = targetCenter.x() - self.fixedPoint.x()
-                dy = targetCenter.y() - self.fixedPoint.y()
-                length = math.sqrt(dx * dx + dy * dy)
-
-                if length > 1:
-                    dx /= length
-                    dy /= length
-                    targetPos = self.tempEdge.getConnectionPoint(targetRect, targetCenter, -dx, -dy)
-
-                    path = QPainterPath()
-                    path.moveTo(self.fixedPoint)
-                    path.lineTo(targetPos)
-                    self.tempEdge.setPath(path)
-
-                    if hasattr(self.tempEdge, 'updateArrowHead'):
-                        self.tempEdge.updateArrowHead(self.fixedPoint, targetPos)
-            else:
-                # 第一階段：從源節點到目標節點邊緣
-                srcRect = self.sourceNode.sceneBoundingRect()
-                srcCenter = srcRect.center()
-
-                dx = targetCenter.x() - srcCenter.x()
-                dy = targetCenter.y() - srcCenter.y()
-                length = math.sqrt(dx * dx + dy * dy)
-
-                if length > 1:
-                    dx /= length
-                    dy /= length
-
-                    srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
-                    targetPos = self.tempEdge.getConnectionPoint(targetRect, targetCenter, -dx, -dy)
-
-                    path = QPainterPath()
-                    path.moveTo(srcPos)
-                    path.lineTo(targetPos)
-                    self.tempEdge.setPath(path)
-
-                    if hasattr(self.tempEdge, 'updateArrowHead'):
-                        self.tempEdge.updateArrowHead(srcPos, targetPos)
+            
+            # 計算從最後一個點到目標節點的方向
+            last_point = self.fixedPoints[-1] if self.fixedPoints else srcPos
+            dx = targetCenter.x() - last_point.x()
+            dy = targetCenter.y() - last_point.y()
+            length = math.sqrt(dx * dx + dy * dy)
+            
+            if length > 1:
+                dx /= length
+                dy /= length
+                targetPos = self.tempEdge.getConnectionPoint(targetRect, targetCenter, -dx, -dy)
+                
+                # 重新建立完整路徑
+                path = QPainterPath()
+                path.moveTo(srcPos)
+                for fixed_point in self.fixedPoints:
+                    path.lineTo(fixed_point)
+                path.lineTo(targetPos)
+                self.tempEdge.setPath(path)
+                
+                if hasattr(self.tempEdge, 'updateArrowHead'):
+                    self.tempEdge.updateArrowHead(last_point, targetPos)
 
     def finishConnection(self, targetNode: TaskNode) -> None:
         """完成連線"""
@@ -1379,12 +1372,11 @@ class DsmScene(QGraphicsScene):
 
         # 重設狀態
         self.connectionMode = False
-        self.secondPhase = False
-        self.fixedPoint = None
+        self.fixedPoints = []  # 清空固定點列表
 
         # 恢復源節點狀態
         if self.sourceNode:
-            self.sourceNode.stopConnectionMode()  # 使用新的方法來恢復狀態
+            self.sourceNode.stopConnectionMode()
             self.sourceNode = None
 
         # 恢復游標
@@ -1424,11 +1416,29 @@ class DsmScene(QGraphicsScene):
         print(f"進入兩階段連線模式，固定點：({fixedPoint.x():.1f}, {fixedPoint.y():.1f})")
 
     def mouseMoveEvent(self, event):
-        """場景滑鼠移動事件"""
+        """場景滑鼠移動事件 - yEd 風格節點跟隨"""
         if self.connectionMode and self.tempEdge:
             self.updateTempConnection(event.scenePos())
             event.accept()
         else:
+            # yEd 風格：檢查是否有選中的節點處於移動模式
+            for item in self.selectedItems():
+                if isinstance(item, TaskNode) and getattr(item, 'moveMode', False):
+                    # 節點跟隨滑鼠移動（不需要按住滑鼠）
+                    new_pos = event.scenePos()
+                    old_pos = item.pos()
+                    
+                    # 只有當位置有明顯改變時才移動
+                    if (new_pos - old_pos).manhattanLength() > 3:
+                        # 記錄移動命令用於撤銷
+                        move_command = MoveNodeCommand(item, old_pos, new_pos)
+                        self.editor.executeCommand(move_command)
+                        
+                        print(f"節點 '{item.taskId}' 跟隨滑鼠移動到 ({new_pos.x():.1f}, {new_pos.y():.1f})")
+                    
+                    event.accept()
+                    return
+            
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -1438,12 +1448,9 @@ class DsmScene(QGraphicsScene):
             if isinstance(target, TaskNode) and target != self.sourceNode:
                 # 連線到節點
                 self.finishConnection(target)
-            elif not hasattr(self, 'secondPhase') or not self.secondPhase:
-                # 第一次在畫布上放開 - 建立固定點進入第二階段
-                self.enterSecondPhaseConnection(event.scenePos())
             else:
-                # 第二階段在畫布上放開 - 取消連線
-                self.cancelConnectionMode()
+                # 在畫布上放開 - 建立固定點
+                self.addFixedPoint(event.scenePos())
             event.accept()
         else:
             super().mouseReleaseEvent(event)
