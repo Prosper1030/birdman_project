@@ -320,13 +320,21 @@ class AcademicAvailabilityPredictor:
 2. **控制器層**：響應信號，協調模型與視圖的同步更新
 3. **模型層 (NetworkX.DiGraph)**：維護圖形資料結構，支援獨立的儲存、載入與分析
 
-**詳細技術規格與實作藍圖**：完整的互動邏輯狀態機設計、底層資料架構、佈局演算法原理分析與端到端實作指南，請參閱專門的技術分析文件：[視覺化 DSM 編輯器技術分析報告](designs/visual_dsm_editor_analysis.md)。
-
-**[開發者必讀] 互動功能實作指南**：
-
-關於此編輯器在 **PyQt5 QGraphicsScene** 框架下的具體實作細節，包括節點選取、拖曳、邊線創建狀態機、事件處理程式碼範例與 MVC 雙向同步的完整開發指南，請參閱：
-
-**[使用 PyQt5 打造互動式依賴關係編輯器之開發者指南](designs/visual_dsm_editor_implementation_guide.md)**
+> **[重要] 核心設計與實作文件**：
+>
+> 此功能的完整規格與實作細節，由以下三份核心文件共同定義。開發前必須全部閱讀：
+>
+> 1.  **高層次技術藍圖 (WHAT & WHY)**
+>     * 內容：定義了編輯器的核心功能、yEd 的功能分析、以及為何選擇三種關鍵佈局演算法。
+>     * 請參閱：**[視覺化 DSM 編輯器技術分析報告](designs/visual_dsm_editor_analysis.md)**
+>
+> 2.  **UI/UX 互動規格書 (HOW THE USER SEES IT)**
+>     * 內容：詳細拆解了 yEd 的使用者介面與所有互動行為，是前端互動設計的直接依據。
+>     * 請參閱：**[yEd 使用者行為 & 介面拆解報告](designs/visual_dsm_editor_interaction_design.md)**
+>
+> 3.  **開發者實作指南 (HOW THE DEVELOPER BUILDS IT)**
+>     * 內容：提供了在 PyQt5 框架下的具體程式碼範例、事件處理流程、與 MVC 架構的詳細實作步驟。
+>     * 請參閱：**[視覺化 DSM 編輯器實作指南](designs/visual_dsm_editor_implementation_guide.md)**
 
 ### WBS 資料互動與編輯
 

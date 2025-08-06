@@ -9,7 +9,8 @@
       "Bash(flake8:*)",
       "Bash(find:*)",
       "Bash(git pull:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(sed:*)"
     ],
     "deny": []
   }
