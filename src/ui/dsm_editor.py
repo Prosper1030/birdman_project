@@ -138,14 +138,18 @@ class RemoveEdgeCommand(Command):
 
 
 class ResizeHandle(QGraphicsRectItem):
-    """可調整大小的把手 - 修正版"""
+    """yEd 風格的調整大小把手 - 正確實現版"""
     
-    HANDLE_SIZE = 8  # 把手大小
+    HANDLE_SIZE = 6  # 把手視覺大小 - 符合 yEd 風格
+    HANDLE_DISTANCE = 5  # 把手距離節點邊緣的固定距離
+    HOVER_DETECTION_RANGE = 8  # 懸停檢測範圍（比把手稍大）
     MIN_NODE_SIZE = 50  # 最小節點尺寸
     
     def __init__(self, parent_node: 'TaskNode', handle_index: int):
-        # 初始化時不設定位置，由 updatePosition 處理
-        super().__init__(0, 0, self.HANDLE_SIZE, self.HANDLE_SIZE, parent_node)
+        # 使用懸停檢測範圍初始化（用於事件檢測）
+        half_detection = self.HOVER_DETECTION_RANGE / 2
+        super().__init__(-half_detection, -half_detection, 
+                        self.HOVER_DETECTION_RANGE, self.HOVER_DETECTION_RANGE, parent_node)
         
         self.parent_node = parent_node
         self.handle_index = handle_index
@@ -153,10 +157,11 @@ class ResizeHandle(QGraphicsRectItem):
         self.resize_start_pos = QPointF()
         self.initial_rect = QRectF()
         self.initial_pos = QPointF()
+        self._is_hovered = False
         
-        # 設定視覺樣式
+        # 設定視覺樣式 - yEd 風格黑色小方塊
         self.setBrush(QBrush(Qt.black))
-        self.setPen(QPen(Qt.white, 1))
+        self.setPen(QPen(Qt.black, 1))
         
         # 設定游標樣式
         cursor_map = {
@@ -171,55 +176,117 @@ class ResizeHandle(QGraphicsRectItem):
         }
         self.setCursor(cursor_map.get(handle_index, Qt.SizeAllCursor))
         
-        # 設定 Z 值確保在最上層
-        self.setZValue(1000)
+        # 設定 Z 值確保在最上層（比父節點更高）
+        self.setZValue(2000)  # 提高 Z 值
         
         # 啟用事件處理
         self.setFlag(QGraphicsItem.ItemIsSelectable, False)
         self.setFlag(QGraphicsItem.ItemIsMovable, False)
+        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, False)
+        self.setFlag(QGraphicsItem.ItemStacksBehindParent, False)  # 確保不在父節點後面
         self.setAcceptHoverEvents(True)
         
-    def updatePosition(self):
-        """更新把手位置"""
-        rect = self.parent_node.rect()
-        half_size = self.HANDLE_SIZE / 2
+        # 確保把手能接收滑鼠事件
+        self.setEnabled(True)
         
+    def updatePosition(self):
+        """更新把手位置 - yEd 風格：把手位於節點外圍固定距離"""
+        rect = self.parent_node.rect()
+        distance = self.HANDLE_DISTANCE
+        half_detection = self.HOVER_DETECTION_RANGE / 2
+        
+        # 計算把手中心位置（距離節點邊緣固定距離）
         positions = [
-            (rect.left() - half_size, rect.top() - half_size),      # 左上
-            (rect.center().x() - half_size, rect.top() - half_size), # 上中
-            (rect.right() - half_size, rect.top() - half_size),     # 右上
-            (rect.right() - half_size, rect.center().y() - half_size), # 右中
-            (rect.right() - half_size, rect.bottom() - half_size),   # 右下
-            (rect.center().x() - half_size, rect.bottom() - half_size), # 下中
-            (rect.left() - half_size, rect.bottom() - half_size),    # 左下
-            (rect.left() - half_size, rect.center().y() - half_size), # 左中
+            # 左上角：向左上偏移
+            (rect.left() - distance - half_detection, rect.top() - distance - half_detection),
+            # 上中：向上偏移
+            (rect.center().x() - half_detection, rect.top() - distance - half_detection),
+            # 右上角：向右上偏移
+            (rect.right() + distance - half_detection, rect.top() - distance - half_detection),
+            # 右中：向右偏移
+            (rect.right() + distance - half_detection, rect.center().y() - half_detection),
+            # 右下角：向右下偏移
+            (rect.right() + distance - half_detection, rect.bottom() + distance - half_detection),
+            # 下中：向下偏移
+            (rect.center().x() - half_detection, rect.bottom() + distance - half_detection),
+            # 左下角：向左下偏移
+            (rect.left() - distance - half_detection, rect.bottom() + distance - half_detection),
+            # 左中：向左偏移
+            (rect.left() - distance - half_detection, rect.center().y() - half_detection),
         ]
         
         if self.handle_index < len(positions):
             x, y = positions[self.handle_index]
             self.setPos(x, y)
     
+    def paint(self, painter, option, widget=None):
+        """自訂繪製 - 繪製 yEd 風格的黑色小方塊把手"""
+        # 計算實際把手在檢測範圍中央的位置
+        detection_center = self.HOVER_DETECTION_RANGE / 2
+        handle_half = self.HANDLE_SIZE / 2
+        
+        # 繪製黑色小方塊把手
+        handle_rect = QRectF(
+            detection_center - handle_half,
+            detection_center - handle_half,
+            self.HANDLE_SIZE,
+            self.HANDLE_SIZE
+        )
+        
+        painter.setBrush(self.brush())
+        painter.setPen(self.pen())
+        painter.drawRect(handle_rect)
+    
+    def hoverEnterEvent(self, event):
+        """滑鼠懸停進入事件"""
+        self._is_hovered = True
+        print(f"🖱️ 把手 {self.handle_index} 懸停進入")  # 調試輸出
+        super().hoverEnterEvent(event)
+    
+    def hoverLeaveEvent(self, event):
+        """滑鼠懸停離開事件"""
+        # 只有在不調整大小時才設定為非懸停狀態
+        if not self.resizing:
+            self._is_hovered = False
+            print(f"🖱️ 把手 {self.handle_index} 懸停離開")  # 調試輸出
+        super().hoverLeaveEvent(event)
+    
     def mousePressEvent(self, event):
-        """滑鼠按下事件"""
+        """滑鼠按下事件 - 只有在懸停狀態下才響應"""
+        print(f"🖱️ 把手 {self.handle_index} 按下事件, 懸停狀態: {self._is_hovered}, 按鈕: {event.button()}")  # 調試輸出
+        
         if event.button() == Qt.LeftButton:
-            self.resizing = True
-            self.resize_start_pos = event.scenePos()
-            self.initial_rect = self.parent_node.rect()
-            self.initial_pos = self.parent_node.pos()
-            
-            # 通知編輯器進入調整大小狀態
-            if hasattr(self.parent_node.editor, 'state'):
-                self.parent_node.editor.state = EditorState.RESIZING
-            
-            event.accept()
-        else:
-            super().mousePressEvent(event)
+            if self._is_hovered:
+                print(f"🔧 開始調整大小 - 把手 {self.handle_index}")  # 調試輸出
+                self.resizing = True
+                self.resize_start_pos = event.scenePos()
+                self.initial_rect = self.parent_node.rect()
+                self.initial_pos = self.parent_node.pos()
+                
+                # 通知編輯器進入調整大小狀態
+                if hasattr(self.parent_node.editor, 'state'):
+                    self.parent_node.editor.state = EditorState.RESIZING
+                
+                event.accept()  # 確保事件被接受
+                return
+            else:
+                print(f"❌ 把手 {self.handle_index} 未在懸停狀態，忽略點擊")
+        
+        # 如果不是我們處理的事件，傳遞給父類
+        super().mousePressEvent(event)
     
     def mouseMoveEvent(self, event):
         """滑鼠移動事件"""
         if self.resizing:
             current_pos = event.scenePos()
             delta = current_pos - self.resize_start_pos
+            
+            # 減少調試輸出頻率以提升性能
+            if not hasattr(self, '_debug_counter'):
+                self._debug_counter = 0
+            self._debug_counter += 1
+            if self._debug_counter % 5 == 0:  # 每5次移動才輸出一次
+                print(f"📏 調整大小中 - 把手 {self.handle_index}, delta: ({delta.x():.1f}, {delta.y():.1f})")
             
             # 在場景坐標中處理
             self._resizeParentNode(delta)
@@ -231,70 +298,99 @@ class ResizeHandle(QGraphicsRectItem):
         """滑鼠釋放事件"""
         if event.button() == Qt.LeftButton and self.resizing:
             self.resizing = False
+            self._is_hovered = False  # 重設懸停狀態
             
             # 恢復編輯器狀態
             if hasattr(self.parent_node.editor, 'state'):
                 self.parent_node.editor.state = EditorState.IDLE
+            
+            # 最終更新連接的邊（批量執行）
+            if hasattr(self.parent_node, '_edges_need_update') and self.parent_node._edges_need_update:
+                for edge in self.parent_node.edges:
+                    edge.updatePath()
+                self.parent_node._edges_need_update = False
             
             event.accept()
         else:
             super().mouseReleaseEvent(event)
     
     def _resizeParentNode(self, delta):
-        """調整父節點大小"""
+        """調整父節點大小 - yEd 風格：保持中心點固定，平滑調整"""
         rect = self.initial_rect
         node_pos = self.initial_pos
         
-        new_rect = QRectF(rect)
-        new_pos = QPointF(node_pos)
+        # 計算原始中心點（在場景座標中）
+        original_center = QPointF(
+            node_pos.x() + rect.center().x(),
+            node_pos.y() + rect.center().y()
+        )
         
-        # 根據把手位置計算新尺寸
+        # 計算新的寬度和高度變化
+        width_delta = 0
+        height_delta = 0
+        
+        # 根據把手位置計算尺寸變化
         if self.handle_index == 0:  # 左上
-            new_rect.setLeft(rect.left() + delta.x())
-            new_rect.setTop(rect.top() + delta.y())
-            new_pos = QPointF(node_pos.x() + delta.x(), node_pos.y() + delta.y())
+            width_delta = -delta.x() * 2  # 左邊拉動，影響總寬度
+            height_delta = -delta.y() * 2  # 上邊拉動，影響總高度
         elif self.handle_index == 1:  # 上中
-            new_rect.setTop(rect.top() + delta.y())
-            new_pos = QPointF(node_pos.x(), node_pos.y() + delta.y())
+            height_delta = -delta.y() * 2  # 上邊拉動，影響總高度
         elif self.handle_index == 2:  # 右上
-            new_rect.setRight(rect.right() + delta.x())
-            new_rect.setTop(rect.top() + delta.y())
-            new_pos = QPointF(node_pos.x(), node_pos.y() + delta.y())
+            width_delta = delta.x() * 2   # 右邊拉動，影響總寬度
+            height_delta = -delta.y() * 2  # 上邊拉動，影響總高度
         elif self.handle_index == 3:  # 右中
-            new_rect.setRight(rect.right() + delta.x())
+            width_delta = delta.x() * 2   # 右邊拉動，影響總寬度
         elif self.handle_index == 4:  # 右下
-            new_rect.setRight(rect.right() + delta.x())
-            new_rect.setBottom(rect.bottom() + delta.y())
+            width_delta = delta.x() * 2   # 右邊拉動，影響總寬度
+            height_delta = delta.y() * 2  # 下邊拉動，影響總高度
         elif self.handle_index == 5:  # 下中
-            new_rect.setBottom(rect.bottom() + delta.y())
+            height_delta = delta.y() * 2  # 下邊拉動，影響總高度
         elif self.handle_index == 6:  # 左下
-            new_rect.setLeft(rect.left() + delta.x())
-            new_rect.setBottom(rect.bottom() + delta.y())
-            new_pos = QPointF(node_pos.x() + delta.x(), node_pos.y())
+            width_delta = -delta.x() * 2  # 左邊拉動，影響總寬度
+            height_delta = delta.y() * 2  # 下邊拉動，影響總高度
         elif self.handle_index == 7:  # 左中
-            new_rect.setLeft(rect.left() + delta.x())
-            new_pos = QPointF(node_pos.x() + delta.x(), node_pos.y())
+            width_delta = -delta.x() * 2  # 左邊拉動，影響總寬度
         
-        # 限制最小尺寸
-        if new_rect.width() < self.MIN_NODE_SIZE:
-            new_rect.setWidth(self.MIN_NODE_SIZE)
-        if new_rect.height() < self.MIN_NODE_SIZE:
-            new_rect.setHeight(self.MIN_NODE_SIZE)
+        # 計算新尺寸
+        new_width = max(rect.width() + width_delta, self.MIN_NODE_SIZE)
+        new_height = max(rect.height() + height_delta, self.MIN_NODE_SIZE)
         
-        # 標準化矩形（確保寬高為正）
-        new_rect = new_rect.normalized()
+        # 創建以(0,0)為左上角的新矩形
+        new_rect = QRectF(0, 0, new_width, new_height)
         
-        # 更新節點
-        self.parent_node.prepareGeometryChange()
-        self.parent_node.setRect(new_rect)
-        self.parent_node.setPos(new_pos)
+        # 計算新的位置，確保中心點保持不變
+        new_pos = QPointF(
+            original_center.x() - new_rect.center().x(),
+            original_center.y() - new_rect.center().y()
+        )
         
-        # 更新所有把手位置
-        self.parent_node._updateHandlesPosition()
+        # 批量更新：僅在真正需要時呼叫 prepareGeometryChange
+        current_rect = self.parent_node.rect()
+        current_pos = self.parent_node.pos()
         
-        # 更新連接的邊
-        for edge in self.parent_node.edges:
-            edge.updatePath()
+        # 檢查是否有實際變化（避免不必要的重繪）
+        if (abs(current_rect.width() - new_width) > 1 or 
+            abs(current_rect.height() - new_height) > 1 or
+            abs(current_pos.x() - new_pos.x()) > 1 or
+            abs(current_pos.y() - new_pos.y()) > 1):
+            
+            # 使用 setFlag 暫時停用 ItemSendsGeometryChanges 來避免多次重繪
+            old_flags = self.parent_node.flags()
+            self.parent_node.setFlag(QGraphicsItem.ItemSendsGeometryChanges, False)
+            
+            # 更新幾何形狀
+            self.parent_node.prepareGeometryChange()
+            self.parent_node.setRect(new_rect)
+            self.parent_node.setPos(new_pos)
+            
+            # 恢復旗標
+            self.parent_node.setFlags(old_flags)
+            
+            # 批量更新把手位置（不觸發個別重繪）
+            self.parent_node._updateHandlesPositionQuiet()
+        
+        # 標記需要更新連線（但不立即更新，避免頻繁重繪）
+        self.parent_node._edges_need_update = True
 
 
 class CanvasView(QGraphicsView):
@@ -364,13 +460,14 @@ class CanvasView(QGraphicsView):
     
     def drawBackground(self, painter: QPainter, rect):
         """繪製背景與網格 - 使用緩存優化"""
-        super().drawBackground(painter, rect)
+        # 繪製白色背景
+        painter.fillRect(rect, QColor(255, 255, 255))
         
         if not self.showGrid:
             return
         
-        # 簡化網格繪製
-        painter.setPen(QPen(QColor(230, 230, 230), 1, Qt.SolidLine))
+        # 簡化網格繪製 - 使用黑色網格線
+        painter.setPen(QPen(QColor(200, 200, 200), 1, Qt.SolidLine))
         
         left = int(rect.left()) - (int(rect.left()) % self.gridSize)
         top = int(rect.top()) - (int(rect.top()) % self.gridSize)
@@ -412,8 +509,9 @@ class CanvasView(QGraphicsView):
             scene_pos = self.mapToScene(event.pos())
             item = self.scene().itemAt(scene_pos, self.transform())
             
-            # 如果點擊在空白區域，開始橡皮筋框選
-            if not item or isinstance(item, ResizeHandle):
+            # 只有點擊在真正的空白區域才開始橡皮筋框選
+            # ResizeHandle 不應該被視為空白區域
+            if not item:
                 # 清除選取（除非按住 Ctrl/Shift）
                 if not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
                     self.scene().clearSelection()
@@ -521,11 +619,13 @@ class TaskNode(QGraphicsRectItem):
         self._selection_handles = []
         self._handles_visible = False
         
-        # yEd 風格顏色
-        self.yedYellow = QColor(255, 215, 0)
-        self.normalBrush = QBrush(self.yedYellow)
-        self.selectedBrush = QBrush(self.yedYellow.lighter(110))
-        self.hoverBrush = QBrush(self.yedYellow.lighter(105))
+        # yEd 風格顏色 - 高彩度亮黃色與選取時的溫和米黃色
+        self.yedYellow = QColor(255, 255, 0)  # 高彩度亮黃色
+        self.selectedYellow = QColor(255, 245, 160)  # 選取時的溫和米黃色（比原來亮一些）
+        
+        self.normalBrush = QBrush(self.yedYellow)  # 未選取：高彩度亮黃色
+        self.selectedBrush = QBrush(self.selectedYellow)  # 選取：溫和米黃色
+        self.hoverBrush = QBrush(self.yedYellow.lighter(110))
         self.highlightBrush = QBrush(QColor(46, 204, 113))
         
         self.normalPen = QPen(Qt.black, 1)
@@ -569,6 +669,15 @@ class TaskNode(QGraphicsRectItem):
         for handle in self._selection_handles:
             handle.updatePosition()
     
+    def _updateHandlesPositionQuiet(self) -> None:
+        """靜默更新把手位置（不觸發重繪事件）"""
+        for handle in self._selection_handles:
+            # 暫時停用幾何變化通知來避免頻繁重繪
+            old_flags = handle.flags()
+            handle.setFlag(QGraphicsItem.ItemSendsGeometryChanges, False)
+            handle.updatePosition()
+            handle.setFlags(old_flags)
+    
     def _updateHandlesVisibility(self, visible: bool) -> None:
         """更新選取把手的可見性"""
         self._handles_visible = visible
@@ -582,15 +691,12 @@ class TaskNode(QGraphicsRectItem):
     def itemChange(self, change, value):
         """處理項目變化"""
         if change == QGraphicsItem.ItemSelectedChange:
-            # 選取狀態變化
-            if value:
-                # 被選中
-                self._updateHandlesVisibility(True)
-                self._updateHandlesPosition()
-            else:
-                # 取消選中
-                self._updateHandlesVisibility(False)
-            self.updateVisualState()
+            # 選取狀態變化 - 同步處理所有視覺效果
+            self._updateSelectionState(value)
+            # 立即強制重繪確保效果同步
+            self.update()
+            if self.scene():
+                self.scene().update(self.sceneBoundingRect())
             
         elif change == QGraphicsItem.ItemPositionChange:
             # 位置變化 - 對齊網格
@@ -705,8 +811,28 @@ class TaskNode(QGraphicsRectItem):
         self._is_highlighted = highlighted
         self.updateVisualState()
     
+    def _updateSelectionState(self, is_selected: bool) -> None:
+        """同步更新選取狀態的所有視覺效果"""
+        if is_selected:
+            # 被選中：立即顯示把手並更新顏色
+            self._updateHandlesVisibility(True)
+            self._updateHandlesPosition()
+            # 立即切換到選取顏色
+            self.setBrush(self.selectedBrush)
+            self.setPen(self.selectedPen)
+        else:
+            # 取消選中：立即隱藏把手並恢復原色
+            self._updateHandlesVisibility(False)
+            # 立即切換到正常顏色
+            if self.isHovered:
+                self.setBrush(self.hoverBrush)
+                self.setPen(self.hoverPen)
+            else:
+                self.setBrush(self.normalBrush)
+                self.setPen(self.normalPen)
+    
     def updateVisualState(self) -> None:
-        """更新視覺狀態"""
+        """更新視覺狀態 - 立即反應選取狀態變化"""
         if self._is_highlighted:
             self.setBrush(self.highlightBrush)
             self.setPen(self.highlightPen)
@@ -719,7 +845,12 @@ class TaskNode(QGraphicsRectItem):
         else:
             self.setBrush(self.normalBrush)
             self.setPen(self.normalPen)
+        
+        # 立即強制重繪以確保快速反應
         self.update()
+        # 強制場景也立即更新
+        if self.scene():
+            self.scene().update(self.sceneBoundingRect())
     
     def paint(self, painter, option, widget=None):
         """繪製節點"""
@@ -1176,6 +1307,8 @@ class DsmEditor(QDialog):
         # 建立場景和視圖
         self.scene = DsmScene(self)
         self.scene.setSceneRect(-5000, -5000, 10000, 10000)
+        # 設定場景背景為白色
+        self.scene.setBackgroundBrush(QBrush(QColor(255, 255, 255)))
         self.view = CanvasView(self.scene)
         layout.addWidget(self.view)
         
