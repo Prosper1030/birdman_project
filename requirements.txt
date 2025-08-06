@@ -1,28 +1,4 @@
-# Core dependencies for Birdman Project
-# 專案核心相依套件
-
-# Data processing and analysis / 資料處理與分析
-pandas>=2.0.0
-numpy>=1.24.0
-scipy>=1.10.0
-
-# Optimization and scheduling / 最佳化與排程
-ortools>=9.5.0
-networkx>=3.0
-
-# Visualization / 視覺化
-matplotlib>=3.6.0
-pillow>=10.0.0
-
-# GUI framework / GUI 框架
-PyQt5>=5.15.0
-QDarkStyle>=3.2.0
-
-# File processing / 檔案處理
-openpyxl>=3.1.0
-
-# Utilities / 工具套件
-python-dateutil>=2.8.0
-
-# Note: Removed exact version pins for better compatibility
-# 注意：移除精確版本號以提升相容性
+pandas
+openpyxl
+networkx
+matplotlib

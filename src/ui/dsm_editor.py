@@ -1415,6 +1415,26 @@ class DsmScene(QGraphicsScene):
 
         print(f"進入兩階段連線模式，固定點：({fixedPoint.x():.1f}, {fixedPoint.y():.1f})")
 
+    def addFixedPoint(self, point: QPointF) -> None:
+        """添加固定點到連線路徑"""
+        if not self.connectionMode:
+            return
+            
+        # 添加固定點到列表
+        self.fixedPoints.append(point)
+        
+        # 更新臨時連線以顯示新的路徑
+        if self.tempEdge:
+            self.updateTempConnection(point)
+        
+        print(f"添加固定點：({point.x():.1f}, {point.y():.1f})，總計 {len(self.fixedPoints)} 個固定點")
+
+    def endConnectionMode(self) -> None:
+        """結束連線模式並清理狀態"""
+        if self.connectionMode:
+            self.cancelConnectionMode()
+            print("連線模式已結束")
+
     def mouseMoveEvent(self, event):
         """場景滑鼠移動事件 - yEd 風格節點跟隨"""
         if self.connectionMode and self.tempEdge:

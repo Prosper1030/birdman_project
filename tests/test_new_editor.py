@@ -4,12 +4,8 @@
 """
 
 import sys
-import os
 import pandas as pd
 from PyQt5.QtWidgets import QApplication
-
-# 添加專案根目錄到路徑
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # 導入新版編輯器
 try:
