@@ -353,12 +353,6 @@ class ResizeHandle(QGraphicsRectItem):
             if hasattr(self.parent_node.editor, 'state'):
                 self.parent_node.editor.state = EditorState.IDLE
 
-            # 最終更新連接的邊（批量執行）
-            if hasattr(self.parent_node, '_edges_need_update') and self.parent_node._edges_need_update:
-                for edge in self.parent_node.edges:
-                    edge.updatePath()
-                self.parent_node._edges_need_update = False
-
             event.accept()
         else:
             super().mouseReleaseEvent(event)
@@ -438,8 +432,9 @@ class ResizeHandle(QGraphicsRectItem):
             # 批量更新把手位置（不觸發個別重繪）
             self.parent_node._updateHandlesPositionQuiet()
 
-        # 標記需要更新連線（但不立即更新，避免頻繁重繪）
-        self.parent_node._edges_need_update = True
+        # 即時更新與節點相連的邊，確保縮放過程中連線緊貼節點
+        for edge in self.parent_node.edges:
+            edge.updatePath()
 
 
 class CanvasView(QGraphicsView):
