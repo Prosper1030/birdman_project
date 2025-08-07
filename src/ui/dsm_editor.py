@@ -1367,7 +1367,14 @@ class EdgeItem(QGraphicsPathItem):
         return min(midpoints, key=lambda p: QLineF(p, point).length())
     
     def _buildPath(self, srcPoint: QPointF, dstPoint: QPointF) -> None:
-        """建立連線路徑並更新箭頭（opus 改進）"""
+        """建立連線路徑並更新箭頭（opus 改進）- 支援雙向邊線分離"""
+        # 檢查是否有相反方向的邊線
+        reverse_edge_exists = False
+        if hasattr(self.src, 'editor') and self.src.editor:
+            reverse_key = (self.dst.taskId, self.src.taskId)
+            if reverse_key in self.src.editor.edges:
+                reverse_edge_exists = True
+        
         # 計算調整後的終點（避免箭頭穿透）
         direction = dstPoint - srcPoint
         length = math.sqrt(direction.x()**2 + direction.y()**2)
@@ -1375,6 +1382,17 @@ class EdgeItem(QGraphicsPathItem):
         if length > self.PRECISION_TOLERANCE:
             direction /= length  # 正規化
             adjustedDst = dstPoint - direction * self.ARROW_BACK_OFFSET
+            
+            # 如果有相反方向邊線，調整路徑避免重疊
+            if reverse_edge_exists:
+                # 計算垂直於連線方向的偏移向量
+                perpendicular = QPointF(-direction.y(), direction.x())
+                offset_distance = 8  # 偏移 8 像素
+                
+                # 偏移起點和終點
+                srcPoint = srcPoint + perpendicular * offset_distance
+                adjustedDst = adjustedDst + perpendicular * offset_distance
+                dstPoint = dstPoint + perpendicular * offset_distance
         else:
             adjustedDst = dstPoint
         

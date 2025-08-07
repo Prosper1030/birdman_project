@@ -27,6 +27,7 @@ flake8 src/ tests/ main.py --max-line-length=120  # 檢查程式碼格式，限�
 - **純閱讀/分析任務**：不執行 pytest 或 flake8，避免浪費時間
 - **程式碼修改後**：必須執行測試與程式碼檢查確保品質
 - **文件修改**：通常不需要執行測試，除非涉及程式碼範例
+- **自動 Git 版本記錄**：每次程式碼修改完成後，Claude Code 會自動執行 git add -A 與 git commit，建立版本記錄
 
 ### Running the Application / 執行應用程式
 ```bash
