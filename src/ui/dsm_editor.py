@@ -67,7 +67,9 @@ class AddNodeCommand(Command):
         self.node = node
 
     def execute(self) -> None:
-        self.editor.scene.addItem(self.node)
+        # 檢查項目是否已在場景中，避免重複添加
+        if self.node.scene() != self.editor.scene:
+            self.editor.scene.addItem(self.node)
         self.editor.nodes[self.node.taskId] = self.node
 
     def undo(self) -> None:
@@ -86,8 +88,11 @@ class AddEdgeCommand(Command):
     def execute(self) -> None:
         if (self.src.taskId, self.dst.taskId) not in self.editor.edges:
             self.edge = EdgeItem(self.src, self.dst)
-            self.editor.scene.addItem(self.edge)
-            if hasattr(self.edge, 'arrowHead'):
+            # 檢查邊線是否已在場景中
+            if self.edge.scene() != self.editor.scene:
+                self.editor.scene.addItem(self.edge)
+            # 檢查箭頭是否已在場景中
+            if hasattr(self.edge, 'arrowHead') and self.edge.arrowHead.scene() != self.editor.scene:
                 self.editor.scene.addItem(self.edge.arrowHead)
             self.src.edges.append(self.edge)
             self.dst.edges.append(self.edge)
@@ -122,8 +127,11 @@ class RemoveEdgeCommand(Command):
 
     def undo(self) -> None:
         if self.edge:
-            self.editor.scene.addItem(self.edge)
-            if hasattr(self.edge, 'arrowHead'):
+            # 檢查邊線是否已在場景中
+            if self.edge.scene() != self.editor.scene:
+                self.editor.scene.addItem(self.edge)
+            # 檢查箭頭是否已在場景中  
+            if hasattr(self.edge, 'arrowHead') and self.edge.arrowHead.scene() != self.editor.scene:
                 self.editor.scene.addItem(self.edge.arrowHead)
             self.src.edges.append(self.edge)
             self.dst.edges.append(self.edge)
@@ -1432,7 +1440,10 @@ class DsmScene(QGraphicsScene):
         # 建立臨時邊
         self.tempEdge = EdgeItem(sourceNode, sourceNode)
         self.tempEdge.setTemporary(True)
-        self.addItem(self.tempEdge)
+        
+        # 檢查臨時邊線是否已在場景中，避免重複添加
+        if self.tempEdge.scene() != self:
+            self.addItem(self.tempEdge)
 
         # 設定游標
         for view in self.views():
@@ -1783,10 +1794,16 @@ class DsmEditor(QDialog):
             else:
                 text = name
 
+            # 檢查節點是否已存在，避免重複添加
+            if taskId in self.nodes:
+                continue
+
             node = TaskNode(taskId, text, yedYellow, self)
             node.setPos((i % cols) * 180, (i // cols) * 120)
 
-            self.scene.addItem(node)
+            # 檢查項目是否已在場景中，避免重複添加警告
+            if node.scene() != self.scene:
+                self.scene.addItem(node)
             self.nodes[taskId] = node
 
     def executeCommand(self, command: Command) -> None:
@@ -1845,7 +1862,7 @@ class DsmEditor(QDialog):
             self.applyForceDirectedLayout()
 
     def applyHierarchicalLayout(self) -> None:
-        """階層式佈局"""
+        """階層式佈局 - 增強循環檢測"""
         graph = nx.DiGraph()
         for taskId in self.nodes:
             graph.add_node(taskId)
@@ -1853,6 +1870,13 @@ class DsmEditor(QDialog):
             graph.add_edge(src, dst)
 
         try:
+            # 檢查是否有循環
+            if not nx.is_directed_acyclic_graph(graph):
+                print("警告：圖形包含循環，無法進行拓撲排序。使用替代佈局...")
+                self.applySimpleHierarchicalLayout()
+                return
+
+            # 進行拓撲排序
             layers = {}
             for node in nx.topological_sort(graph):
                 predecessors = list(graph.predecessors(node))
@@ -1879,7 +1903,11 @@ class DsmEditor(QDialog):
                     if nodeId in self.nodes:
                         self.nodes[nodeId].setPos(x, y)
 
-        except nx.NetworkXError:
+        except nx.NetworkXError as e:
+            print(f"NetworkX 錯誤：{e}")
+            self.applySimpleHierarchicalLayout()
+        except Exception as e:
+            print(f"佈局錯誤：{e}")
             self.applySimpleHierarchicalLayout()
 
     def applySimpleHierarchicalLayout(self) -> None:
