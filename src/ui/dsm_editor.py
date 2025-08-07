@@ -1073,6 +1073,73 @@ class TaskNode(QGraphicsRectItem):
         del self.editor.nodes[self.taskId]
 
 
+class GlowArrowHead(QGraphicsPathItem):
+    """支援發光效果的箭頭"""
+    
+    def __init__(self, parent_edge):
+        super().__init__()
+        self.parent_edge = parent_edge
+        
+    def paint(self, painter, option, widget=None):
+        """繪製發光箭頭 - 支援所有狀態"""
+        try:
+            # 移除預設選取框
+            from PyQt5.QtWidgets import QStyle
+            option.state &= ~QStyle.State_Selected
+            
+            if not self.path().isEmpty():
+                # 判斷父邊線的狀態
+                is_selected = getattr(self.parent_edge, '_is_selected', False)
+                is_shift_highlighted = getattr(self.parent_edge, '_is_shift_highlighted', False)
+                is_hovered = getattr(self.parent_edge, '_is_hovered', False)
+                
+                # 繪製發光效果（與父邊線同步）
+                if is_shift_highlighted:
+                    # Shift + 懸停：最亮的發光效果
+                    glow_brush = QBrush(QColor(255, 220, 50, 150))
+                    glow_pen = QPen(QColor(255, 220, 50, 150), 4)
+                    painter.setBrush(glow_brush)
+                    painter.setPen(glow_pen)
+                    painter.drawPath(self.path())
+                    
+                    mid_brush = QBrush(QColor(255, 200, 50, 200))
+                    mid_pen = QPen(QColor(255, 200, 50, 200), 2)
+                    painter.setBrush(mid_brush)
+                    painter.setPen(mid_pen)
+                    painter.drawPath(self.path())
+                    
+                elif is_selected:
+                    # 選取狀態：橘色發光效果
+                    glow_brush = QBrush(QColor(255, 165, 0, 120))
+                    glow_pen = QPen(QColor(255, 165, 0, 120), 3)
+                    painter.setBrush(glow_brush)
+                    painter.setPen(glow_pen)
+                    painter.drawPath(self.path())
+                    
+                    mid_brush = QBrush(QColor(255, 165, 0, 180))
+                    mid_pen = QPen(QColor(255, 165, 0, 180), 1)
+                    painter.setBrush(mid_brush)
+                    painter.setPen(mid_pen)
+                    painter.drawPath(self.path())
+                    
+                elif is_hovered:
+                    # 普通懸停：淡淡的發光
+                    glow_brush = QBrush(QColor(255, 165, 0, 80))
+                    glow_pen = QPen(QColor(255, 165, 0, 80), 2)
+                    painter.setBrush(glow_brush)
+                    painter.setPen(glow_pen)
+                    painter.drawPath(self.path())
+                
+                # 永遠繪製主要黑色箭頭
+                painter.setBrush(QBrush(Qt.black))
+                painter.setPen(QPen(Qt.black, 1))
+                painter.drawPath(self.path())
+                
+        except Exception as e:
+            print(f"GlowArrowHead paint error: {e}")
+            super().paint(painter, option, widget)
+
+
 class EdgeItem(QGraphicsPathItem):
     """代表依賴關係的箭頭連線 - 精確連線版本"""
     
@@ -1102,10 +1169,8 @@ class EdgeItem(QGraphicsPathItem):
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setAcceptHoverEvents(True)
 
-        # 建立箭頭
-        self.arrowHead = QGraphicsPathItem()
-        self.arrowHead.setBrush(QBrush(Qt.black))
-        self.arrowHead.setPen(QPen(Qt.black, 1))
+        # 建立箭頭 - 使用自定義類別支援發光效果
+        self.arrowHead = GlowArrowHead(self)
         self.arrowHead.setZValue(2)
         self.arrowHead.setParentItem(self)
         
@@ -1374,38 +1439,66 @@ class EdgeItem(QGraphicsPathItem):
             shift_pressed = modifiers & Qt.ShiftModifier
             
             if shift_pressed:
-                # Shift + 懸停：使用更亮的橘色高亮
-                bright_orange = QColor(255, 200, 50)  # 更亮的橘黃色
-                bright_pen = QPen(bright_orange, 5, Qt.SolidLine)  # 更粗的線條
-                self.setPen(bright_pen)
-                
-                # 箭頭也變亮橘色
-                if hasattr(self, 'arrowHead') and self.arrowHead:
-                    self.arrowHead.setBrush(QBrush(bright_orange))
-                    self.arrowHead.setPen(QPen(bright_orange, 1))
+                # Shift + 懸停：設定發亮狀態
+                self._is_shift_highlighted = True
             else:
-                # 普通懸停：使用標準懸停效果
-                self.setPen(self.hoverPen)
+                # 普通懸停
+                self._is_hovered = True
+            
+            # 觸發重繪
+            self.update()
+            if hasattr(self, 'arrowHead') and self.arrowHead:
+                self.arrowHead.update()
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
         """滑鼠懸停離開"""
         if not self.isTemporary:
-            if self.isSelected():
-                # 恢復選取狀態的橘色
-                orange_color = QColor(255, 165, 0)
-                selected_pen = QPen(orange_color, 4, Qt.SolidLine)
-                self.setPen(selected_pen)
-                
-                if hasattr(self, 'arrowHead') and self.arrowHead:
-                    self.arrowHead.setBrush(QBrush(orange_color))
-                    self.arrowHead.setPen(QPen(orange_color, 1))
-            else:
-                self.setPen(self.normalPen)
-                if hasattr(self, 'arrowHead') and self.arrowHead:
-                    self.arrowHead.setBrush(QBrush(Qt.black))
-                    self.arrowHead.setPen(QPen(Qt.black, 1))
+            # 清除懸停狀態
+            self._is_hovered = False
+            self._is_shift_highlighted = False
+            
+            # 觸發重繪
+            self.update()
+            if hasattr(self, 'arrowHead') and self.arrowHead:
+                self.arrowHead.update()
         super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        """滑鼠按下事件 - 處理邊線選取"""
+        if event.button() == Qt.LeftButton and not self.isTemporary:
+            # 檢查 Shift 鍵是否按下 - 多選模式
+            from PyQt5.QtWidgets import QApplication
+            modifiers = QApplication.keyboardModifiers()
+            shift_pressed = modifiers & Qt.ShiftModifier
+            
+            if not shift_pressed:
+                # 單選模式：清除其他選取
+                scene = self.scene()
+                if scene:
+                    for item in scene.items():
+                        if isinstance(item, EdgeItem) and item != self:
+                            item._is_selected = False
+                            item.update()
+                            if hasattr(item, 'arrowHead') and item.arrowHead:
+                                item.arrowHead.update()
+            
+            # 切換當前邊線的選取狀態
+            self._is_selected = not getattr(self, '_is_selected', False)
+            
+            # 清除懸停狀態（避免衝突）
+            self._is_hovered = False
+            self._is_shift_highlighted = False
+            
+            # 觸發重繪
+            self.update()
+            if hasattr(self, 'arrowHead') and self.arrowHead:
+                self.arrowHead.update()
+            
+            print(f"邊線 {self.src.taskId} -> {self.dst.taskId} {'選取' if self._is_selected else '取消選取'}")
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
     def contextMenuEvent(self, event):
         """右鍵選單"""
@@ -1438,34 +1531,74 @@ class EdgeItem(QGraphicsPathItem):
                 editor.executeCommand(command)
     
     def itemChange(self, change, value):
-        """處理邊線狀態變化 - yEd 風格橘黃色高亮"""
+        """處理邊線狀態變化 - 真正 yEd 風格：黑線 + 橘色發光"""
         if change == QGraphicsItem.ItemSelectedChange:
-            try:
-                if value:  # 被選取
-                    # yEd 風格：使用明顯的橘黃色高亮
-                    orange_color = QColor(255, 165, 0)  # 橘色 #FFA500
-                    selected_pen = QPen(orange_color, 4, Qt.SolidLine)  # 加粗至4像素
-                    self.setPen(selected_pen)
-                    
-                    # 箭頭也使用橘色
-                    if hasattr(self, 'arrowHead') and self.arrowHead:
-                        self.arrowHead.setBrush(QBrush(orange_color))
-                        # 箭頭邊框也設為橘色
-                        self.arrowHead.setPen(QPen(orange_color, 1))
-                else:  # 取消選取
-                    self.setPen(self.normalPen)
-                    if hasattr(self, 'arrowHead') and self.arrowHead:
-                        self.arrowHead.setBrush(QBrush(Qt.black))
-                        self.arrowHead.setPen(QPen(Qt.black, 1))
-            except Exception as e:
-                print(f"EdgeItem selection change error: {e}")
-                # 安全回退到原始行為
-                if value:
-                    self.setPen(self.selectedPen)
-                else:
-                    self.setPen(self.normalPen)
+            self._is_selected = value
+            # 更新重繪，讓 paint() 方法處理視覺效果
+            self.update()
                 
         return super().itemChange(change, value)
+    
+    def paint(self, painter, option, widget=None):
+        """自訂繪製方法 - 實現 yEd 風格發光效果"""
+        try:
+            # 移除 Qt 預設選取框
+            from PyQt5.QtWidgets import QStyle
+            option.state &= ~QStyle.State_Selected
+            
+            # 判斷當前狀態
+            is_selected = getattr(self, '_is_selected', False)
+            is_shift_highlighted = getattr(self, '_is_shift_highlighted', False)
+            is_hovered = getattr(self, '_is_hovered', False)
+            
+            # 繪製發光效果
+            if is_shift_highlighted:
+                # Shift + 懸停：最亮的發光效果
+                glow_pen = QPen(QColor(255, 220, 50, 150), 10, Qt.SolidLine)  # 亮橘黃色
+                glow_pen.setCapStyle(Qt.RoundCap)
+                glow_pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(glow_pen)
+                painter.drawPath(self.path())
+                
+                mid_glow_pen = QPen(QColor(255, 200, 50, 200), 6, Qt.SolidLine)
+                mid_glow_pen.setCapStyle(Qt.RoundCap)
+                mid_glow_pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(mid_glow_pen)
+                painter.drawPath(self.path())
+                
+            elif is_selected:
+                # 選取狀態：橘色發光效果
+                glow_pen = QPen(QColor(255, 165, 0, 120), 8, Qt.SolidLine)  # 半透明橘色
+                glow_pen.setCapStyle(Qt.RoundCap)
+                glow_pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(glow_pen)
+                painter.drawPath(self.path())
+                
+                mid_glow_pen = QPen(QColor(255, 165, 0, 180), 5, Qt.SolidLine)
+                mid_glow_pen.setCapStyle(Qt.RoundCap)
+                mid_glow_pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(mid_glow_pen)
+                painter.drawPath(self.path())
+                
+            elif is_hovered:
+                # 普通懸停：淡淡的發光
+                glow_pen = QPen(QColor(255, 165, 0, 80), 4, Qt.SolidLine)  # 很淡的橘色
+                glow_pen.setCapStyle(Qt.RoundCap)
+                glow_pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(glow_pen)
+                painter.drawPath(self.path())
+            
+            # 永遠繪製主要黑色邊線
+            main_pen = QPen(Qt.black, 2, Qt.SolidLine)
+            main_pen.setCapStyle(Qt.RoundCap)
+            main_pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(main_pen)
+            painter.drawPath(self.path())
+            
+        except Exception as e:
+            print(f"EdgeItem paint error: {e}")
+            # 回退到預設繪製
+            super().paint(painter, option, widget)
     
     def shape(self):
         """定義擴大的選取區域 - 包含箭頭和粗線條"""
