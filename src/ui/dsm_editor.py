@@ -1483,37 +1483,71 @@ class EdgeItem(QGraphicsPathItem):
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
-        """滑鼠按下事件 - 處理邊線選取"""
+        """滑鼠按下事件 - 處理邊線選取與多選"""
         if event.button() == Qt.LeftButton and not self.isTemporary:
             # 檢查 Shift 鍵是否按下 - 多選模式
             from PyQt5.QtWidgets import QApplication
             modifiers = QApplication.keyboardModifiers()
             shift_pressed = modifiers & Qt.ShiftModifier
             
-            if not shift_pressed:
-                # 單選模式：清除其他選取
+            current_selected = getattr(self, '_is_selected', False)
+            
+            if shift_pressed:
+                # Shift 多選模式：切換當前邊線狀態，保持其他選取
+                self._is_selected = not current_selected
+                
+                # 觸發重繪（先更新視覺）
+                self.update()
+                if hasattr(self, 'arrowHead') and self.arrowHead:
+                    self.arrowHead.update()
+                
+                # 確保其他已選中的邊線保持選中狀態和視覺效果
+                scene = self.scene()
+                selected_count = 0
+                selected_edges = []
+                if scene:
+                    for item in scene.items():
+                        if isinstance(item, EdgeItem) and getattr(item, '_is_selected', False):
+                            selected_count += 1
+                            selected_edges.append(f"{item.src.taskId}->{item.dst.taskId}")
+                            # 確保每個選中的邊線都重新繪製
+                            item.update()
+                            if hasattr(item, 'arrowHead') and item.arrowHead:
+                                item.arrowHead.update()
+                
+                print(f"[Shift多選] 邊線 {self.src.taskId} -> {self.dst.taskId} {'選取' if self._is_selected else '取消選取'}")
+                print(f"    當前選取的邊線: {selected_edges} (總共: {selected_count})")
+            else:
+                # 單選模式：清除其他選取，選中當前邊線
                 scene = self.scene()
                 if scene:
                     for item in scene.items():
                         if isinstance(item, EdgeItem) and item != self:
-                            item._is_selected = False
-                            item.update()
-                            if hasattr(item, 'arrowHead') and item.arrowHead:
-                                item.arrowHead.update()
+                            if getattr(item, '_is_selected', False):
+                                item._is_selected = False
+                                item.update()
+                                if hasattr(item, 'arrowHead') and item.arrowHead:
+                                    item.arrowHead.update()
+                
+                # 單選模式：直接選中當前邊線（不切換）
+                if not current_selected:
+                    self._is_selected = True
+                    print(f"[單選] 邊線 {self.src.taskId} -> {self.dst.taskId} 選取")
+                else:
+                    # 如果已選中，則取消選取
+                    self._is_selected = False
+                    print(f"[單選] 邊線 {self.src.taskId} -> {self.dst.taskId} 取消選取")
             
-            # 切換當前邊線的選取狀態
-            self._is_selected = not getattr(self, '_is_selected', False)
-            
-            # 清除懸停狀態（避免衝突）
+            # 清除懸停狀態（避免視覺衝突）
             self._is_hovered = False
             self._is_shift_highlighted = False
             
-            # 觸發重繪
-            self.update()
-            if hasattr(self, 'arrowHead') and self.arrowHead:
-                self.arrowHead.update()
+            # 如果不是 Shift 模式，需要重繪（Shift 模式已經重繪過了）
+            if not shift_pressed:
+                self.update()
+                if hasattr(self, 'arrowHead') and self.arrowHead:
+                    self.arrowHead.update()
             
-            print(f"邊線 {self.src.taskId} -> {self.dst.taskId} {'選取' if self._is_selected else '取消選取'}")
             event.accept()
         else:
             super().mousePressEvent(event)
