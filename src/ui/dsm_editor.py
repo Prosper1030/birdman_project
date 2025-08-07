@@ -12,7 +12,7 @@ from enum import Enum
 
 import pandas as pd
 import networkx as nx
-from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtCore import Qt, QPointF, QRectF, QLineF
 from PyQt5.QtGui import QColor, QPen, QBrush, QPainter, QPainterPath, QFont, QKeySequence
 from PyQt5.QtWidgets import (
     QDialog,
@@ -840,28 +840,6 @@ class TaskNode(QGraphicsRectItem):
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        """滑鼠釋放事件 - yEd 標準行為"""
-        if event.button() == Qt.LeftButton and hasattr(self, 'pressedInNode'):
-            current_pos = event.scenePos()
-
-            if self.isConnecting:
-                # 在連線模式中放開
-                item = self.scene().itemAt(current_pos, self.scene().views()[0].transform())
-                if isinstance(item, TaskNode) and item != self:
-                    # 完成連線
-                    if hasattr(self.editor.scene, 'finishConnection'):
-                        self.editor.scene.finishConnection(item)
-                else:
-                    # 在空白處放開 - 轉為兩階段連線模式
-                    if hasattr(self.editor.scene, 'enterSecondPhaseConnection'):
-                        self.editor.scene.enterSecondPhaseConnection(current_pos)
-                    else:
-                        # 如果沒有兩階段模式，就取消連線
-                        if hasattr(self.editor.scene, 'cancelConnectionMode'):
-                            self.editor.scene.cancelConnectionMode()
-                        self.stopConnectionMode()
-
-    def mouseReleaseEvent(self, event):
         """滑鼠釋放事件 - yEd 標準邏輯：關鍵判斷點"""
         if event.button() == Qt.LeftButton and hasattr(self, 'pressedInNode'):
             current_pos = event.scenePos()
@@ -1093,7 +1071,13 @@ class TaskNode(QGraphicsRectItem):
 
 
 class EdgeItem(QGraphicsPathItem):
-    """代表依賴關係的箭頭連線 - 效能優化版"""
+    """代表依賴關係的箭頭連線 - 精確連線版本"""
+    
+    # 精確度常數（從 opus 改進方案）
+    PRECISION_TOLERANCE = 0.01
+    ARROW_SIZE = 15
+    ARROW_ANGLE = math.pi / 6
+    ARROW_BACK_OFFSET = 1
 
     def __init__(self, src: TaskNode, dst: TaskNode) -> None:
         super().__init__()
@@ -1121,6 +1105,12 @@ class EdgeItem(QGraphicsPathItem):
         self.arrowHead.setPen(QPen(Qt.black, 1))
         self.arrowHead.setZValue(2)
         self.arrowHead.setParentItem(self)
+        
+        # 精確連線系統：效能優化快取
+        self._cached_src_point = None
+        self._cached_dst_point = None
+        self._cached_src_rect = None
+        self._cached_dst_rect = None
 
         self.updatePath()
 
@@ -1135,98 +1125,242 @@ class EdgeItem(QGraphicsPathItem):
             self.arrowHead.setBrush(QBrush(Qt.black))
 
     def updatePath(self) -> None:
-        """更新路徑 - 效能優化版"""
+        """更新路徑 - 精確連線版本（從 opus 改進）"""
         if not self.src or not self.dst:
             return
 
-        # 使用快取的邊界矩形
+        # 獲取節點邊界
         srcRect = self.src.sceneBoundingRect()
         dstRect = self.dst.sceneBoundingRect()
+        
+        # 檢查快取
+        if (self._cached_src_rect == srcRect and 
+            self._cached_dst_rect == dstRect and
+            self._cached_src_point and self._cached_dst_point):
+            return  # 使用快取結果
+        
+        # 計算連線點
+        srcPoint, dstPoint = self._calculateConnectionPoints(srcRect, dstRect)
+        
+        if not srcPoint or not dstPoint:
+            return
+        
+        # 快取結果
+        self._cached_src_rect = QRectF(srcRect)
+        self._cached_dst_rect = QRectF(dstRect)
+        self._cached_src_point = srcPoint
+        self._cached_dst_point = dstPoint
+        
+        # 建立路徑
+        self._buildPath(srcPoint, dstPoint)
 
+    def _calculateConnectionPoints(self, srcRect: QRectF, dstRect: QRectF):
+        """計算源和目標的精確連線點（opus 改進）"""
         srcCenter = srcRect.center()
         dstCenter = dstRect.center()
-
+        
+        # 使用中心線計算交點
+        centerLine = QLineF(srcCenter, dstCenter)
+        
+        # 計算源點
+        srcPoint = self._getRectLineIntersection(srcRect, centerLine, True)
+        if not srcPoint:
+            srcPoint = self._getAlternativeConnectionPoint(srcRect, srcCenter, dstCenter, True)
+        
+        # 基於源點重新計算到目標的線
+        if srcPoint:
+            adjustedLine = QLineF(srcPoint, dstCenter)
+            dstPoint = self._getRectLineIntersection(dstRect, adjustedLine, False)
+            if not dstPoint:
+                dstPoint = self._getAlternativeConnectionPoint(dstRect, dstCenter, srcPoint, False)
+        else:
+            dstPoint = None
+        
+        return srcPoint, dstPoint
+    
+    def _getRectLineIntersection(self, rect: QRectF, line: QLineF, isSource: bool):
+        """計算線與矩形的精確交點（opus 改進）"""
+        # 定義矩形的四條邊
+        edges = [
+            QLineF(rect.topLeft(), rect.topRight()),      # 上
+            QLineF(rect.topRight(), rect.bottomRight()),   # 右
+            QLineF(rect.bottomRight(), rect.bottomLeft()), # 下
+            QLineF(rect.bottomLeft(), rect.topLeft())      # 左
+        ]
+        
+        intersections = []
+        
+        for edge in edges:
+            intersectType, intersectPoint = edge.intersects(line)
+            
+            # 只接受有界交點
+            if intersectType == QLineF.BoundedIntersection:
+                # 驗證交點確實在邊上（處理浮點誤差）
+                if self._isPointOnEdge(intersectPoint, edge):
+                    intersections.append(intersectPoint)
+        
+        if not intersections:
+            return None
+        
+        # 選擇最合適的交點
+        if len(intersections) == 1:
+            return intersections[0]
+        
+        # 多個交點時，選擇策略
+        if isSource:
+            # 源節點：選擇離目標最近的點
+            targetPoint = line.p2()
+            return min(intersections, 
+                      key=lambda p: QLineF(p, targetPoint).length())
+        else:
+            # 目標節點：選擇離源最近的點
+            sourcePoint = line.p1()
+            return min(intersections, 
+                      key=lambda p: QLineF(sourcePoint, p).length())
+    
+    def _isPointOnEdge(self, point: QPointF, edge: QLineF) -> bool:
+        """檢查點是否真的在邊上（考慮浮點誤差）"""
+        # 計算點到線段的距離
+        lineVec = edge.p2() - edge.p1()
+        pointVec = point - edge.p1()
+        lineLength = edge.length()
+        
+        if lineLength < self.PRECISION_TOLERANCE:
+            return False
+        
+        # 計算投影
+        t = QPointF.dotProduct(pointVec, lineVec) / (lineLength * lineLength)
+        
+        # 檢查t是否在[0,1]範圍內
+        if t < -self.PRECISION_TOLERANCE or t > 1 + self.PRECISION_TOLERANCE:
+            return False
+        
+        # 計算投影點
+        projection = edge.p1() + t * lineVec
+        
+        # 計算距離
+        distance = QLineF(point, projection).length()
+        
+        return distance < self.PRECISION_TOLERANCE
+    
+    def _getAlternativeConnectionPoint(self, rect: QRectF, rectCenter: QPointF, 
+                                     otherPoint: QPointF, isSource: bool) -> QPointF:
+        """備用方法：當標準方法失敗時計算連線點（opus 改進）"""
         # 計算方向
-        dx = dstCenter.x() - srcCenter.x()
-        dy = dstCenter.y() - srcCenter.y()
-        length = math.sqrt(dx * dx + dy * dy)
-
-        if length < 1:
-            return
-
-        # 正規化
-        dx /= length
-        dy /= length
-
-        # 計算連接點
-        srcPos = self.getConnectionPoint(srcRect, srcCenter, dx, dy)
-        dstPos = self.getConnectionPoint(dstRect, dstCenter, -dx, -dy)
-
-        # 建立路徑
-        path = QPainterPath()
-        path.moveTo(srcPos)
-        path.lineTo(dstPos)
-        self.setPath(path)
-
-        # 更新箭頭
-        self.updateArrowHead(srcPos, dstPos)
-
-    def getConnectionPoint(self, rect, center, dx, dy):
-        """計算與矩形邊界的交點"""
+        dx = otherPoint.x() - rectCenter.x()
+        dy = otherPoint.y() - rectCenter.y()
+        
+        if abs(dx) < self.PRECISION_TOLERANCE and abs(dy) < self.PRECISION_TOLERANCE:
+            return rectCenter
+        
+        # 確定主要方向並計算交點
         halfWidth = rect.width() / 2
         halfHeight = rect.height() / 2
-
-        if abs(dx) > abs(dy):
-            if dx > 0:
-                x = center.x() + halfWidth
-                y = center.y() + dy * halfWidth / abs(dx)
-            else:
-                x = center.x() - halfWidth
-                y = center.y() - dy * halfWidth / abs(dx)
+        
+        # 使用斜率判斷
+        if abs(dx) > self.PRECISION_TOLERANCE:
+            slope = dy / dx
+            
+            # 檢查與垂直邊的交點
+            if dx > 0:  # 向右
+                y_at_right = rectCenter.y() + slope * halfWidth
+                if abs(y_at_right - rectCenter.y()) <= halfHeight:
+                    return QPointF(rect.right(), y_at_right)
+            else:  # 向左
+                y_at_left = rectCenter.y() - slope * halfWidth
+                if abs(y_at_left - rectCenter.y()) <= halfHeight:
+                    return QPointF(rect.left(), y_at_left)
+        
+        # 檢查與水平邊的交點
+        if abs(dy) > self.PRECISION_TOLERANCE:
+            inv_slope = dx / dy
+            
+            if dy > 0:  # 向下
+                x_at_bottom = rectCenter.x() + inv_slope * halfHeight
+                if abs(x_at_bottom - rectCenter.x()) <= halfWidth:
+                    return QPointF(x_at_bottom, rect.bottom())
+            else:  # 向上
+                x_at_top = rectCenter.x() - inv_slope * halfHeight
+                if abs(x_at_top - rectCenter.x()) <= halfWidth:
+                    return QPointF(x_at_top, rect.top())
+        
+        # 最後的備用：返回最近的邊中點
+        return self._getNearestEdgeMidpoint(rect, otherPoint)
+    
+    def _getNearestEdgeMidpoint(self, rect: QRectF, point: QPointF) -> QPointF:
+        """獲取最近的邊中點作為連線點（opus 改進）"""
+        midpoints = [
+            QPointF(rect.center().x(), rect.top()),     # 上中
+            QPointF(rect.right(), rect.center().y()),    # 右中
+            QPointF(rect.center().x(), rect.bottom()),   # 下中
+            QPointF(rect.left(), rect.center().y())      # 左中
+        ]
+        
+        return min(midpoints, key=lambda p: QLineF(p, point).length())
+    
+    def _buildPath(self, srcPoint: QPointF, dstPoint: QPointF) -> None:
+        """建立連線路徑並更新箭頭（opus 改進）"""
+        # 計算調整後的終點（避免箭頭穿透）
+        direction = dstPoint - srcPoint
+        length = math.sqrt(direction.x()**2 + direction.y()**2)
+        
+        if length > self.PRECISION_TOLERANCE:
+            direction /= length  # 正規化
+            adjustedDst = dstPoint - direction * self.ARROW_BACK_OFFSET
         else:
-            if dy > 0:
-                y = center.y() + halfHeight
-                x = center.x() + dx * halfHeight / abs(dy)
-            else:
-                y = center.y() - halfHeight
-                x = center.x() - dx * halfHeight / abs(dy)
+            adjustedDst = dstPoint
+        
+        # 建立路徑
+        path = QPainterPath()
+        path.moveTo(srcPoint)
+        path.lineTo(adjustedDst)
+        self.setPath(path)
+        
+        # 更新箭頭
+        self._updateArrowHead(srcPoint, dstPoint)
+    
+    def getConnectionPoint(self, rect, center, dx, dy):
+        """保留的相容性方法 - 現在調用更精確的方法"""
+        targetPoint = QPointF(center.x() + dx * 1000, center.y() + dy * 1000)
+        return self._getAlternativeConnectionPoint(rect, center, targetPoint, True)
 
-        return QPointF(x, y)
-
-    def updateArrowHead(self, srcPos, dstPos):
-        """更新箭頭"""
+    def _updateArrowHead(self, srcPos: QPointF, dstPos: QPointF) -> None:
+        """更新箭頭形狀，確保精確指向目標（opus 改進）"""
+        # 計算方向角度
         dx = dstPos.x() - srcPos.x()
         dy = dstPos.y() - srcPos.y()
-        length = math.sqrt(dx * dx + dy * dy)
-
-        if length < 1:
+        
+        if abs(dx) < self.PRECISION_TOLERANCE and abs(dy) < self.PRECISION_TOLERANCE:
+            self.arrowHead.setPath(QPainterPath())
             return
-
-        dx /= length
-        dy /= length
-
-        arrowSize = 15
-        arrowAngle = math.pi / 6
-
-        tip = dstPos
+        
         angle = math.atan2(dy, dx)
-
+        
+        # 計算箭頭三個頂點
+        tip = dstPos  # 箭頭尖端精確在節點邊緣
+        
         left = QPointF(
-            tip.x() - arrowSize * math.cos(angle - arrowAngle),
-            tip.y() - arrowSize * math.sin(angle - arrowAngle)
+            tip.x() - self.ARROW_SIZE * math.cos(angle - self.ARROW_ANGLE),
+            tip.y() - self.ARROW_SIZE * math.sin(angle - self.ARROW_ANGLE)
         )
+        
         right = QPointF(
-            tip.x() - arrowSize * math.cos(angle + arrowAngle),
-            tip.y() - arrowSize * math.sin(angle + arrowAngle)
+            tip.x() - self.ARROW_SIZE * math.cos(angle + self.ARROW_ANGLE),
+            tip.y() - self.ARROW_SIZE * math.sin(angle + self.ARROW_ANGLE)
         )
-
+        
+        # 建立箭頭路徑
         arrowPath = QPainterPath()
         arrowPath.moveTo(tip)
         arrowPath.lineTo(left)
         arrowPath.lineTo(right)
         arrowPath.closeSubpath()
-
+        
         self.arrowHead.setPath(arrowPath)
+    
+    def updateArrowHead(self, srcPos, dstPos, adjustedDstPos=None):
+        """保留的相容性方法 - 調用新的精確實作"""
+        self._updateArrowHead(srcPos, dstPos)
 
     def hoverEnterEvent(self, event):
         """滑鼠懸停進入"""
