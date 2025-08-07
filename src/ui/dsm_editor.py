@@ -33,6 +33,8 @@ from PyQt5.QtWidgets import (
     QRubberBand,
 )
 
+from .selection_styles import SelectionStyleManager
+
 
 class EditorState(Enum):
     """編輯器狀態枚舉"""
@@ -664,18 +666,14 @@ class TaskNode(QGraphicsRectItem):
         self._selection_handles = []
         self._handles_visible = False
 
-        # yEd 風格顏色 - 高彩度亮黃色與選取時的溫和米黃色
-        self.yedYellow = QColor(255, 255, 0)  # 高彩度亮黃色
-        self.selectedYellow = QColor(255, 245, 160)  # 選取時的溫和米黃色（比原來亮一些）
+        # 基礎顏色設定：以亮黃色為主體顏色
+        baseColor = QColor(255, 255, 0)
 
-        self.normalBrush = QBrush(self.yedYellow)  # 未選取：高彩度亮黃色
-        self.selectedBrush = QBrush(self.selectedYellow)  # 選取：溫和米黃色
-        self.hoverBrush = QBrush(self.yedYellow.lighter(110))
+        # 基礎筆刷與畫筆定義（選取樣式將由 SelectionStyleManager 動態產生）
+        self.normalBrush = QBrush(baseColor)
         self.highlightBrush = QBrush(QColor(46, 204, 113))
 
         self.normalPen = QPen(Qt.black, 1)
-        self.selectedPen = QPen(Qt.black, 2)
-        self.hoverPen = QPen(Qt.black, 1)
         self.highlightPen = QPen(QColor(46, 204, 113), 2, Qt.DashLine)
 
         # 設定初始樣式
@@ -937,14 +935,15 @@ class TaskNode(QGraphicsRectItem):
         # 恢復正常視覺狀態
         self.setOpacity(1.0)  # 恢復不透明
 
-        # 如果仍然選中，顯示調整把手
+        # 如果仍然選中，顯示調整把手並恢復選取樣式
         if self.isSelected():
             for handle in self._selection_handles:
                 handle.setVisible(True)
-            # 恢復選中狀態的邊框
-            self.setPen(self.selectedPen)
+            self.setBrush(SelectionStyleManager.create_selection_brush(self.normalBrush, "selected"))
+            self.setPen(SelectionStyleManager.create_selection_pen(self.normalPen, "selected"))
         else:
-            # 恢復正常邊框
+            # 未選中時恢復一般樣式
+            self.setBrush(self.normalBrush)
             self.setPen(self.normalPen)
 
         print("連線模式已結束")
@@ -978,9 +977,9 @@ class TaskNode(QGraphicsRectItem):
             # 被選中：立即顯示把手並更新顏色
             self._updateHandlesVisibility(True)
             self._updateHandlesPosition()
-            # 立即切換到選取顏色
-            self.setBrush(self.selectedBrush)
-            self.setPen(self.selectedPen)
+            # 透過 SelectionStyleManager 產生選取樣式
+            self.setBrush(SelectionStyleManager.create_selection_brush(self.normalBrush, "selected"))
+            self.setPen(SelectionStyleManager.create_selection_pen(self.normalPen, "selected"))
             # 更新鼠標樣式為移動模式
             if self.isHovered:
                 self.setCursor(Qt.SizeAllCursor)
@@ -988,13 +987,14 @@ class TaskNode(QGraphicsRectItem):
         else:
             # 取消選中：立即隱藏把手並恢復原色
             self._updateHandlesVisibility(False)
-            # 立即切換到正常顏色
             if self.isHovered:
-                self.setBrush(self.hoverBrush)
-                self.setPen(self.hoverPen)
+                # 懸停時使用 hover 樣式
+                self.setBrush(SelectionStyleManager.create_selection_brush(self.normalBrush, "hovered"))
+                self.setPen(SelectionStyleManager.create_selection_pen(self.normalPen, "hovered"))
                 # 恢復一般鼠標
                 self.setCursor(Qt.ArrowCursor)
             else:
+                # 未懸停使用一般樣式
                 self.setBrush(self.normalBrush)
                 self.setPen(self.normalPen)
             print(f"節點 '{self.taskId}' 取消選中")
@@ -1005,11 +1005,11 @@ class TaskNode(QGraphicsRectItem):
             self.setBrush(self.highlightBrush)
             self.setPen(self.highlightPen)
         elif self.isSelected():
-            self.setBrush(self.selectedBrush)
-            self.setPen(self.selectedPen)
+            self.setBrush(SelectionStyleManager.create_selection_brush(self.normalBrush, "selected"))
+            self.setPen(SelectionStyleManager.create_selection_pen(self.normalPen, "selected"))
         elif self.isHovered:
-            self.setBrush(self.hoverBrush)
-            self.setPen(self.hoverPen)
+            self.setBrush(SelectionStyleManager.create_selection_brush(self.normalBrush, "hovered"))
+            self.setPen(SelectionStyleManager.create_selection_pen(self.normalPen, "hovered"))
         else:
             self.setBrush(self.normalBrush)
             self.setPen(self.normalPen)
