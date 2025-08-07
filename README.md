@@ -38,7 +38,7 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 ### GUI
 
 ```bash
-python -m src.gui
+python -m src.gui_qt
 ```
 
 使用視窗選擇檔案後執行，畫面中央會預覽資料，可放大或縮小。分析完成後，可依需求按下按鈕匯出 `sorted_wbs.csv`、`merged_wbs.csv` 或 `sorted_dsm.csv`。
