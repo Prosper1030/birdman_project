@@ -1366,18 +1366,45 @@ class EdgeItem(QGraphicsPathItem):
         self._updateArrowHead(srcPos, dstPos)
 
     def hoverEnterEvent(self, event):
-        """滑鼠懸停進入"""
+        """滑鼠懸停進入 - 支援 Shift 鍵發亮"""
         if not self.isTemporary:
-            self.setPen(self.hoverPen)
+            # 檢查 Shift 鍵是否被按下
+            from PyQt5.QtWidgets import QApplication
+            modifiers = QApplication.keyboardModifiers()
+            shift_pressed = modifiers & Qt.ShiftModifier
+            
+            if shift_pressed:
+                # Shift + 懸停：使用更亮的橘色高亮
+                bright_orange = QColor(255, 200, 50)  # 更亮的橘黃色
+                bright_pen = QPen(bright_orange, 5, Qt.SolidLine)  # 更粗的線條
+                self.setPen(bright_pen)
+                
+                # 箭頭也變亮橘色
+                if hasattr(self, 'arrowHead') and self.arrowHead:
+                    self.arrowHead.setBrush(QBrush(bright_orange))
+                    self.arrowHead.setPen(QPen(bright_orange, 1))
+            else:
+                # 普通懸停：使用標準懸停效果
+                self.setPen(self.hoverPen)
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
         """滑鼠懸停離開"""
         if not self.isTemporary:
             if self.isSelected():
-                self.setPen(self.selectedPen)
+                # 恢復選取狀態的橘色
+                orange_color = QColor(255, 165, 0)
+                selected_pen = QPen(orange_color, 4, Qt.SolidLine)
+                self.setPen(selected_pen)
+                
+                if hasattr(self, 'arrowHead') and self.arrowHead:
+                    self.arrowHead.setBrush(QBrush(orange_color))
+                    self.arrowHead.setPen(QPen(orange_color, 1))
             else:
                 self.setPen(self.normalPen)
+                if hasattr(self, 'arrowHead') and self.arrowHead:
+                    self.arrowHead.setBrush(QBrush(Qt.black))
+                    self.arrowHead.setPen(QPen(Qt.black, 1))
         super().hoverLeaveEvent(event)
 
     def contextMenuEvent(self, event):
@@ -1409,6 +1436,94 @@ class EdgeItem(QGraphicsPathItem):
             if editor:
                 command = RemoveEdgeCommand(editor, self)
                 editor.executeCommand(command)
+    
+    def itemChange(self, change, value):
+        """處理邊線狀態變化 - yEd 風格橘黃色高亮"""
+        if change == QGraphicsItem.ItemSelectedChange:
+            try:
+                if value:  # 被選取
+                    # yEd 風格：使用明顯的橘黃色高亮
+                    orange_color = QColor(255, 165, 0)  # 橘色 #FFA500
+                    selected_pen = QPen(orange_color, 4, Qt.SolidLine)  # 加粗至4像素
+                    self.setPen(selected_pen)
+                    
+                    # 箭頭也使用橘色
+                    if hasattr(self, 'arrowHead') and self.arrowHead:
+                        self.arrowHead.setBrush(QBrush(orange_color))
+                        # 箭頭邊框也設為橘色
+                        self.arrowHead.setPen(QPen(orange_color, 1))
+                else:  # 取消選取
+                    self.setPen(self.normalPen)
+                    if hasattr(self, 'arrowHead') and self.arrowHead:
+                        self.arrowHead.setBrush(QBrush(Qt.black))
+                        self.arrowHead.setPen(QPen(Qt.black, 1))
+            except Exception as e:
+                print(f"EdgeItem selection change error: {e}")
+                # 安全回退到原始行為
+                if value:
+                    self.setPen(self.selectedPen)
+                else:
+                    self.setPen(self.normalPen)
+                
+        return super().itemChange(change, value)
+    
+    def shape(self):
+        """定義擴大的選取區域 - 包含箭頭和粗線條"""
+        try:
+            path = QPainterPath()
+            
+            if not self.path().isEmpty():
+                # 創建擴大的線條選取區域
+                from PyQt5.QtGui import QPainterPathStroker
+                stroker = QPainterPathStroker()
+                stroker.setWidth(max(12, self.pen().width() * 2))  # 至少12像素寬的選取區域
+                stroker.setCapStyle(Qt.RoundCap)
+                stroker.setJoinStyle(Qt.RoundJoin)
+                
+                # 為主線條創建粗選取路徑
+                thick_path = stroker.createStroke(self.path())
+                path.addPath(thick_path)
+                
+                # 添加箭頭的選取區域
+                if hasattr(self, 'arrowHead') and self.arrowHead and not self.arrowHead.path().isEmpty():
+                    arrow_path = self.arrowHead.path()
+                    
+                    # 為箭頭創建擴大的選取區域
+                    arrow_stroker = QPainterPathStroker()
+                    arrow_stroker.setWidth(10)  # 箭頭周圍10像素選取區域
+                    arrow_stroker.setCapStyle(Qt.RoundCap)
+                    arrow_stroker.setJoinStyle(Qt.RoundJoin)
+                    
+                    expanded_arrow = arrow_stroker.createStroke(arrow_path)
+                    path.addPath(expanded_arrow)
+                    
+                    # 也包含箭頭本身的填充區域
+                    path.addPath(arrow_path)
+            
+            return path if not path.isEmpty() else super().shape()
+            
+        except Exception as e:
+            print(f"Edge shape calculation error: {e}")
+            # 安全回退到預設行為
+            return super().shape()
+    
+    def boundingRect(self):
+        """返回包含擴大選取區域的邊界矩形"""
+        try:
+            # 使用 shape() 的邊界
+            shape_rect = self.shape().boundingRect()
+            
+            if not shape_rect.isEmpty():
+                # 再稍微擴大邊界以確保完全包含
+                margin = 5
+                return shape_rect.adjusted(-margin, -margin, margin, margin)
+            else:
+                # 回退到預設行為
+                return super().boundingRect()
+                
+        except Exception as e:
+            print(f"Edge boundingRect calculation error: {e}")
+            return super().boundingRect()
 
 
 class DsmScene(QGraphicsScene):
