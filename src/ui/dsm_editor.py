@@ -2198,6 +2198,10 @@ class DsmEditor(QDialog):
                     if nodeId in self.nodes:
                         self.nodes[nodeId].setPos(x, y)
 
+            # 佈局完成後調整場景範圍並確保內容可見
+            self._updateSceneRectToFitNodes(padding=300)
+            self._ensureContentVisible(margin=80)
+
         except nx.NetworkXError as e:
             print(f"NetworkX 錯誤：{e}")
             self.applySimpleHierarchicalLayout()
@@ -2221,6 +2225,8 @@ class DsmEditor(QDialog):
             y = level * level_spacing
 
             node.setPos(x, y)
+
+    
 
     def applyOrthogonalLayout(self) -> None:
         """正交式佈局"""
@@ -2246,6 +2252,8 @@ class DsmEditor(QDialog):
 
             node.setPos(x, y)
 
+    
+
     def applyForceDirectedLayout(self) -> None:
         """力導向佈局"""
         graph = nx.Graph()
@@ -2269,8 +2277,45 @@ class DsmEditor(QDialog):
                 if nodeId in self.nodes:
                     self.nodes[nodeId].setPos(x, y)
 
+            # 佈局完成後調整場景範圍並確保內容可見
+            self._updateSceneRectToFitNodes(padding=300)
+            self._ensureContentVisible(margin=80)
+
         except Exception:
             self.applyOrthogonalLayout()
+
+    def _updateSceneRectToFitNodes(self, padding: int = 200) -> None:
+        """將場景範圍擴張至涵蓋所有節點，避免節點被裁切。僅在佈局完成後呼叫。"""
+        if not self.nodes:
+            return
+
+        rect = None
+        for node in self.nodes.values():
+            r = node.sceneBoundingRect()
+            rect = r if rect is None else rect.united(r)
+
+        if rect is None:
+            return
+
+        expanded = rect.adjusted(-padding, -padding, padding, padding)
+        current = self.scene.sceneRect()
+        target = current.united(expanded)
+        self.scene.setSceneRect(target)
+
+    def _ensureContentVisible(self, margin: int = 50) -> None:
+        """確保目前內容在視圖中可見（不改變縮放比例）。"""
+        if not self.nodes:
+            return
+        rect = None
+        for node in self.nodes.values():
+            r = node.sceneBoundingRect()
+            rect = r if rect is None else rect.united(r)
+        if rect is None:
+            return
+        try:
+            self.view.ensureVisible(rect, margin, margin)
+        except Exception:
+            self.view.centerOn(rect.center())
 
     def buildDsmMatrix(self) -> pd.DataFrame:
         """建立 DSM 矩陣"""
