@@ -90,9 +90,9 @@ class LayoutAnimator(QObject):
         # 應用緩動曲線
         eased_progress = self._apply_easing(progress)
         
-        # 更新所有節點位置
+        # 更新所有節點位置（僅更新節點位置，不在每幀重算邊線）
         for anim in self.animations:
-            anim.update(eased_progress)
+            anim.update(eased_progress, update_edges=False)
         
         # 發送進度信號
         self.animationProgress.emit(progress)
@@ -162,8 +162,12 @@ class NodeAnimation:
         # 保存邊線引用以便更新
         self.edges = getattr(node, 'edges', [])
     
-    def update(self, progress: float):
-        """更新節點位置"""
+    def update(self, progress: float, update_edges: bool = True):
+        """更新節點位置
+        Args:
+            progress: 0.0~1.0 進度
+            update_edges: 是否更新邊線（預設 True）
+        """
         # 插值計算新位置
         x = self.start_pos.x() + self.delta_x * progress
         y = self.start_pos.y() + self.delta_y * progress
@@ -171,10 +175,11 @@ class NodeAnimation:
         # 設定位置
         self.node.setPos(x, y)
         
-        # 更新相關邊線
-        for edge in self.edges:
-            if hasattr(edge, 'updatePath'):
-                edge.updatePath()
+        # 更新相關邊線（可選）
+        if update_edges:
+            for edge in self.edges:
+                if hasattr(edge, 'updatePath'):
+                    edge.updatePath()
 
 
 class SpringLayoutAnimator(LayoutAnimator):

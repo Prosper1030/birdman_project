@@ -187,55 +187,55 @@ class EnhancedEdgeItem(QGraphicsPathItem):
     _router: Optional[RoutingEngine] = None
     
     @classmethod
-    def initialize_router(cls, scene_rect: QRectF, grid_size: float = 10.0):
+    def initialize_router(cls, scene_rect: QRectF, grid_size: float = 20.0):
         """初始化共享路由引擎"""
         cls._router = RoutingEngine(scene_rect, grid_size)
         cls._router.configure(
-            default_style=RoutingStyle.ORTHOGONAL,
+            default_style=RoutingStyle.STRAIGHT,
             node_padding=15.0,
             bend_penalty=0.5,
             max_bends=6,
             parallel_spacing=20.0,
             corner_radius=5.0,
-            enable_smoothing=True,
+            enable_smoothing=False,
             enable_caching=True
         )
     
     def __init__(self, src_node, dst_node):
         super().__init__()
-        
+        # 基本屬性
         self.src_node = src_node
         self.dst_node = dst_node
         self.is_temporary = False
         self._is_hovered = False
-        
-        # 路由配置
-        self.routing_style = RoutingStyle.ORTHOGONAL
+
+        # 路由配置（預設改為直線以提速）
+        self.routing_style = RoutingStyle.STRAIGHT
         self.edge_type = EdgeType.SINGLE
-        
+
         # 樣式設定
         self.normal_pen = QPen(Qt.black, 2, Qt.SolidLine)
         self.hover_pen = QPen(QColor(50, 50, 200), 3, Qt.SolidLine)
         self.selected_pen = QPen(QColor(255, 100, 0), 3, Qt.SolidLine)
         self.temp_pen = QPen(Qt.gray, 2, Qt.DashLine)
-        
+
         self.setPen(self.normal_pen)
         self.setZValue(1)
-        
+
         # 設定旗標
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setAcceptHoverEvents(True)
-        
+
         # 建立箭頭
         self.arrow_head = GlowArrowHead(self)
         self.arrow_head.setParentItem(self)  # 確保設定父項目
         self.arrow_head.setZValue(3)  # 確保在最上層
-        
+
         # 快取
         self._cached_path = None
         self._cached_src_rect = None
         self._cached_dst_rect = None
-        
+
         # 初始更新
         self.updatePath()
     

@@ -2026,7 +2026,7 @@ class DsmEditor(QDialog):
         self.routing_engine = None
         self.layout_animator = None
         self.use_enhanced_edges = False  # 是否使用增強型邊線
-        self.use_animation = True  # 是否啟用動畫
+        self.use_animation = False  # 預設關閉動畫
         if YED_LAYOUT_AVAILABLE:
             self.yed_layout_engine = YEdLayoutEngine()
             self.layout_animator = LayoutAnimator()
@@ -2119,7 +2119,7 @@ class DsmEditor(QDialog):
         if YED_LAYOUT_AVAILABLE:
             self.animationAction = QAction("啟用動畫(&A)", self)
             self.animationAction.setCheckable(True)
-            self.animationAction.setChecked(True)
+            self.animationAction.setChecked(False)  # 預設不啟用
             self.animationAction.triggered.connect(self.toggleAnimation)
             viewMenu.addAction(self.animationAction)
         
@@ -2133,13 +2133,14 @@ class DsmEditor(QDialog):
             
             straightAction = QAction("直線(&S)", self)
             straightAction.setCheckable(True)
+            straightAction.setChecked(True)  # 預設直線
             straightAction.triggered.connect(lambda: self.setRoutingStyle(RoutingStyle.STRAIGHT))
             self.routingStyleGroup.addAction(straightAction)
             routingMenu.addAction(straightAction)
             
             orthogonalAction = QAction("正交(&O)", self)
             orthogonalAction.setCheckable(True)
-            orthogonalAction.setChecked(True)  # 預設
+            orthogonalAction.setChecked(False)
             orthogonalAction.triggered.connect(lambda: self.setRoutingStyle(RoutingStyle.ORTHOGONAL))
             self.routingStyleGroup.addAction(orthogonalAction)
             routingMenu.addAction(orthogonalAction)
@@ -2455,16 +2456,23 @@ class DsmEditor(QDialog):
         
         # 執行布局
         edges_list = list(self.edges)
-        positions = self.yed_layout_engine.layout(self.nodes, edges_list, layout_style)
+        try:
+            positions = self.yed_layout_engine.layout(self.nodes, edges_list, layout_style)
+        except Exception as e:
+            print(f"yEd 佈局發生錯誤：{e}，將改用正交式回退佈局以避免中斷。")
+            self.applyOrthogonalLayout()
+            return
         
         # 檢查是否啟用動畫
         if self.use_animation and self.layout_animator:
             # 使用動畫布局
             def on_animation_complete():
                 # 動畫完成後的回調
+                # 動畫完成後再統一 reroute，避免每幀重算
+                self.updateAllEdgePaths()
                 self._updateSceneRectToFitNodes(padding=300)
                 self._ensureContentVisible(margin=80)
-            
+
             self.layout_animator.animate_layout(
                 self.nodes,
                 positions,

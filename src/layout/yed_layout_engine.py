@@ -116,6 +116,11 @@ class YEdLayoutEngine:
         if not nx.is_directed_acyclic_graph(graph):
             # 找到並移除反饋邊
             feedback_edges = self._find_feedback_edges(graph)
+            # 除錯輸出：移除邊數
+            try:
+                print(f"yEd: 偵測到循環，將移除 {len(feedback_edges)} 條回饋邊來打破循環")
+            except Exception:
+                pass
             temp_graph = graph.copy()
             temp_graph.remove_edges_from(feedback_edges)
         else:
@@ -148,23 +153,38 @@ class YEdLayoutEngine:
     
     def _find_feedback_edges(self, graph: nx.DiGraph) -> List[Tuple]:
         """找到反饋邊（造成循環的邊）"""
-        # 使用簡單的 DFS 方法
-        feedback_edges = []
-        
-        try:
-            # 嘗試拓樸排序，如果失敗則有循環
-            list(nx.topological_sort(graph))
-        except nx.NetworkXError:
-            # 找到所有強連通分量
-            sccs = list(nx.strongly_connected_components(graph))
-            for scc in sccs:
-                if len(scc) > 1:
-                    # 在 SCC 內找到一條邊作為反饋邊
-                    subgraph = graph.subgraph(scc)
-                    for edge in subgraph.edges():
-                        feedback_edges.append(edge)
-                        break
-        
+        feedback_edges: List[Tuple] = []
+
+        # 若為 DAG，無需移除
+        if nx.is_directed_acyclic_graph(graph):
+            return feedback_edges
+
+        # 針對每個強連通分量（含迴圈）選出至少一條邊打破循環
+        sccs = list(nx.strongly_connected_components(graph))
+        for scc in sccs:
+            # 單點但含自迴圈也需處理
+            if len(scc) == 1:
+                n = next(iter(scc))
+                if graph.has_edge(n, n):
+                    feedback_edges.append((n, n))
+                continue
+
+            # 複數節點：嘗試找一條顯式循環邊
+            subgraph = graph.subgraph(scc).copy()
+            try:
+                cycle = nx.find_cycle(subgraph, orientation='original')
+                if cycle:
+                    u, v, _ = cycle[0]
+                    feedback_edges.append((u, v))
+                    continue
+            except nx.NetworkXNoCycle:
+                pass
+
+            # 後備：取子圖任意一條邊
+            for edge in subgraph.edges():
+                feedback_edges.append(edge)
+                break
+
         return feedback_edges
     
     def _assign_layers(self, graph: nx.DiGraph) -> List[List]:
