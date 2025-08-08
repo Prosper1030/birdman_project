@@ -8,6 +8,18 @@ Routed Edge Item - 整合 yEd 風格路由的邊線項目
 from PyQt5.QtCore import QPointF, QRectF, Qt, QLineF
 from PyQt5.QtGui import QPainterPath, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QGraphicsPathItem, QStyle
+from typing import Any
+
+# 新路由器 API（保持相容：匯入失敗時不影響舊路徑）
+try:
+    from .routing.engine import YEdStyleEdgeRouter, RoutingStyle, RoutingResult
+except Exception:  # pragma: no cover - 在無新模組時保持舊有功能
+    YEdStyleEdgeRouter = object  # type: ignore
+    class RoutingStyle:  # type: ignore
+        STRAIGHT = "STRAIGHT"
+        ORTHOGONAL = "ORTHOGONAL"
+        OCTILINEAR = "OCTILINEAR"
+        POLYLINE = "POLYLINE"
 
 from .edge_routing import EdgeRoutingEngine
 import math
@@ -32,56 +44,82 @@ class RoutedEdgeItem(QGraphicsPathItem):
     # 注意：QGraphicsPathItem 不是 QObject，不能使用 pyqtSignal
     # 如需信號，可以通過父場景或其他機制處理
     
-    def __init__(self, src: 'TaskNode', dst: 'TaskNode', routing_engine: EdgeRoutingEngine = None):
+    def __init__(self, src: Any, dst: Any, routing_engine: EdgeRoutingEngine = None):
         super().__init__()
-        
+
         self.src = src
         self.dst = dst
         self.label = ""
         self.isTemporary = False
-        
+
         # 路由相關
         self.routing_engine = routing_engine
-        self.routing_mode = self.ROUTING_SMART
+        self.routing_mode = self.ROUTING_SMART  # 舊字串模式，供相容用
+        self._routing_style = getattr(RoutingStyle, 'ORTHOGONAL', 'ORTHOGONAL')  # 新枚舉模式
         self.enable_routing = True
         self.route_cache = None  # 路由路徑快取
-        
+
         # 多邊線處理
         self.edge_offset = 0  # 多邊線偏移
         self.parallel_edges_count = 1
-        
+
         # 視覺樣式 (保持與原 EdgeItem 一致)
         self.normalPen = QPen(Qt.black, 2, Qt.SolidLine)
         self.hoverPen = QPen(Qt.black, 3, Qt.SolidLine)
         self.selectedPen = QPen(Qt.blue, 3, Qt.SolidLine)
         self.tempPen = QPen(Qt.gray, 2, Qt.DashLine)
-        
+
         # 狀態變數 (支援 yEd 風格選取)
         self._is_selected = False
         self._is_hovered = False
         self._is_shift_highlighted = False
-        
+
         # 設定
         self.setPen(self.normalPen)
         self.setZValue(1)
         self.setFlag(self.ItemIsSelectable, True)
         self.setAcceptHoverEvents(True)
-        
+
+        # 兼容 yEd 風格箭頭資源（若外部需要）
+        self.arrowHead = QGraphicsPathItem()
+        self.arrowHead.setZValue(2)
+        self.arrowHead.setParentItem(self)
+
         # 初始化路徑
         self.updateRoutedPath()
     
-    def setRoutingEngine(self, engine: EdgeRoutingEngine):
+    def setRoutingEngine(self, engine):
         """設定路由引擎"""
         self.routing_engine = engine
         self.route_cache = None
         self.updateRoutedPath()
     
-    def setRoutingMode(self, mode: str):
+    def setRoutingMode(self, mode):
         """設定路由模式"""
-        if mode in [self.ROUTING_DIRECT, self.ROUTING_ORTHOGONAL, self.ROUTING_SMART]:
+        # 允許舊字串或新 RoutingStyle
+        if isinstance(mode, str) and mode in [self.ROUTING_DIRECT, self.ROUTING_ORTHOGONAL, self.ROUTING_SMART]:
             self.routing_mode = mode
-            self.route_cache = None
-            self.updateRoutedPath()
+            # 對應新枚舉（盡量貼近）
+            if mode == self.ROUTING_DIRECT:
+                self._routing_style = getattr(RoutingStyle, 'STRAIGHT', 'STRAIGHT')
+            elif mode == self.ROUTING_ORTHOGONAL:
+                self._routing_style = getattr(RoutingStyle, 'ORTHOGONAL', 'ORTHOGONAL')
+            else:  # SMART -> 暫以 ORTHOGONAL 當預設
+                self._routing_style = getattr(RoutingStyle, 'ORTHOGONAL', 'ORTHOGONAL')
+        elif hasattr(RoutingStyle, '__members__') and (isinstance(mode, RoutingStyle) or str(mode) in getattr(RoutingStyle, '__members__', {})):
+            # 新 API：直接設定枚舉
+            self._routing_style = mode  # type: ignore
+            # 同步舊字串（僅用於相容輸出/除錯）
+            if str(mode).endswith('STRAIGHT'):
+                self.routing_mode = self.ROUTING_DIRECT
+            elif str(mode).endswith('ORTHOGONAL'):
+                self.routing_mode = self.ROUTING_ORTHOGONAL
+            else:
+                self.routing_mode = self.ROUTING_SMART
+        else:
+            return
+        self.route_cache = None
+        self.updateRoutedPath()
     
     def setEnableRouting(self, enabled: bool):
         """啟用/禁用智慧路由"""
@@ -112,12 +150,47 @@ class RoutedEdgeItem(QGraphicsPathItem):
         
         # 選擇路由方法
         if self.enable_routing and self.routing_engine and self.routing_mode != self.ROUTING_DIRECT:
-            routed_path = self._computeRoutedPath(src_point, dst_point)
+            # 嘗試使用新 API（engine.route）
+            try:
+                if hasattr(self.routing_engine, 'route'):
+                    result = self.routing_engine.route(src_point, dst_point, self._routing_style)
+                    if result and getattr(result, 'success', True) and hasattr(result, 'path'):
+                        routed_path = result.path
+                    else:
+                        routed_path = self._computeDirectPath(src_point, dst_point)
+                elif hasattr(self.routing_engine, 'route_edge'):
+                    # 舊相容 API
+                    routed_path = self.routing_engine.route_edge(src_point, dst_point)
+                else:
+                    routed_path = self._computeDirectPath(src_point, dst_point)
+            except Exception as e:
+                print(f"路由計算失敗: {e}")
+                routed_path = self._computeDirectPath(src_point, dst_point)
         else:
             routed_path = self._computeDirectPath(src_point, dst_point)
         
         self.setPath(routed_path)
         # 路由變更完成 - 可以在這裡添加其他處理邏輯
+
+    # 與既有 API 相容：updatePath 委派到 updateRoutedPath
+    def updatePath(self, *_, **__):
+        self.updateRoutedPath()
+
+    # 與既有 API 相容：臨時邊
+    def setTemporary(self, temporary: bool) -> None:
+        self.isTemporary = temporary
+        try:
+            from PyQt5.QtGui import QBrush
+            if temporary:
+                self.setPen(self.tempPen)
+                if hasattr(self, 'arrowHead') and self.arrowHead:
+                    self.arrowHead.setBrush(QBrush(Qt.gray))
+            else:
+                self.setPen(self.normalPen)
+                if hasattr(self, 'arrowHead') and self.arrowHead:
+                    self.arrowHead.setBrush(QBrush(Qt.black))
+        except Exception:
+            pass
     
     def _calculateConnectionPoints(self) -> tuple:
         """計算節點連接點 - 使用原有的精確計算方法"""
@@ -363,6 +436,9 @@ class RoutedEdgeItem(QGraphicsPathItem):
 
 # 為了相容性，保持原 EdgeItem 導入
 try:
-    from .dsm_editor import EdgeItem
-except ImportError:
-    EdgeItem = type("EdgeItem", (), {})  # 占位類別
+    from .ui.dsm_editor import EdgeItem
+except Exception:
+    try:
+        from .dsm_editor import EdgeItem  # 後備（舊位置）
+    except Exception:
+        EdgeItem = type("EdgeItem", (), {})  # 占位類別
