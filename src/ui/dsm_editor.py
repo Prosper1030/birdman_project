@@ -2037,40 +2037,6 @@ class DsmEditor(QDialog):
         self.view = CanvasView(self.scene)
         layout.addWidget(self.view)
 
-        # 工具列
-        toolLayout = QHBoxLayout()
-
-        # 佈局按鈕群組
-        layoutGroup = QGroupBox("自動佈局")
-        layoutGroupLayout = QHBoxLayout(layoutGroup)
-
-        hierarchicalBtn = QPushButton("階層式")
-        hierarchicalBtn.clicked.connect(lambda: self.applyLayout(LayoutAlgorithm.HIERARCHICAL))
-        layoutGroupLayout.addWidget(hierarchicalBtn)
-
-        orthogonalBtn = QPushButton("正交式")
-        orthogonalBtn.clicked.connect(lambda: self.applyLayout(LayoutAlgorithm.ORTHOGONAL))
-        layoutGroupLayout.addWidget(orthogonalBtn)
-
-        forceBtn = QPushButton("力導向")
-        forceBtn.clicked.connect(lambda: self.applyLayout(LayoutAlgorithm.FORCE_DIRECTED))
-        layoutGroupLayout.addWidget(forceBtn)
-
-        toolLayout.addWidget(layoutGroup)
-
-        # 控制按鈕群組
-        controlGroup = QGroupBox("控制")
-        controlGroupLayout = QHBoxLayout(controlGroup)
-
-        exportBtn = QPushButton("匯出 DSM")
-        exportBtn.clicked.connect(self.exportDsm)
-        controlGroupLayout.addWidget(exportBtn)
-
-        toolLayout.addWidget(controlGroup)
-        toolLayout.addStretch()
-
-        layout.addLayout(toolLayout)
-
     def loadWbs(self, wbsDf: pd.DataFrame) -> None:
         """載入 WBS 資料"""
         if wbsDf.empty:
