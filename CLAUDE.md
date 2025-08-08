@@ -20,7 +20,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 pytest              # 執行所有測試
 pytest -q           # 安靜模式執行測試
+pytest tests/test_specific_module.py  # 執行特定測試檔案
+pytest -k "test_name"  # 執行特定測試函數
 flake8 src/ tests/ main.py --max-line-length=120  # 檢查程式碼格式，限制專案檔案範圍
+flake8              # 使用 GitHub Actions 中的完整檢查
 ```
 
 **重要行為準則**：
@@ -37,10 +40,15 @@ python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config conf
 # GUI 圖形介面
 python -m src.gui_qt                    # 完整 PyQt5 GUI
 python src/ui/main_window.py           # 僅蒙地卡羅視窗
+python -m src.ui.dsm_editor             # yEd 風格視覺化 DSM 編輯器
 
 # 常用 CLI 選項
 python main.py --dsm <dsm_file> --wbs <wbs_file> --config config.json --monte-carlo 1000
 python main.py --dsm <dsm_file> --wbs <wbs_file> --config config.json --rcpsp-opt --resources Resources.csv
+
+# 測試特定功能
+python test_arrow_fix.py                # 測試箭頭修正功能
+python test_yed_layout.py               # 測試 yEd 佈局引擎
 ```
 
 ### Dependencies / 相依套件
@@ -95,14 +103,32 @@ pip install -r requirements.txt        # 安裝所有相依套件
    - 整合所有處理功能
    - 支援主題切換 (QDarkStyle)
 
+7. **Visual DSM Editor / 視覺化 DSM 編輯器 (`src/ui/dsm_editor.py`)**
+   - yEd 風格的互動式 DSM 編輯器
+   - 支援拖拽、多選、即時編輯功能
+   - 進階邊線路由與動畫佈局系統
+   - 整合依賴關係的視覺化與編輯
+
+8. **Layout & Routing System / 佈局與路由系統**
+   - **Layout Engine** (`src/layout/yed_layout_engine.py`): yEd 風格的自動佈局
+   - **Edge Routing** (`src/routing/engine.py`): 智慧邊線路由演算法
+   - **Enhanced Edge Items** (`src/routing/enhanced_edge_item.py`): 進階邊線元件
+
 ### Project Structure / 專案結構
 
 - **`main.py`**: CLI 進入點，包含參數解析
 - **`src/`**: 核心處理模組
 - **`src/ui/`**: GUI 元件和模型
+  - **`src/ui/dsm_editor.py`**: yEd 風格視覺化 DSM 編輯器
+  - **`src/ui/components/`**: 可重用的 GUI 元件
+  - **`src/ui/dialogs/`**: 對話框元件
+- **`src/layout/`**: 佈局引擎模組
+- **`src/routing/`**: 邊線路由演算法
 - **`sample_data/`**: 測試資料 (DSM.csv, WBS.csv, Resources.csv)
 - **`tests/`**: 所有處理器的單元測試
 - **`config.json`**: 合併參數、視覺化和 CPM 設定的配置檔
+- **`opus/`**: 進階演算法原型與文檔
+- **`.github/workflows/`**: GitHub Actions CI/CD 配置
 
 ### Key Data Flow / 關鍵資料流程
 
@@ -182,6 +208,9 @@ pip install -r requirements.txt        # 安裝所有相依套件
 - **中文字型支援**: 應用程式包含 Windows/macOS/Linux 的自動中文字型偵測
 - **主題切換**: GUI 支援淺色和深色模式的即時切換
 - **匯出功能**: 統一整合到檔案選單以保持一致性
+- **PyQt5 相容性**: 所有 GUI 元件基於 PyQt5，確保跨平台相容性
+- **邊線路由**: 採用 A* 演算法進行智慧路徑尋找，避免節點重疊
+- **動畫系統**: 使用 QPropertyAnimation 提供流暢的佈局轉換效果
 
 ### Common Issues and Solutions / 常見問題與解決方案
 
@@ -209,6 +238,9 @@ pip install -r requirements.txt        # 安裝所有相依套件
 - 單元測試涵蓋所有核心處理器
 - 測試檔案命名規則：`test_<module_name>.py`
 - `sample_data/` 目錄包含整合測試用的範例資料
+- **CI/CD**: GitHub Actions 自動執行 pytest 和 flake8 檢查
+- **測試覆蓋範圍**: 包含 DSM 處理、CPM 分析、RCPSP 求解、GUI 元件等
+- **專項測試**: `test_arrow_fix.py` 和 `test_yed_layout.py` 針對特定功能模組
 
 ### Development Workflow / 開發流程
 

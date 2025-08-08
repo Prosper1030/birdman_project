@@ -28,12 +28,23 @@ from PyQt5.QtWidgets import (
     QGraphicsItem,
     QMenu,
     QAction,
+    QActionGroup,
     QMenuBar,
     QGroupBox,
     QRubberBand,
 )
 
 from .selection_styles import SelectionStyleManager
+
+# 引入 yEd 風格布局和路由系統
+try:
+    from ..layout.yed_layout_engine import YEdLayoutEngine, LayoutStyle
+    from ..layout.animated_layout import LayoutAnimator
+    from ..routing.enhanced_edge_item import EnhancedEdgeItem, RoutingStyle
+    YED_LAYOUT_AVAILABLE = True
+except ImportError:
+    YED_LAYOUT_AVAILABLE = False
+    print("警告：yEd 布局引擎未找到，使用基本布局")
 
 
 class EditorState(Enum):
@@ -51,6 +62,12 @@ class LayoutAlgorithm(Enum):
     HIERARCHICAL = "hierarchical"
     ORTHOGONAL = "orthogonal"
     FORCE_DIRECTED = "force_directed"
+    # yEd 風格布局
+    YED_HIERARCHICAL = "yed_hierarchical"
+    YED_TREE = "yed_tree"
+    YED_CIRCULAR = "yed_circular"
+    YED_RADIAL = "yed_radial"
+    YED_ORGANIC = "yed_organic"
 
 
 class Command:
@@ -89,13 +106,22 @@ class AddEdgeCommand(Command):
 
     def execute(self) -> None:
         if (self.src.taskId, self.dst.taskId) not in self.editor.edges:
-            self.edge = EdgeItem(self.src, self.dst)
+            # 根據設定選擇邊線類型
+            if self.editor.use_enhanced_edges and YED_LAYOUT_AVAILABLE:
+                self.edge = EnhancedEdgeItem(self.src, self.dst)
+            else:
+                self.edge = EdgeItem(self.src, self.dst)
+            
             # 檢查邊線是否已在場景中
             if self.edge.scene() != self.editor.scene:
                 self.editor.scene.addItem(self.edge)
             # 檢查箭頭是否已在場景中
             if hasattr(self.edge, 'arrowHead') and self.edge.arrowHead.scene() != self.editor.scene:
                 self.editor.scene.addItem(self.edge.arrowHead)
+            # 增強型邊線的箭頭使用 arrow_head
+            if hasattr(self.edge, 'arrow_head') and self.edge.arrow_head.scene() != self.editor.scene:
+                self.editor.scene.addItem(self.edge.arrow_head)
+            
             self.src.edges.append(self.edge)
             self.dst.edges.append(self.edge)
             self.editor.edges.add((self.src.taskId, self.dst.taskId))
@@ -1732,8 +1758,11 @@ class DsmScene(QGraphicsScene):
         self.connectionMode = True
         self.sourceNode = sourceNode
 
-        # 建立臨時邊
-        self.tempEdge = EdgeItem(sourceNode, sourceNode)
+        # 建立臨時邊 - 根據設定選擇邊線類型
+        if self.editor.use_enhanced_edges and YED_LAYOUT_AVAILABLE:
+            self.tempEdge = EnhancedEdgeItem(sourceNode, sourceNode)
+        else:
+            self.tempEdge = EdgeItem(sourceNode, sourceNode)
         self.tempEdge.setTemporary(True)
         
         # 檢查臨時邊線是否已在場景中，避免重複添加
@@ -1768,7 +1797,16 @@ class DsmScene(QGraphicsScene):
         if length > 1:
             dx /= length
             dy /= length
-            srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
+            if hasattr(self.tempEdge, 'getConnectionPoint'):
+                if isinstance(self.tempEdge, EnhancedEdgeItem):
+                    # EnhancedEdgeItem 使用新的接口
+                    target_point = QPointF(srcCenter.x() + dx * 1000, srcCenter.y() + dy * 1000)
+                    srcPos = self.tempEdge.getConnectionPoint(srcRect, target_point)
+                else:
+                    # EdgeItem 使用舊的接口
+                    srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
+            else:
+                srcPos = srcCenter
         else:
             srcPos = srcCenter
         
@@ -1813,7 +1851,16 @@ class DsmScene(QGraphicsScene):
             if length > 1:
                 dx /= length
                 dy /= length
-                targetPos = self.tempEdge.getConnectionPoint(targetRect, targetCenter, -dx, -dy)
+                if hasattr(self.tempEdge, 'getConnectionPoint'):
+                    if isinstance(self.tempEdge, EnhancedEdgeItem):
+                        # EnhancedEdgeItem 使用新的接口
+                        src_point = QPointF(targetCenter.x() - dx * 1000, targetCenter.y() - dy * 1000)
+                        targetPos = self.tempEdge.getConnectionPoint(targetRect, src_point)
+                    else:
+                        # EdgeItem 使用舊的接口
+                        targetPos = self.tempEdge.getConnectionPoint(targetRect, targetCenter, -dx, -dy)
+                else:
+                    targetPos = targetCenter
                 
                 # 重新建立完整路徑
                 path = QPainterPath()
@@ -1883,7 +1930,16 @@ class DsmScene(QGraphicsScene):
         if length > 1:
             dx /= length
             dy /= length
-            srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
+            if hasattr(self.tempEdge, 'getConnectionPoint'):
+                if isinstance(self.tempEdge, EnhancedEdgeItem):
+                    # EnhancedEdgeItem 使用新的接口
+                    target_point = QPointF(srcCenter.x() + dx * 1000, srcCenter.y() + dy * 1000)
+                    srcPos = self.tempEdge.getConnectionPoint(srcRect, target_point)
+                else:
+                    # EdgeItem 使用舊的接口
+                    srcPos = self.tempEdge.getConnectionPoint(srcRect, srcCenter, dx, dy)
+            else:
+                srcPos = srcCenter
 
             path = QPainterPath()
             path.moveTo(srcPos)
@@ -1964,6 +2020,18 @@ class DsmEditor(QDialog):
 
         self.nodes: Dict[str, TaskNode] = {}
         self.edges: Set[tuple[str, str]] = set()
+        
+        # 初始化 yEd 布局引擎
+        self.yed_layout_engine = None
+        self.routing_engine = None
+        self.layout_animator = None
+        self.use_enhanced_edges = False  # 是否使用增強型邊線
+        self.use_animation = True  # 是否啟用動畫
+        if YED_LAYOUT_AVAILABLE:
+            self.yed_layout_engine = YEdLayoutEngine()
+            self.layout_animator = LayoutAnimator()
+            self.use_enhanced_edges = True  # 預設啟用增強型邊線
+            # 路由引擎會在場景建立後初始化
 
         self.setupUI()
         self.loadWbs(wbsDf)
@@ -2013,6 +2081,30 @@ class DsmEditor(QDialog):
         forceAction = QAction("力導向佈局(&F)", self)
         forceAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.FORCE_DIRECTED))
         layoutMenu.addAction(forceAction)
+        
+        # 添加 yEd 風格布局選項
+        if YED_LAYOUT_AVAILABLE:
+            layoutMenu.addSeparator()
+            
+            yedHierarchicalAction = QAction("yEd 階層式(&Y)", self)
+            yedHierarchicalAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.YED_HIERARCHICAL))
+            layoutMenu.addAction(yedHierarchicalAction)
+            
+            yedTreeAction = QAction("yEd 樹狀(&T)", self)
+            yedTreeAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.YED_TREE))
+            layoutMenu.addAction(yedTreeAction)
+            
+            yedCircularAction = QAction("yEd 環形(&C)", self)
+            yedCircularAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.YED_CIRCULAR))
+            layoutMenu.addAction(yedCircularAction)
+            
+            yedRadialAction = QAction("yEd 放射狀(&R)", self)
+            yedRadialAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.YED_RADIAL))
+            layoutMenu.addAction(yedRadialAction)
+            
+            yedOrganicAction = QAction("yEd 有機(&G)", self)
+            yedOrganicAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.YED_ORGANIC))
+            layoutMenu.addAction(yedOrganicAction)
 
         # 檢視選單
         viewMenu = menuBar.addMenu("檢視(&V)")
@@ -2022,6 +2114,47 @@ class DsmEditor(QDialog):
         self.gridAction.setChecked(True)
         self.gridAction.triggered.connect(self.toggleGrid)
         viewMenu.addAction(self.gridAction)
+        
+        # 動畫開關
+        if YED_LAYOUT_AVAILABLE:
+            self.animationAction = QAction("啟用動畫(&A)", self)
+            self.animationAction.setCheckable(True)
+            self.animationAction.setChecked(True)
+            self.animationAction.triggered.connect(self.toggleAnimation)
+            viewMenu.addAction(self.animationAction)
+        
+        # 路由風格選單
+        if YED_LAYOUT_AVAILABLE:
+            viewMenu.addSeparator()
+            
+            routingMenu = viewMenu.addMenu("路由風格(&R)")
+            
+            self.routingStyleGroup = QActionGroup(self)
+            
+            straightAction = QAction("直線(&S)", self)
+            straightAction.setCheckable(True)
+            straightAction.triggered.connect(lambda: self.setRoutingStyle(RoutingStyle.STRAIGHT))
+            self.routingStyleGroup.addAction(straightAction)
+            routingMenu.addAction(straightAction)
+            
+            orthogonalAction = QAction("正交(&O)", self)
+            orthogonalAction.setCheckable(True)
+            orthogonalAction.setChecked(True)  # 預設
+            orthogonalAction.triggered.connect(lambda: self.setRoutingStyle(RoutingStyle.ORTHOGONAL))
+            self.routingStyleGroup.addAction(orthogonalAction)
+            routingMenu.addAction(orthogonalAction)
+            
+            polylineAction = QAction("多折線(&P)", self)
+            polylineAction.setCheckable(True)
+            polylineAction.triggered.connect(lambda: self.setRoutingStyle(RoutingStyle.POLYLINE))
+            self.routingStyleGroup.addAction(polylineAction)
+            routingMenu.addAction(polylineAction)
+            
+            curvedAction = QAction("曲線(&C)", self)
+            curvedAction.setCheckable(True)
+            curvedAction.triggered.connect(lambda: self.setRoutingStyle(RoutingStyle.CURVED))
+            self.routingStyleGroup.addAction(curvedAction)
+            routingMenu.addAction(curvedAction)
 
         self.snapAction = QAction("對齊網格(&S)", self)
         self.snapAction.setCheckable(True)
@@ -2036,6 +2169,23 @@ class DsmEditor(QDialog):
         self.scene.setBackgroundBrush(QBrush(QColor(255, 255, 255)))
         self.view = CanvasView(self.scene)
         layout.addWidget(self.view)
+        
+        # 初始化路由引擎
+        if YED_LAYOUT_AVAILABLE:
+            try:
+                scene_rect = self.scene.sceneRect()
+                print(f"正在初始化路由引擎，場景大小：{scene_rect}")
+                EnhancedEdgeItem.initialize_router(scene_rect)
+                self.routing_engine = EnhancedEdgeItem._router
+                if self.routing_engine:
+                    print("✓ yEd 路由引擎初始化成功")
+                    self.use_enhanced_edges = True  # 自動啟用增強型邊線
+                else:
+                    print("警告：路由引擎初始化失敗 - 返回 None")
+            except Exception as e:
+                print(f"警告：路由引擎初始化失敗 - {e}")
+                import traceback
+                traceback.print_exc()
 
         # 工具列
         toolLayout = QHBoxLayout()
@@ -2057,6 +2207,25 @@ class DsmEditor(QDialog):
         layoutGroupLayout.addWidget(forceBtn)
 
         toolLayout.addWidget(layoutGroup)
+        
+        # yEd 布局按鈕群組
+        if YED_LAYOUT_AVAILABLE:
+            yedGroup = QGroupBox("yEd 布局")
+            yedGroupLayout = QHBoxLayout(yedGroup)
+            
+            yedHierBtn = QPushButton("yEd 階層")
+            yedHierBtn.clicked.connect(lambda: self.applyLayout(LayoutAlgorithm.YED_HIERARCHICAL))
+            yedGroupLayout.addWidget(yedHierBtn)
+            
+            yedTreeBtn = QPushButton("yEd 樹狀")
+            yedTreeBtn.clicked.connect(lambda: self.applyLayout(LayoutAlgorithm.YED_TREE))
+            yedGroupLayout.addWidget(yedTreeBtn)
+            
+            yedCircBtn = QPushButton("yEd 環形")
+            yedCircBtn.clicked.connect(lambda: self.applyLayout(LayoutAlgorithm.YED_CIRCULAR))
+            yedGroupLayout.addWidget(yedCircBtn)
+            
+            toolLayout.addWidget(yedGroup)
 
         # 控制按鈕群組
         controlGroup = QGroupBox("控制")
@@ -2131,6 +2300,15 @@ class DsmEditor(QDialog):
     def toggleGrid(self) -> None:
         """切換網格顯示"""
         self.view.setGridVisible(self.gridAction.isChecked())
+    
+    def toggleAnimation(self) -> None:
+        """切換動畫開關"""
+        if hasattr(self, 'animationAction'):
+            self.use_animation = self.animationAction.isChecked()
+            if self.use_animation:
+                print("✓ 布局動畫已啟用")
+            else:
+                print("✗ 布局動畫已停用")
 
     def toggleSnapToGrid(self) -> None:
         """切換網格對齊"""
@@ -2155,6 +2333,9 @@ class DsmEditor(QDialog):
             self.applyOrthogonalLayout()
         elif algorithm == LayoutAlgorithm.FORCE_DIRECTED:
             self.applyForceDirectedLayout()
+        elif YED_LAYOUT_AVAILABLE and self.yed_layout_engine:
+            # 使用 yEd 布局引擎
+            self.applyYedLayout(algorithm)
 
     def applyHierarchicalLayout(self) -> None:
         """階層式佈局 - 增強循環檢測"""
@@ -2252,7 +2433,78 @@ class DsmEditor(QDialog):
 
             node.setPos(x, y)
 
+    def applyYedLayout(self, algorithm: LayoutAlgorithm) -> None:
+        """套用 yEd 風格布局"""
+        if not self.yed_layout_engine:
+            print("錯誤：yEd 布局引擎未初始化")
+            return
+        
+        # 映射布局算法到 yEd 布局風格
+        style_map = {
+            LayoutAlgorithm.YED_HIERARCHICAL: LayoutStyle.HIERARCHICAL,
+            LayoutAlgorithm.YED_TREE: LayoutStyle.TREE,
+            LayoutAlgorithm.YED_CIRCULAR: LayoutStyle.CIRCULAR,
+            LayoutAlgorithm.YED_RADIAL: LayoutStyle.RADIAL,
+            LayoutAlgorithm.YED_ORGANIC: LayoutStyle.ORGANIC,
+        }
+        
+        layout_style = style_map.get(algorithm)
+        if not layout_style:
+            print(f"未知的 yEd 布局算法：{algorithm}")
+            return
+        
+        # 執行布局
+        edges_list = list(self.edges)
+        positions = self.yed_layout_engine.layout(self.nodes, edges_list, layout_style)
+        
+        # 檢查是否啟用動畫
+        if self.use_animation and self.layout_animator:
+            # 使用動畫布局
+            def on_animation_complete():
+                # 動畫完成後的回調
+                self._updateSceneRectToFitNodes(padding=300)
+                self._ensureContentVisible(margin=80)
+            
+            self.layout_animator.animate_layout(
+                self.nodes,
+                positions,
+                duration=500,
+                on_complete=on_animation_complete
+            )
+        else:
+            # 直接應用位置
+            for node_id, pos in positions.items():
+                if node_id in self.nodes:
+                    self.nodes[node_id].setPos(pos)
+            
+            # 更新所有邊線路徑
+            self.updateAllEdgePaths()
+            
+            # 佈局完成後調整場景範圍並確保內容可見
+            self._updateSceneRectToFitNodes(padding=300)
+            self._ensureContentVisible(margin=80)
+
+    def updateAllEdgePaths(self) -> None:
+        """更新所有邊線路徑"""
+        for node in self.nodes.values():
+            for edge in node.edges:
+                edge.updatePath()
     
+    def setRoutingStyle(self, style):
+        """設定路由風格"""
+        if not YED_LAYOUT_AVAILABLE:
+            return
+        
+        print(f"切換路由風格到：{style.value}")
+        
+        # 更新所有增強型邊線的路由風格
+        for node in self.nodes.values():
+            for edge in node.edges:
+                if isinstance(edge, EnhancedEdgeItem):
+                    edge.setRoutingStyle(style)
+        
+        # 強制更新所有邊線
+        self.updateAllEdgePaths()
 
     def applyForceDirectedLayout(self) -> None:
         """力導向佈局"""
@@ -2301,6 +2553,15 @@ class DsmEditor(QDialog):
         current = self.scene.sceneRect()
         target = current.united(expanded)
         self.scene.setSceneRect(target)
+        
+        # 場景大小變更時，需要重新初始化路由引擎
+        if YED_LAYOUT_AVAILABLE and hasattr(self, 'routing_engine') and self.routing_engine:
+            try:
+                EnhancedEdgeItem.initialize_router(target)
+                self.routing_engine = EnhancedEdgeItem._router
+                print(f"路由引擎已重新初始化，新場景大小：{target}")
+            except Exception as e:
+                print(f"警告：路由引擎重新初始化失敗 - {e}")
 
     def _ensureContentVisible(self, margin: int = 50) -> None:
         """確保目前內容在視圖中可見（不改變縮放比例）。"""
