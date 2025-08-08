@@ -69,6 +69,10 @@ class RoutedEdgeItem(QGraphicsPathItem):
         
         # 初始化路徑
         self.updateRoutedPath()
+
+    def updatePath(self):
+        """相容舊版介面，直接轉呼叫智慧路由"""
+        self.updateRoutedPath()
     
     def setRoutingEngine(self, engine: EdgeRoutingEngine):
         """設定路由引擎"""

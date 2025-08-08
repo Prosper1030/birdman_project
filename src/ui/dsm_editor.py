@@ -34,6 +34,8 @@ from PyQt5.QtWidgets import (
 )
 
 from .selection_styles import SelectionStyleManager
+from ..edge_routing import EdgeRoutingEngine
+from ..routed_edge_item import RoutedEdgeItem
 
 
 class EditorState(Enum):
@@ -73,10 +75,12 @@ class AddNodeCommand(Command):
         if self.node.scene() != self.editor.scene:
             self.editor.scene.addItem(self.node)
         self.editor.nodes[self.node.taskId] = self.node
+        self.editor.updateRoutingObstacles()
 
     def undo(self) -> None:
         self.editor.scene.removeItem(self.node)
         del self.editor.nodes[self.node.taskId]
+        self.editor.updateRoutingObstacles()
 
 
 class AddEdgeCommand(Command):
@@ -85,17 +89,14 @@ class AddEdgeCommand(Command):
         self.editor = editor
         self.src = src
         self.dst = dst
-        self.edge: Optional['EdgeItem'] = None
+        self.edge: Optional['RoutedEdgeItem'] = None
 
     def execute(self) -> None:
         if (self.src.taskId, self.dst.taskId) not in self.editor.edges:
-            self.edge = EdgeItem(self.src, self.dst)
-            # 檢查邊線是否已在場景中
+            self.editor.updateRoutingObstacles()
+            self.edge = RoutedEdgeItem(self.src, self.dst, self.editor.routing_engine)
             if self.edge.scene() != self.editor.scene:
                 self.editor.scene.addItem(self.edge)
-            # 檢查箭頭是否已在場景中
-            if hasattr(self.edge, 'arrowHead') and self.edge.arrowHead.scene() != self.editor.scene:
-                self.editor.scene.addItem(self.edge.arrowHead)
             self.src.edges.append(self.edge)
             self.dst.edges.append(self.edge)
             self.editor.edges.add((self.src.taskId, self.dst.taskId))
@@ -112,7 +113,7 @@ class AddEdgeCommand(Command):
 
 class RemoveEdgeCommand(Command):
     """移除邊的命令"""
-    def __init__(self, editor: DsmEditor, edge: EdgeItem):
+    def __init__(self, editor: DsmEditor, edge: QGraphicsPathItem):
         self.editor = editor
         self.edge = edge
         self.src = edge.src
@@ -173,6 +174,7 @@ class ResizeNodeCommand(Command):
         # 更新所有相關連線
         for edge in self.node.edges:
             edge.updatePath()
+        self.node.editor.updateRoutingObstacles()
 
     def undo(self) -> None:
         self.node.setRect(self.old_rect)
@@ -180,6 +182,7 @@ class ResizeNodeCommand(Command):
         # 更新所有相關連線
         for edge in self.node.edges:
             edge.updatePath()
+        self.node.editor.updateRoutingObstacles()
 
 
 class ResizeHandle(QGraphicsRectItem):
@@ -646,7 +649,7 @@ class TaskNode(QGraphicsRectItem):
         self.taskId = taskId
         self.text = text
         self.editor = editor
-        self.edges: List[EdgeItem] = []
+        self.edges: List[QGraphicsPathItem] = []
 
         # 狀態管理
         self.isEditing = False
@@ -751,6 +754,7 @@ class TaskNode(QGraphicsRectItem):
             self._updateHandlesPosition()
             for edge in self.edges:
                 edge.updatePath()
+            self.editor.updateRoutingObstacles()
 
         return super().itemChange(change, value)
 
@@ -1071,6 +1075,7 @@ class TaskNode(QGraphicsRectItem):
 
         self.scene().removeItem(self)
         del self.editor.nodes[self.taskId]
+        self.editor.updateRoutingObstacles()
 
 
 class GlowArrowHead(QGraphicsPathItem):
@@ -1965,6 +1970,9 @@ class DsmEditor(QDialog):
         self.nodes: Dict[str, TaskNode] = {}
         self.edges: Set[tuple[str, str]] = set()
 
+        # 初始化智慧繞線引擎
+        self.routing_engine = EdgeRoutingEngine()
+
         self.setupUI()
         self.loadWbs(wbsDf)
 
@@ -2067,6 +2075,9 @@ class DsmEditor(QDialog):
                 self.scene.addItem(node)
             self.nodes[taskId] = node
 
+        # 所有節點載入完成後更新路由障礙物
+        self.updateRoutingObstacles()
+
     def executeCommand(self, command: Command) -> None:
         """執行命令並加入歷史記錄"""
         self.commandHistory = self.commandHistory[:self.commandIndex + 1]
@@ -2102,13 +2113,27 @@ class DsmEditor(QDialog):
         """切換網格對齊"""
         self.view.setSnapToGrid(self.snapAction.isChecked())
 
+    def updateRoutingObstacles(self) -> None:
+        """更新智慧繞線的障礙物資訊"""
+        obstacles = []
+        for taskId, node in self.nodes.items():
+            obstacles.append((node.sceneBoundingRect(), taskId))
+        self.routing_engine.set_obstacles(obstacles)
+
     def addDependency(self, src: TaskNode, dst: TaskNode) -> None:
         """新增依賴關係"""
         if (src.taskId, dst.taskId) not in self.edges:
             command = AddEdgeCommand(self, src, dst)
             self.executeCommand(command)
 
-    def removeEdge(self, edge: EdgeItem) -> None:
+    def addDependencyById(self, src_id: str, dst_id: str) -> None:
+        """透過 Task ID 新增依賴關係"""
+        src_node = self.nodes.get(src_id)
+        dst_node = self.nodes.get(dst_id)
+        if src_node and dst_node:
+            self.addDependency(src_node, dst_node)
+
+    def removeEdge(self, edge: QGraphicsPathItem) -> None:
         """移除邊"""
         command = RemoveEdgeCommand(self, edge)
         self.executeCommand(command)
@@ -2313,11 +2338,11 @@ class DsmEditor(QDialog):
             for item in selectedItems:
                 if isinstance(item, TaskNode):
                     item.deleteNode()
-                elif isinstance(item, EdgeItem) and not item.isTemporary:
+                elif isinstance(item, (EdgeItem, RoutedEdgeItem)) and not getattr(item, 'isTemporary', False):
                     self.removeEdge(item)
         elif event.key() == Qt.Key_A and event.modifiers() & Qt.ControlModifier:
             for item in self.scene.items():
-                if isinstance(item, (TaskNode, EdgeItem)) and not getattr(item, 'isTemporary', False):
+                if isinstance(item, (TaskNode, EdgeItem, RoutedEdgeItem)) and not getattr(item, 'isTemporary', False):
                     item.setSelected(True)
         else:
             super().keyPressEvent(event)
