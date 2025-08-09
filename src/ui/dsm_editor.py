@@ -33,6 +33,7 @@ from PyQt5.QtWidgets import (
     QRubberBand,
 )
 
+from .edge_routing import YEdStyleEdgeRouter, RoutingStyle
 from .selection_styles import SelectionStyleManager
 
 # 引入新的模組化佈局系統
@@ -1197,34 +1198,65 @@ class EdgeItem(QGraphicsPathItem):
             self.arrowHead.setBrush(QBrush(Qt.black))
 
     def updatePath(self) -> None:
-        """更新路徑 - 精確連線版本（從 opus 改進）"""
+        """更新路徑，優先使用智慧繞線"""
         if not self.src or not self.dst:
             return
 
-        # 獲取節點邊界
+        # 先嘗試使用場景的智慧繞線器
+        routedPath = None
+        if hasattr(self.src, 'editor') and self.src.editor and self.src.editor.scene:
+            routedPath = self.src.editor.scene.routeEdgePath(self.src, self.dst)
+
+        if routedPath:
+            # 繪製智慧繞線結果並更新箭頭
+            self._applyRoutedPath(routedPath)
+            return
+
+        # 如果智慧繞線失敗，回退到原有直線邏輯
         srcRect = self.src.sceneBoundingRect()
         dstRect = self.dst.sceneBoundingRect()
-        
+
         # 檢查快取
-        if (self._cached_src_rect == srcRect and 
+        if (self._cached_src_rect == srcRect and
             self._cached_dst_rect == dstRect and
             self._cached_src_point and self._cached_dst_point):
-            return  # 使用快取結果
-        
-        # 計算連線點
+            return
+
         srcPoint, dstPoint = self._calculateConnectionPoints(srcRect, dstRect)
-        
         if not srcPoint or not dstPoint:
             return
-        
-        # 快取結果
+
         self._cached_src_rect = QRectF(srcRect)
         self._cached_dst_rect = QRectF(dstRect)
         self._cached_src_point = srcPoint
         self._cached_dst_point = dstPoint
-        
-        # 建立路徑
+
         self._buildPath(srcPoint, dstPoint)
+
+    def _applyRoutedPath(self, path: QPainterPath) -> None:
+        """套用智慧繞線結果並設定箭頭"""
+        elements = [path.elementAt(i) for i in range(path.elementCount())]
+        if not elements:
+            return
+
+        start = QPointF(elements[0].x, elements[0].y)
+        end = QPointF(elements[-1].x, elements[-1].y)
+        secondLast = QPointF(elements[-2].x, elements[-2].y) if len(elements) >= 2 else start
+
+        direction = end - secondLast
+        length = math.hypot(direction.x(), direction.y())
+        if length > self.PRECISION_TOLERANCE:
+            direction /= length
+        adjustedEnd = end - direction * self.ARROW_BACK_OFFSET
+
+        newPath = QPainterPath()
+        newPath.moveTo(start)
+        for elem in elements[1:-1]:
+            newPath.lineTo(elem.x, elem.y)
+        newPath.lineTo(adjustedEnd)
+        self.setPath(newPath)
+
+        self._updateArrowHead(start, end)
 
     def _calculateConnectionPoints(self, srcRect: QRectF, dstRect: QRectF):
         """計算源和目標的精確連線點（opus 改進）"""
@@ -1730,6 +1762,27 @@ class DsmScene(QGraphicsScene):
 
         # 多固定點連線模式
         self.fixedPoints = []  # 存儲多個固定點的列表
+
+        # 智慧繞線器，用於計算 yEd 風格邊線路徑
+        self.edgeRouter = YEdStyleEdgeRouter(QRectF(-5000, -5000, 10000, 10000))
+
+    def routeEdgePath(self, srcNode: TaskNode, dstNode: TaskNode) -> Optional[QPainterPath]:
+        """利用智慧繞線器產生邊線路徑"""
+        # 重設路由器狀態
+        self.edgeRouter.clear_existing_paths()
+        self.edgeRouter.grid.blocked_points.clear()
+
+        # 將所有節點加入阻擋區域，避免邊線穿越
+        for node in self.editor.nodes.values():
+            if node not in (srcNode, dstNode):
+                self.edgeRouter.add_node_obstacle(node.sceneBoundingRect())
+
+        # 執行路徑計算（預設為正交路由）
+        return self.edgeRouter.route_edge(
+            srcNode.sceneBoundingRect(),
+            dstNode.sceneBoundingRect(),
+            RoutingStyle.ORTHOGONAL,
+        )
 
     def startConnectionMode(self, sourceNode: TaskNode) -> None:
         """開始連線模式"""

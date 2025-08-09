@@ -363,3 +363,4 @@ class YEdStyleEdgeRouter:
     def clear_existing_paths(self):
         """清除現有路徑，重新開始路由"""
         self.existing_paths.clear()
+
