@@ -46,6 +46,15 @@ class DsmEditor(QDialog):
 
         self.nodes: Dict[str, TaskNode] = {}
         self.edges: Set[tuple[str, str]] = set()
+        
+        # yEd 風格布局設置
+        self.layout_direction = 'TB'  # 'TB' (Top-Bottom) 或 'LR' (Left-Right)
+        self.layer_spacing = 200      # 層間距離
+        self.node_spacing = 150       # 同層節點間距離
+        self.isolated_spacing = 100   # 孤立節點間距離
+        
+        # 邊的路由模式（佈局完成後才啟用正交路由）
+        self.routing_enabled = False
 
         # yEd 風格邊線路由管理器
         self.edge_router_manager = None  # 在場景建立後初始化
@@ -99,12 +108,28 @@ class DsmEditor(QDialog):
         forceAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.FORCE_DIRECTED))
         layoutMenu.addAction(forceAction)
         
-        # 邊線路由選項
+        # 佈局方向選項
         layoutMenu.addSeparator()
         
-        self.routingModeAction = QAction("邊線路由：佈局時正交(&R)", self)
+        directionSubmenu = layoutMenu.addMenu("佈局方向(&D)")
+        
+        self.tbDirectionAction = QAction("上到下 (TB)(&T)", self)
+        self.tbDirectionAction.setCheckable(True)
+        self.tbDirectionAction.setChecked(True)  # 預設為 TB
+        self.tbDirectionAction.triggered.connect(lambda: self.setLayoutDirection('TB'))
+        directionSubmenu.addAction(self.tbDirectionAction)
+        
+        self.lrDirectionAction = QAction("左到右 (LR)(&L)", self)
+        self.lrDirectionAction.setCheckable(True)
+        self.lrDirectionAction.triggered.connect(lambda: self.setLayoutDirection('LR'))
+        directionSubmenu.addAction(self.lrDirectionAction)
+        
+        # 路由選項
+        layoutMenu.addSeparator()
+        
+        self.routingModeAction = QAction("啟用正交路由(&R)", self)
         self.routingModeAction.setCheckable(True)
-        self.routingModeAction.setChecked(True)  # 預設啟用
+        self.routingModeAction.setChecked(False)  # 預設禁用，佈局後手動啟用
         self.routingModeAction.triggered.connect(self.toggleRoutingMode)
         layoutMenu.addAction(self.routingModeAction)
 
@@ -222,9 +247,13 @@ class DsmEditor(QDialog):
 
     def applyHierarchicalLayout(self) -> None:
         """
-        階層式佈局 - 使用模組化的佈局演算法。
+        yEd 風格階層式佈局 - 先做佈局再做路由。
         
-        LAYOUT: moved to src/layouts/hierarchical.py
+        實現專業級布局特性：
+        - 方向限制：TB 或 LR，邊只允許對應方向
+        - 孤立節點優先擺放：TB模式左側，LR模式上方  
+        - 智能端口分配：根據方向限制進出邊的連接點
+        - 佈局完成後才啟用正交路由
         """
         # 準備 WBS DataFrame
         task_ids = list(self.nodes.keys())
@@ -236,16 +265,14 @@ class DsmEditor(QDialog):
             })
         wbs_df = pd.DataFrame(wbs_data)
         
-        # 取得佈局方向（如果有設定的話）
-        direction = getattr(self, 'default_layout_direction', 'TB')
-        
-        # 呼叫模組化的佈局函數
+        # 呼叫 yEd 風格佈局函數
         positions = layout_hierarchical(
             wbs_df,
             edges=self.edges,
-            direction=direction,
-            layer_spacing=200,
-            node_spacing=150
+            direction=self.layout_direction,
+            layer_spacing=self.layer_spacing,
+            node_spacing=self.node_spacing,
+            isolated_spacing=self.isolated_spacing
         )
         
         # 套用位置到節點
@@ -257,8 +284,55 @@ class DsmEditor(QDialog):
         self._updateSceneRectToFitNodes(padding=300)
         self._ensureContentVisible(margin=80)
         
-        # 佈局完成後執行正交路由 (yEd 風格)
+        # 先完成佈局，再啟用正交路由 (yEd 風格流程)
+        print(f"佈局完成 - 方向: {self.layout_direction}, 節點數: {len(positions)}")
         self._apply_orthogonal_routing_after_layout()
+
+    def setLayoutDirection(self, direction: str) -> None:
+        """
+        設置佈局方向。
+        
+        Args:
+            direction: 'TB' (Top-Bottom) 或 'LR' (Left-Right)
+        """
+        if direction in ['TB', 'LR']:
+            self.layout_direction = direction
+            print(f"佈局方向設為: {direction}")
+        else:
+            print(f"警告：無效的佈局方向 '{direction}'，保持 '{self.layout_direction}'")
+
+    def setLayoutSpacing(self, layer_spacing: int = None, node_spacing: int = None, isolated_spacing: int = None) -> None:
+        """
+        設置佈局間距參數。
+        
+        Args:
+            layer_spacing: 層間距離
+            node_spacing: 同層節點間距離
+            isolated_spacing: 孤立節點間距離
+        """
+        if layer_spacing is not None:
+            self.layer_spacing = layer_spacing
+        if node_spacing is not None:
+            self.node_spacing = node_spacing
+        if isolated_spacing is not None:
+            self.isolated_spacing = isolated_spacing
+        
+        print(f"佈局參數 - 層間距: {self.layer_spacing}, 節點間距: {self.node_spacing}, 孤立節點間距: {self.isolated_spacing}")
+
+    def enableOrthogonalRouting(self, enabled: bool = True) -> None:
+        """
+        啟用或禁用正交路由。
+        
+        Args:
+            enabled: 是否啟用正交路由
+        """
+        self.routing_enabled = enabled
+        if enabled:
+            print("正交路由已啟用")
+            self._apply_orthogonal_routing_after_layout()
+        else:
+            print("正交路由已禁用 - 使用直線邊")
+            self._resetToStraightEdges()
 
     def applySimpleHierarchicalLayout(self) -> None:
         """簡單階層式佈局"""
@@ -485,6 +559,53 @@ class DsmEditor(QDialog):
                 QMessageBox.information(self, "完成", f"已匯出 DSM：{path}")
             except OSError as e:
                 QMessageBox.critical(self, "錯誤", f"匯出失敗：{e}")
+
+    def toggleRoutingMode(self) -> None:
+        """切換路由模式"""
+        enabled = self.routingModeAction.isChecked()
+        self.enableOrthogonalRouting(enabled)
+
+    def setLayoutDirection(self, direction: str) -> None:
+        """
+        設置佈局方向並更新菜單狀態。
+        
+        Args:
+            direction: 'TB' (Top-Bottom) 或 'LR' (Left-Right)
+        """
+        if direction == 'TB':
+            self.layout_direction = 'TB'
+            self.tbDirectionAction.setChecked(True)
+            self.lrDirectionAction.setChecked(False)
+            print("佈局方向設為：上到下 (TB)")
+        elif direction == 'LR':
+            self.layout_direction = 'LR'
+            self.tbDirectionAction.setChecked(False)
+            self.lrDirectionAction.setChecked(True)
+            print("佈局方向設為：左到右 (LR)")
+        else:
+            print(f"警告：無效的佈局方向 '{direction}'")
+
+    def enableOrthogonalRouting(self, enabled: bool = True) -> None:
+        """
+        啟用或禁用正交路由。
+        
+        Args:
+            enabled: 是否啟用正交路由
+        """
+        self.routing_enabled = enabled
+        if enabled:
+            print("正交路由已啟用")
+            self._apply_orthogonal_routing_after_layout()
+        else:
+            print("正交路由已禁用 - 使用直線邊")
+            self._resetToStraightEdges()
+
+    def _resetToStraightEdges(self) -> None:
+        """重置所有邊線為直線模式"""
+        for edge_item in self.scene.items():
+            if hasattr(edge_item, 'updatePath') and hasattr(edge_item, 'src') and hasattr(edge_item, 'dst'):
+                # 重置為直線
+                edge_item.updatePath()
 
     def keyPressEvent(self, event):
         """鍵盤事件處理"""
