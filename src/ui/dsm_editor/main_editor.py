@@ -262,58 +262,82 @@ class DsmEditor(QDialog):
 
     def applyOrthogonalLayout(self) -> None:
         """
-        正交式佈局 - 使用模組化的網格佈局。
+        正交式佈局 - 使用模組化的正交佈局演算法。
         
-        LAYOUT: moved to src/layouts/hierarchical.py (_simple_grid_layout)
+        LAYOUT: 使用 layouts/orthogonal.py 中的專門實現
         """
-        from .layouts import _simple_grid_layout
+        from .layouts import layout_orthogonal
+        import pandas as pd
         
+        # 準備 WBS 資料
         task_ids = list(self.nodes.keys())
+        if not task_ids:
+            return
+            
+        wbs_df = pd.DataFrame({'Task ID': task_ids})
         
-        # 使用模組化的網格佈局
-        positions = _simple_grid_layout(
-            task_ids,
+        # 取得佈局方向（如果有設定的話）
+        direction = getattr(self, 'default_layout_direction', 'TB')
+        
+        # 使用模組化的正交佈局
+        positions = layout_orthogonal(
+            wbs_df,
+            direction=direction,
+            layer_spacing=200,
             node_spacing=180,
-            layer_spacing=120,
-            direction='TB'
+            grid_cols=5
         )
         
         # 套用位置
         for task_id, (x, y) in positions.items():
             if task_id in self.nodes:
-                self.nodes[task_id].setPos(x, y)
+                node = self.nodes[task_id]
+                node.setPos(x, y)
         
         self._updateSceneRectToFitNodes(padding=300)
         self._ensureContentVisible(margin=80)
 
     def applyForceDirectedLayout(self) -> None:
-        """力導向佈局"""
-        graph = nx.Graph()
-        for taskId in self.nodes:
-            graph.add_node(taskId)
-        for src, dst in self.edges:
-            graph.add_edge(src, dst)
-
-        if not graph.nodes():
+        """
+        力導向佈局 - 使用模組化的力導向演算法。
+        
+        LAYOUT: 使用 layouts/force_directed.py 中的專門實現
+        """
+        from .layouts import layout_force_directed
+        import pandas as pd
+        
+        # 準備資料
+        task_ids = list(self.nodes.keys())
+        if not task_ids:
             return
-
+            
+        wbs_df = pd.DataFrame({'Task ID': task_ids})
+        edges = set(self.edges)
+        
         try:
-            pos = nx.spring_layout(
-                graph,
-                k=200,
+            # 使用模組化的力導向佈局
+            positions = layout_force_directed(
+                wbs_df,
+                edges,
                 iterations=100,
-                scale=300
+                k_spring=1.5,
+                scale=400,
+                seed=42  # 固定種子確保結果一致
             )
-
-            for nodeId, (x, y) in pos.items():
-                if nodeId in self.nodes:
-                    self.nodes[nodeId].setPos(x, y)
-
+            
+            # 套用位置
+            for task_id, (x, y) in positions.items():
+                if task_id in self.nodes:
+                    node = self.nodes[task_id]
+                    node.setPos(x, y)
+            
             # 佈局完成後調整場景範圍並確保內容可見
             self._updateSceneRectToFitNodes(padding=300)
             self._ensureContentVisible(margin=80)
-
-        except Exception:
+            
+        except Exception as e:
+            print(f"力導向佈局失敗: {e}")
+            # 回退到正交佈局
             self.applyOrthogonalLayout()
 
     def _updateSceneRectToFitNodes(self, padding: int = 200) -> None:
