@@ -1,0 +1,3066 @@
+diff --git .claude/settings.local.json .claude/settings.local.json
+index cb578ac..a2d3f6d 100644
+--- .claude/settings.local.json
++++ .claude/settings.local.json
+@@ -11,7 +11,8 @@
+       "Bash(git pull:*)",
+       "Bash(grep:*)",
+       "Bash(sed:*)",
+-      "Bash(git fetch:*)"
++      "Bash(git fetch:*)",
++      "Bash(mkdir:*)"
+     ],
+     "deny": []
+   }
+diff --git run_dsm_editor.py run_dsm_editor.py
+new file mode 100644
+index 0000000..58651b5
+--- /dev/null
++++ run_dsm_editor.py
+@@ -0,0 +1,278 @@
++#!/usr/bin/env python3
++"""
++DSM Editor 啟動器
++DSM Editor Launcher
++
++用於快速啟動 DSM 編輯器的最小腳本。
++
++使用方式：
++    python run_dsm_editor.py                    # 使用預設 sample 資料
++    python run_dsm_editor.py --wbs path/to.csv  # 指定 WBS 檔案
++    python run_dsm_editor.py --dsm path/to.csv  # 指定 DSM 檔案（未來支援）
++    python run_dsm_editor.py --help             # 顯示說明
++
++快速操作指南：
++    - 拖曳節點：選中節點（點擊）後拖動
++    - 建立連線：從未選中節點拖曳到目標節點
++    - 階層式佈局：選單 > 佈局 > 階層式佈局
++    - 匯出 DSM：選單 > 檔案 > 匯出 DSM
++    - 撤銷/重做：Ctrl+Z / Ctrl+Y
++    - 框選：在空白處拖曳
++    - 刪除：選中後按 Delete
++
++佈局選項：
++    - 階層式：基於依賴關係的分層佈局（Longest-Path）
++    - 正交式：網格佈局
++    - 力導向：物理模擬佈局
++
++TODO(next):
++    - 支援載入 DSM 矩陣
++    - 支援命令列參數設定佈局方向
++    - 加入批次處理模式
++"""
++
++import sys
++import os
++import argparse
++from pathlib import Path
++
++# 將 src 目錄加入 Python 路徑
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
++
++import pandas as pd
++from PyQt5.QtWidgets import QApplication, QMessageBox
++try:
++    from ui.dsm_editor import DsmEditor
++except ImportError:
++    from src.ui.dsm_editor import DsmEditor
++
++
++def load_sample_wbs() -> pd.DataFrame:
++    """
++    載入預設的 sample WBS 資料。
++    
++    Returns:
++        WBS DataFrame
++    """
++    sample_path = Path(__file__).parent / "sample_data" / "WBS.csv"
++    
++    if not sample_path.exists():
++        print(f"找不到 sample 檔案：{sample_path}")
++        print("嘗試其他可能的位置...")
++        
++        # 嘗試其他可能的路徑
++        alternative_paths = [
++            Path("sample_data/WBS.csv"),
++            Path("sample/WBS.csv"),
++            Path("../sample_data/WBS.csv"),
++        ]
++        
++        for alt_path in alternative_paths:
++            if alt_path.exists():
++                sample_path = alt_path
++                print(f"找到檔案：{sample_path}")
++                break
++        else:
++            print("錯誤：找不到任何 sample WBS 檔案")
++            return pd.DataFrame()
++    
++    try:
++        # 讀取 CSV，處理可能的編碼問題
++        df = pd.read_csv(sample_path, encoding='utf-8-sig')
++        print(f"成功載入 {len(df)} 筆任務資料")
++        print(f"欄位：{', '.join(df.columns.tolist())}")
++        return df
++    except UnicodeDecodeError:
++        # 嘗試其他編碼
++        try:
++            df = pd.read_csv(sample_path, encoding='utf-8')
++            return df
++        except Exception as e:
++            print(f"載入檔案失敗：{e}")
++            return pd.DataFrame()
++    except Exception as e:
++        print(f"載入檔案失敗：{e}")
++        return pd.DataFrame()
++
++
++def load_wbs_file(file_path: str) -> pd.DataFrame:
++    """
++    載入指定的 WBS 檔案。
++    
++    Args:
++        file_path: WBS CSV 檔案路徑
++    
++    Returns:
++        WBS DataFrame
++    """
++    path = Path(file_path)
++    
++    if not path.exists():
++        print(f"錯誤：檔案不存在 - {path}")
++        return pd.DataFrame()
++    
++    try:
++        # 自動偵測編碼
++        df = pd.read_csv(path, encoding='utf-8-sig')
++        print(f"成功載入 {len(df)} 筆任務資料從 {path}")
++        
++        # 檢查必要欄位
++        required_columns = ["Task ID"]
++        missing = [col for col in required_columns if col not in df.columns]
++        if missing:
++            print(f"警告：缺少必要欄位 {missing}")
++        
++        return df
++    except UnicodeDecodeError:
++        try:
++            df = pd.read_csv(path, encoding='utf-8')
++            return df
++        except Exception as e:
++            print(f"載入檔案失敗（編碼問題）：{e}")
++            return pd.DataFrame()
++    except Exception as e:
++        print(f"載入檔案失敗：{e}")
++        return pd.DataFrame()
++
++
++def load_dsm_file(file_path: str) -> pd.DataFrame:
++    """
++    載入 DSM 矩陣檔案（未來功能）。
++    
++    Args:
++        file_path: DSM CSV 檔案路徑
++    
++    Returns:
++        DSM DataFrame
++    
++    TODO(next): 實作 DSM 載入並轉換為 WBS + edges
++    """
++    print("DSM 載入功能尚未實作")
++    return pd.DataFrame()
++
++
++def create_parser() -> argparse.ArgumentParser:
++    """
++    建立命令列參數解析器。
++    
++    Returns:
++        ArgumentParser 物件
++    """
++    parser = argparse.ArgumentParser(
++        description="DSM Editor - 視覺化依賴關係編輯器",
++        formatter_class=argparse.RawDescriptionHelpFormatter,
++        epilog="""
++範例：
++  %(prog)s                           # 使用預設 sample 資料
++  %(prog)s --wbs project.csv        # 載入指定的 WBS 檔案
++  %(prog)s --direction LR            # 使用左到右的佈局方向
++  
++佈局方向選項：
++  TB: Top-Bottom (上到下，預設)
++  LR: Left-Right (左到右)
++  BT: Bottom-Top (下到上) [未來支援]
++  RL: Right-Left (右到左) [未來支援]
++        """
++    )
++    
++    parser.add_argument(
++        '--wbs',
++        type=str,
++        help='WBS CSV 檔案路徑'
++    )
++    
++    parser.add_argument(
++        '--dsm',
++        type=str,
++        help='DSM CSV 檔案路徑（未來功能）'
++    )
++    
++    parser.add_argument(
++        '--direction',
++        type=str,
++        choices=['TB', 'LR'],
++        default='TB',
++        help='預設佈局方向（預設：TB）'
++    )
++    
++    parser.add_argument(
++        '--debug',
++        action='store_true',
++        help='啟用除錯模式'
++    )
++    
++    return parser
++
++
++def main():
++    """主程式進入點。"""
++    # 解析命令列參數
++    parser = create_parser()
++    args = parser.parse_args()
++    
++    # 除錯模式
++    if args.debug:
++        print("除錯模式已啟用")
++        print(f"參數：{args}")
++    
++    # 載入資料
++    if args.wbs:
++        print(f"載入 WBS 檔案：{args.wbs}")
++        wbs_df = load_wbs_file(args.wbs)
++    elif args.dsm:
++        print(f"載入 DSM 檔案：{args.dsm}")
++        wbs_df = load_dsm_file(args.dsm)
++    else:
++        print("使用預設 sample 資料")
++        wbs_df = load_sample_wbs()
++    
++    # 檢查資料
++    if wbs_df.empty:
++        print("錯誤：無法載入任何資料")
++        response = input("是否要繼續開啟空白編輯器？(y/n): ")
++        if response.lower() != 'y':
++            sys.exit(1)
++    
++    # 建立 Qt 應用程式
++    app = QApplication(sys.argv)
++    app.setApplicationName("DSM Editor")
++    app.setOrganizationName("DSM Tools")
++    
++    # 設定樣式（選用）
++    app.setStyle('Fusion')  # 使用 Fusion 風格獲得更現代的外觀
++    
++    try:
++        # 建立並顯示主視窗
++        editor = DsmEditor(wbs_df)
++        
++        # 儲存佈局方向設定（供編輯器使用）
++        editor.default_layout_direction = args.direction
++        if args.debug:
++            print(f"佈局方向設定為：{args.direction}")
++        
++        # 顯示視窗
++        editor.show()
++        
++        # 如果有資料，自動執行一次階層式佈局
++        if not wbs_df.empty:
++            print("執行初始階層式佈局...")
++            # 延遲執行以確保視窗已完全顯示
++            from PyQt5.QtCore import QTimer
++            QTimer.singleShot(100, editor.applyHierarchicalLayout)
++        
++        # 執行應用程式
++        sys.exit(app.exec_())
++        
++    except Exception as e:
++        print(f"錯誤：{e}")
++        if args.debug:
++            import traceback
++            traceback.print_exc()
++        
++        # 顯示錯誤對話框
++        QMessageBox.critical(None, "錯誤", f"無法啟動編輯器：\n{e}")
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git spec_dropin/hierarchical_layout.txt spec_dropin/hierarchical_layout.txt
+new file mode 100644
+index 0000000..6c1b704
+--- /dev/null
++++ spec_dropin/hierarchical_layout.txt
+@@ -0,0 +1,294 @@
++"""
++階層式佈局演算法模組
++Hierarchical Layout Algorithm Module
++
++實現基於 Longest-Path 的階層式佈局，保持現有 DSM 編輯器的佈局行為。
++"""
++
++from typing import Dict, Tuple, List, Set, Optional
++import pandas as pd
++import networkx as nx
++
++
++def layout_hierarchical(
++    wbs_df: pd.DataFrame,
++    edges: Set[Tuple[str, str]] = None,
++    *,
++    direction: str = "TB",
++    layer_spacing: int = 200,
++    node_spacing: int = 150
++) -> Dict[str, Tuple[float, float]]:
++    """
++    計算階層式佈局的節點位置。
++    
++    使用 Longest-Path 分層演算法，保持現有 DSM 編輯器的行為：
++    - 基於拓撲排序的分層
++    - 每層等距擺位
++    - 不做 dummy nodes、交叉最小化或壓縮優化
++    
++    Args:
++        wbs_df: WBS 資料框，需包含 "Task ID" 欄位
++        edges: 邊的集合，格式為 {(src_id, dst_id), ...}。若為 None，則只做簡單網格佈局
++        direction: 佈局方向，"TB"(上到下) 或 "LR"(左到右)
++        layer_spacing: 層間距離（像素）
++        node_spacing: 同層節點間距離（像素）
++    
++    Returns:
++        節點位置字典 {task_id: (x, y)}
++    
++    TODO(next): 
++        - 支援 dummy nodes 以處理跨層邊
++        - 實作交叉最小化演算法
++        - 加入節點壓縮以減少空白
++        - 支援節點大小考量
++    """
++    # 提取任務 ID 列表
++    task_ids = []
++    for _, row in wbs_df.iterrows():
++        task_id = str(row.get("Task ID", f"Task_{_}"))
++        task_ids.append(task_id)
++    
++    if not task_ids:
++        return {}
++    
++    # 如果沒有邊，使用簡單網格佈局
++    if not edges:
++        return _simple_grid_layout(task_ids, node_spacing, layer_spacing, direction)
++    
++    # 建立有向圖
++    graph = nx.DiGraph()
++    for task_id in task_ids:
++        graph.add_node(task_id)
++    for src, dst in edges:
++        if src in task_ids and dst in task_ids:
++            graph.add_edge(src, dst)
++    
++    # 檢查是否有循環
++    if not nx.is_directed_acyclic_graph(graph):
++        print("警告：圖形包含循環，退回到簡單階層佈局")
++        return _simple_hierarchical_fallback(task_ids, edges, layer_spacing, node_spacing, direction)
++    
++    # 計算每個節點的層級（Longest-Path）
++    layers = _compute_layers_longest_path(graph)
++    
++    # 將節點按層級分組
++    level_groups = {}
++    for node, level in layers.items():
++        if level not in level_groups:
++            level_groups[level] = []
++        level_groups[level].append(node)
++    
++    # 計算節點位置
++    positions = {}
++    for level, nodes in sorted(level_groups.items()):
++        # 計算該層的位置
++        if direction == "TB":  # Top-Bottom
++            y = level * layer_spacing
++            start_x = -(len(nodes) - 1) * node_spacing / 2
++            for i, node_id in enumerate(nodes):
++                x = start_x + i * node_spacing
++                positions[node_id] = (x, y)
++        else:  # LR: Left-Right
++            x = level * layer_spacing
++            start_y = -(len(nodes) - 1) * node_spacing / 2
++            for i, node_id in enumerate(nodes):
++                y = start_y + i * node_spacing
++                positions[node_id] = (x, y)
++    
++    # 補充未在圖中的節點（孤立節點）
++    for task_id in task_ids:
++        if task_id not in positions:
++            # 放在最底層
++            max_level = max(level_groups.keys()) if level_groups else 0
++            if direction == "TB":
++                positions[task_id] = (0, (max_level + 1) * layer_spacing)
++            else:
++                positions[task_id] = ((max_level + 1) * layer_spacing, 0)
++    
++    return positions
++
++
++def _compute_layers_longest_path(graph: nx.DiGraph) -> Dict[str, int]:
++    """
++    使用 Longest-Path 演算法計算節點層級。
++    
++    Args:
++        graph: NetworkX 有向無環圖
++    
++    Returns:
++        節點層級字典 {node_id: layer}
++    """
++    layers = {}
++    
++    # 拓撲排序
++    try:
++        topo_order = list(nx.topological_sort(graph))
++    except nx.NetworkXError:
++        # 如果有循環，返回空字典
++        return {}
++    
++    # 計算每個節點的最大路徑長度
++    for node in topo_order:
++        predecessors = list(graph.predecessors(node))
++        if not predecessors:
++            # 沒有前驅節點，放在第 0 層
++            layers[node] = 0
++        else:
++            # 放在所有前驅節點的下一層
++            layers[node] = max(layers[pred] for pred in predecessors) + 1
++    
++    return layers
++
++
++def _simple_grid_layout(
++    task_ids: List[str],
++    node_spacing: int,
++    layer_spacing: int,
++    direction: str
++) -> Dict[str, Tuple[float, float]]:
++    """
++    簡單網格佈局，用於沒有邊的情況。
++    
++    Args:
++        task_ids: 任務 ID 列表
++        node_spacing: 節點間距
++        layer_spacing: 層間距
++        direction: 佈局方向
++    
++    Returns:
++        節點位置字典
++    """
++    positions = {}
++    cols = 5  # 每行/列 5 個節點
++    
++    for i, task_id in enumerate(task_ids):
++        row = i // cols
++        col = i % cols
++        
++        if direction == "TB":
++            x = (col - cols // 2) * node_spacing
++            y = row * layer_spacing
++        else:  # LR
++            x = row * layer_spacing
++            y = (col - cols // 2) * node_spacing
++        
++        positions[task_id] = (x, y)
++    
++    return positions
++
++
++def _simple_hierarchical_fallback(
++    task_ids: List[str],
++    edges: Set[Tuple[str, str]],
++    layer_spacing: int,
++    node_spacing: int,
++    direction: str
++) -> Dict[str, Tuple[float, float]]:
++    """
++    簡單階層式佈局備用方案，用於有循環的圖。
++    
++    將節點分成幾層，盡量減少回邊。
++    
++    Args:
++        task_ids: 任務 ID 列表
++        edges: 邊的集合
++        layer_spacing: 層間距
++        node_spacing: 節點間距
++        direction: 佈局方向
++    
++    Returns:
++        節點位置字典
++    """
++    positions = {}
++    nodes_per_level = 4
++    
++    for i, task_id in enumerate(task_ids):
++        level = i // nodes_per_level
++        pos_in_level = i % nodes_per_level
++        
++        if direction == "TB":
++            start_x = -(nodes_per_level - 1) * node_spacing / 2
++            x = start_x + pos_in_level * node_spacing
++            y = level * layer_spacing
++        else:  # LR
++            start_y = -(nodes_per_level - 1) * node_spacing / 2
++            x = level * layer_spacing
++            y = start_y + pos_in_level * node_spacing
++        
++        positions[task_id] = (x, y)
++    
++    return positions
++
++
++def optimize_crossing_reduction(
++    positions: Dict[str, Tuple[float, float]],
++    edges: Set[Tuple[str, str]],
++    iterations: int = 10
++) -> Dict[str, Tuple[float, float]]:
++    """
++    交叉最小化優化（骨架，尚未實作）。
++    
++    TODO(next): 實作基於重心法或中位數法的交叉最小化
++    
++    Args:
++        positions: 現有節點位置
++        edges: 邊的集合
++        iterations: 迭代次數
++    
++    Returns:
++        優化後的節點位置
++    """
++    # TODO: 實作交叉最小化演算法
++    # 1. 按層分組節點
++    # 2. 對每層計算節點順序以最小化與上/下層的交叉
++    # 3. 迭代優化直到收斂或達到最大迭代次數
++    
++    return positions  # 暫時直接返回原始位置
++
++
++def add_dummy_nodes(
++    positions: Dict[str, Tuple[float, float]],
++    edges: Set[Tuple[str, str]]
++) -> Tuple[Dict[str, Tuple[float, float]], Set[Tuple[str, str]]]:
++    """
++    添加虛擬節點以處理跨層邊（骨架，尚未實作）。
++    
++    TODO(next): 實作虛擬節點插入演算法
++    
++    Args:
++        positions: 節點位置
++        edges: 原始邊集合
++    
++    Returns:
++        (包含虛擬節點的位置字典, 更新後的邊集合)
++    """
++    # TODO: 實作虛擬節點演算法
++    # 1. 檢測跨層邊（跨越多於一層的邊）
++    # 2. 在中間層插入虛擬節點
++    # 3. 將原始邊分割成多段
++    
++    return positions, edges  # 暫時直接返回原始資料
++
++
++def compact_layout(
++    positions: Dict[str, Tuple[float, float]],
++    node_sizes: Dict[str, Tuple[float, float]] = None
++) -> Dict[str, Tuple[float, float]]:
++    """
++    壓縮佈局以減少空白（骨架，尚未實作）。
++    
++    TODO(next): 實作佈局壓縮演算法
++    
++    Args:
++        positions: 節點位置
++        node_sizes: 節點大小字典 {node_id: (width, height)}
++    
++    Returns:
++        壓縮後的節點位置
++    """
++    # TODO: 實作佈局壓縮
++    # 1. 考慮節點實際大小
++    # 2. 在不造成重疊的情況下移動節點
++    # 3. 最小化總體佈局面積
++    
++    return positions  # 暫時直接返回原始位置
+\ No newline at end of file
+diff --git spec_dropin/init_files.txt spec_dropin/init_files.txt
+new file mode 100644
+index 0000000..56e52ac
+--- /dev/null
++++ spec_dropin/init_files.txt
+@@ -0,0 +1,25 @@
++# src/layouts/__init__.py
++"""
++佈局演算法模組
++Layout Algorithms Module
++"""
++
++from .hierarchical import layout_hierarchical
++
++__all__ = ['layout_hierarchical']
++
++---
++
++# tests/__init__.py
++"""
++測試模組
++Test Module
++"""
++
++---
++
++# tests/layouts/__init__.py
++"""
++佈局演算法測試模組
++Layout Algorithms Test Module
++"""
+\ No newline at end of file
+diff --git spec_dropin/routed_edge_item.txt spec_dropin/routed_edge_item.txt
+new file mode 100644
+index 0000000..58771b4
+--- /dev/null
++++ spec_dropin/routed_edge_item.txt
+@@ -0,0 +1,386 @@
++"""
++可路由邊線繪製元件
++Routed Edge Item Component
++
++支援 polyline 路徑的邊線繪製，為未來整合 EdgeRoutingEngine 做準備。
++"""
++
++from typing import List, Optional, Tuple
++from PyQt5.QtWidgets import QGraphicsPathItem
++from PyQt5.QtGui import QPainterPath, QPen, QBrush, QColor, QPainter
++from PyQt5.QtCore import QPointF, Qt, QRectF
++
++
++class RoutedEdgeItem(QGraphicsPathItem):
++    """
++    支援 polyline 路徑的邊線繪製元件。
++    
++    可接收一系列點來繪製折線路徑，為未來整合智慧路由做準備。
++    
++    TODO(next): 
++        - 支援平行邊偏移（多條邊之間的間距）
++        - 實作選取樣式與發光效果
++        - 加入 hover 提示與互動
++        - 整合 EdgeRoutingEngine 自動路由
++        - 支援箭頭繪製
++        - 加入標籤顯示
++    """
++    
++    def __init__(self, points: List[QPointF] = None, parent=None):
++        """
++        初始化路由邊線。
++        
++        Args:
++            points: 路徑點列表，至少需要 2 個點
++            parent: 父項目
++        """
++        super().__init__(parent)
++        
++        # 基本屬性
++        self.setZValue(-1)  # 放在節點下方
++        self.setAcceptedMouseButtons(Qt.NoButton)  # 暫時不接受滑鼠事件
++        
++        # 路徑點
++        self._points = points or []
++        
++        # 樣式設定
++        self._pen = QPen(Qt.gray, 1.25)
++        self._pen.setCapStyle(Qt.RoundCap)
++        self._pen.setJoinStyle(Qt.RoundJoin)
++        self.setPen(self._pen)
++        self.setBrush(Qt.NoBrush)
++        
++        # 選取狀態
++        self._is_selected = False
++        self._is_hovered = False
++        
++        # 平行邊偏移
++        self._parallel_offset = 0.0  # 偏移量（像素）
++        
++        # 箭頭設定
++        self._show_arrow = False
++        self._arrow_size = 10.0
++        
++        # 標籤
++        self._label = ""
++        self._label_position = 0.5  # 標籤在路徑上的位置（0-1）
++        
++        # 更新路徑
++        self.update_path()
++    
++    def set_points(self, points: List[QPointF]):
++        """
++        設定路徑點。
++        
++        Args:
++            points: 新的路徑點列表
++        """
++        self._points = points or []
++        self.update_path()
++    
++    def get_points(self) -> List[QPointF]:
++        """
++        獲取當前路徑點。
++        
++        Returns:
++            路徑點列表的副本
++        """
++        return self._points.copy()
++    
++    def set_parallel_offset(self, offset: float):
++        """
++        設定平行邊偏移量。
++        
++        用於多條平行邊之間的視覺分離。
++        
++        Args:
++            offset: 偏移量（像素），正值向右/上偏移，負值向左/下偏移
++        
++        TODO(next): 實作偏移計算邏輯
++        """
++        self._parallel_offset = offset
++        self.update_path()
++    
++    def set_selected(self, selected: bool):
++        """
++        設定選取狀態。
++        
++        Args:
++            selected: 是否選取
++        
++        TODO(next): 實作選取樣式變化
++        """
++        self._is_selected = selected
++        self._update_style()
++    
++    def set_hovered(self, hovered: bool):
++        """
++        設定懸停狀態。
++        
++        Args:
++            hovered: 是否懸停
++        
++        TODO(next): 實作懸停樣式變化
++        """
++        self._is_hovered = hovered
++        self._update_style()
++    
++    def set_show_arrow(self, show: bool):
++        """
++        設定是否顯示箭頭。
++        
++        Args:
++            show: 是否顯示箭頭
++        
++        TODO(next): 實作箭頭繪製
++        """
++        self._show_arrow = show
++        self.update_path()
++    
++    def set_label(self, label: str, position: float = 0.5):
++        """
++        設定標籤文字。
++        
++        Args:
++            label: 標籤文字
++            position: 標籤在路徑上的位置（0-1）
++        
++        TODO(next): 實作標籤繪製
++        """
++        self._label = label
++        self._label_position = max(0.0, min(1.0, position))
++        self.update()
++    
++    def update_path(self):
++        """
++        更新繪製路徑。
++        
++        根據當前的點列表和設定更新 QPainterPath。
++        """
++        path = QPainterPath()
++        pts = self._points
++        
++        if not pts:
++            self.setPath(path)
++            return
++        
++        if len(pts) < 2:
++            # 至少需要兩個點
++            self.setPath(path)
++            return
++        
++        # TODO(next): 實作平行偏移計算
++        # if self._parallel_offset != 0:
++        #     pts = self._calculate_offset_points(pts, self._parallel_offset)
++        
++        # 繪製主路徑
++        path.moveTo(pts[0])
++        for p in pts[1:]:
++            path.lineTo(p)
++        
++        # TODO(next): 實作箭頭繪製
++        # if self._show_arrow and len(pts) >= 2:
++        #     arrow_path = self._create_arrow_path(pts[-2], pts[-1])
++        #     path.addPath(arrow_path)
++        
++        self.setPath(path)
++    
++    def _update_style(self):
++        """
++        根據狀態更新繪製樣式。
++        
++        TODO(next): 實作不同狀態的視覺樣式
++        """
++        if self._is_selected:
++            # 選取狀態：加粗、變色
++            pen = QPen(QColor(0, 120, 215), 2.0)
++        elif self._is_hovered:
++            # 懸停狀態：稍微加粗
++            pen = QPen(Qt.darkGray, 1.5)
++        else:
++            # 正常狀態
++            pen = QPen(Qt.gray, 1.25)
++        
++        pen.setCapStyle(Qt.RoundCap)
++        pen.setJoinStyle(Qt.RoundJoin)
++        self.setPen(pen)
++    
++    def _calculate_offset_points(self, points: List[QPointF], offset: float) -> List[QPointF]:
++        """
++        計算偏移後的點列表（骨架，尚未實作）。
++        
++        Args:
++            points: 原始點列表
++            offset: 偏移量
++        
++        Returns:
++            偏移後的點列表
++        
++        TODO(next): 實作平行偏移演算法
++        """
++        # TODO: 計算每個線段的法向量
++        # TODO: 根據偏移量移動點
++        # TODO: 處理轉角的平滑連接
++        return points
++    
++    def _create_arrow_path(self, start: QPointF, end: QPointF) -> QPainterPath:
++        """
++        創建箭頭路徑（骨架，尚未實作）。
++        
++        Args:
++            start: 箭頭起始點（倒數第二個點）
++            end: 箭頭終點（最後一個點）
++        
++        Returns:
++            箭頭的 QPainterPath
++        
++        TODO(next): 實作箭頭繪製
++        """
++        arrow_path = QPainterPath()
++        # TODO: 計算箭頭方向
++        # TODO: 計算箭頭三個頂點
++        # TODO: 繪製填充的三角形
++        return arrow_path
++    
++    def paint(self, painter: QPainter, option, widget=None):
++        """
++        自訂繪製方法。
++        
++        Args:
++            painter: 繪製器
++            option: 繪製選項
++            widget: 繪製目標 widget
++        
++        TODO(next): 實作標籤繪製和發光效果
++        """
++        # 繪製主路徑（由父類處理）
++        super().paint(painter, option, widget)
++        
++        # TODO(next): 繪製標籤
++        # if self._label:
++        #     self._draw_label(painter)
++        
++        # TODO(next): 繪製選取/懸停發光效果
++        # if self._is_selected or self._is_hovered:
++        #     self._draw_glow(painter)
++    
++    def _draw_label(self, painter: QPainter):
++        """
++        繪製標籤（骨架，尚未實作）。
++        
++        Args:
++            painter: 繪製器
++        
++        TODO(next): 實作標籤繪製
++        """
++        # TODO: 計算標籤位置
++        # TODO: 計算標籤角度
++        # TODO: 繪製背景框
++        # TODO: 繪製文字
++        pass
++    
++    def _draw_glow(self, painter: QPainter):
++        """
++        繪製發光效果（骨架，尚未實作）。
++        
++        Args:
++            painter: 繪製器
++        
++        TODO(next): 實作發光效果
++        """
++        # TODO: 使用較粗的半透明筆刷重繪路徑
++        # TODO: 可能需要多層漸變效果
++        pass
++    
++    def boundingRect(self) -> QRectF:
++        """
++        返回邊界矩形。
++        
++        Returns:
++            包含整個邊線的邊界矩形
++        """
++        # 獲取路徑的邊界矩形
++        rect = super().boundingRect()
++        
++        # 擴展以包含筆刷寬度
++        pen_width = self.pen().widthF()
++        margin = pen_width / 2.0 + 1.0
++        
++        # TODO(next): 考慮箭頭和標籤的邊界
++        
++        return rect.adjusted(-margin, -margin, margin, margin)
++    
++    def shape(self) -> QPainterPath:
++        """
++        返回用於碰撞檢測的形狀。
++        
++        Returns:
++            擴展後的路徑形狀，便於選取
++        
++        TODO(next): 擴大選取區域以改善使用體驗
++        """
++        # 暫時使用預設形狀
++        return super().shape()
++        
++        # TODO: 使用 QPainterPathStroker 擴大路徑
++        # from PyQt5.QtGui import QPainterPathStroker
++        # stroker = QPainterPathStroker()
++        # stroker.setWidth(10.0)  # 擴大選取區域
++        # return stroker.createStroke(self.path())
++
++
++class RoutedEdgeManager:
++    """
++    路由邊線管理器（骨架）。
++    
++    管理多條邊線的路由和佈局。
++    
++    TODO(next): 實作邊線管理邏輯
++    """
++    
++    def __init__(self):
++        """初始化管理器。"""
++        self.edges: List[RoutedEdgeItem] = []
++        self.routing_engine = None  # 未來整合 EdgeRoutingEngine
++    
++    def add_edge(self, edge: RoutedEdgeItem):
++        """
++        添加邊線。
++        
++        Args:
++            edge: 要添加的邊線
++        """
++        self.edges.append(edge)
++        self._update_parallel_offsets()
++    
++    def remove_edge(self, edge: RoutedEdgeItem):
++        """
++        移除邊線。
++        
++        Args:
++            edge: 要移除的邊線
++        """
++        if edge in self.edges:
++            self.edges.remove(edge)
++            self._update_parallel_offsets()
++    
++    def _update_parallel_offsets(self):
++        """
++        更新平行邊的偏移量。
++        
++        TODO(next): 實作平行邊偏移計算
++        """
++        # TODO: 檢測平行邊
++        # TODO: 計算適當的偏移量
++        # TODO: 應用偏移
++        pass
++    
++    def route_all_edges(self):
++        """
++        對所有邊線進行路由。
++        
++        TODO(next): 整合 EdgeRoutingEngine
++        """
++        # TODO: 使用 routing_engine 計算路徑
++        # TODO: 更新每條邊的點列表
++        pass
+\ No newline at end of file
+diff --git spec_dropin/run_dsm_editor.txt spec_dropin/run_dsm_editor.txt
+new file mode 100644
+index 0000000..4ec6b14
+--- /dev/null
++++ spec_dropin/run_dsm_editor.txt
+@@ -0,0 +1,275 @@
++#!/usr/bin/env python3
++"""
++DSM Editor 啟動器
++DSM Editor Launcher
++
++用於快速啟動 DSM 編輯器的最小腳本。
++
++使用方式：
++    python run_dsm_editor.py                    # 使用預設 sample 資料
++    python run_dsm_editor.py --wbs path/to.csv  # 指定 WBS 檔案
++    python run_dsm_editor.py --dsm path/to.csv  # 指定 DSM 檔案（未來支援）
++    python run_dsm_editor.py --help             # 顯示說明
++
++快速操作指南：
++    - 拖曳節點：選中節點（點擊）後拖動
++    - 建立連線：從未選中節點拖曳到目標節點
++    - 階層式佈局：選單 > 佈局 > 階層式佈局
++    - 匯出 DSM：選單 > 檔案 > 匯出 DSM
++    - 撤銷/重做：Ctrl+Z / Ctrl+Y
++    - 框選：在空白處拖曳
++    - 刪除：選中後按 Delete
++
++佈局選項：
++    - 階層式：基於依賴關係的分層佈局（Longest-Path）
++    - 正交式：網格佈局
++    - 力導向：物理模擬佈局
++
++TODO(next):
++    - 支援載入 DSM 矩陣
++    - 支援命令列參數設定佈局方向
++    - 加入批次處理模式
++"""
++
++import sys
++import os
++import argparse
++from pathlib import Path
++
++# 將 src 目錄加入 Python 路徑
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
++
++import pandas as pd
++from PyQt5.QtWidgets import QApplication, QMessageBox
++from ui.dsm_editor import DsmEditor
++
++
++def load_sample_wbs() -> pd.DataFrame:
++    """
++    載入預設的 sample WBS 資料。
++    
++    Returns:
++        WBS DataFrame
++    """
++    sample_path = Path(__file__).parent / "sample_data" / "WBS.csv"
++    
++    if not sample_path.exists():
++        print(f"找不到 sample 檔案：{sample_path}")
++        print("嘗試其他可能的位置...")
++        
++        # 嘗試其他可能的路徑
++        alternative_paths = [
++            Path("sample_data/WBS.csv"),
++            Path("sample/WBS.csv"),
++            Path("../sample_data/WBS.csv"),
++        ]
++        
++        for alt_path in alternative_paths:
++            if alt_path.exists():
++                sample_path = alt_path
++                print(f"找到檔案：{sample_path}")
++                break
++        else:
++            print("錯誤：找不到任何 sample WBS 檔案")
++            return pd.DataFrame()
++    
++    try:
++        # 讀取 CSV，處理可能的編碼問題
++        df = pd.read_csv(sample_path, encoding='utf-8-sig')
++        print(f"成功載入 {len(df)} 筆任務資料")
++        print(f"欄位：{', '.join(df.columns.tolist())}")
++        return df
++    except UnicodeDecodeError:
++        # 嘗試其他編碼
++        try:
++            df = pd.read_csv(sample_path, encoding='utf-8')
++            return df
++        except Exception as e:
++            print(f"載入檔案失敗：{e}")
++            return pd.DataFrame()
++    except Exception as e:
++        print(f"載入檔案失敗：{e}")
++        return pd.DataFrame()
++
++
++def load_wbs_file(file_path: str) -> pd.DataFrame:
++    """
++    載入指定的 WBS 檔案。
++    
++    Args:
++        file_path: WBS CSV 檔案路徑
++    
++    Returns:
++        WBS DataFrame
++    """
++    path = Path(file_path)
++    
++    if not path.exists():
++        print(f"錯誤：檔案不存在 - {path}")
++        return pd.DataFrame()
++    
++    try:
++        # 自動偵測編碼
++        df = pd.read_csv(path, encoding='utf-8-sig')
++        print(f"成功載入 {len(df)} 筆任務資料從 {path}")
++        
++        # 檢查必要欄位
++        required_columns = ["Task ID"]
++        missing = [col for col in required_columns if col not in df.columns]
++        if missing:
++            print(f"警告：缺少必要欄位 {missing}")
++        
++        return df
++    except UnicodeDecodeError:
++        try:
++            df = pd.read_csv(path, encoding='utf-8')
++            return df
++        except Exception as e:
++            print(f"載入檔案失敗（編碼問題）：{e}")
++            return pd.DataFrame()
++    except Exception as e:
++        print(f"載入檔案失敗：{e}")
++        return pd.DataFrame()
++
++
++def load_dsm_file(file_path: str) -> pd.DataFrame:
++    """
++    載入 DSM 矩陣檔案（未來功能）。
++    
++    Args:
++        file_path: DSM CSV 檔案路徑
++    
++    Returns:
++        DSM DataFrame
++    
++    TODO(next): 實作 DSM 載入並轉換為 WBS + edges
++    """
++    print("DSM 載入功能尚未實作")
++    return pd.DataFrame()
++
++
++def create_parser() -> argparse.ArgumentParser:
++    """
++    建立命令列參數解析器。
++    
++    Returns:
++        ArgumentParser 物件
++    """
++    parser = argparse.ArgumentParser(
++        description="DSM Editor - 視覺化依賴關係編輯器",
++        formatter_class=argparse.RawDescriptionHelpFormatter,
++        epilog="""
++範例：
++  %(prog)s                           # 使用預設 sample 資料
++  %(prog)s --wbs project.csv        # 載入指定的 WBS 檔案
++  %(prog)s --direction LR            # 使用左到右的佈局方向
++  
++佈局方向選項：
++  TB: Top-Bottom (上到下，預設)
++  LR: Left-Right (左到右)
++  BT: Bottom-Top (下到上) [未來支援]
++  RL: Right-Left (右到左) [未來支援]
++        """
++    )
++    
++    parser.add_argument(
++        '--wbs',
++        type=str,
++        help='WBS CSV 檔案路徑'
++    )
++    
++    parser.add_argument(
++        '--dsm',
++        type=str,
++        help='DSM CSV 檔案路徑（未來功能）'
++    )
++    
++    parser.add_argument(
++        '--direction',
++        type=str,
++        choices=['TB', 'LR'],
++        default='TB',
++        help='預設佈局方向（預設：TB）'
++    )
++    
++    parser.add_argument(
++        '--debug',
++        action='store_true',
++        help='啟用除錯模式'
++    )
++    
++    return parser
++
++
++def main():
++    """主程式進入點。"""
++    # 解析命令列參數
++    parser = create_parser()
++    args = parser.parse_args()
++    
++    # 除錯模式
++    if args.debug:
++        print("除錯模式已啟用")
++        print(f"參數：{args}")
++    
++    # 載入資料
++    if args.wbs:
++        print(f"載入 WBS 檔案：{args.wbs}")
++        wbs_df = load_wbs_file(args.wbs)
++    elif args.dsm:
++        print(f"載入 DSM 檔案：{args.dsm}")
++        wbs_df = load_dsm_file(args.dsm)
++    else:
++        print("使用預設 sample 資料")
++        wbs_df = load_sample_wbs()
++    
++    # 檢查資料
++    if wbs_df.empty:
++        print("錯誤：無法載入任何資料")
++        response = input("是否要繼續開啟空白編輯器？(y/n): ")
++        if response.lower() != 'y':
++            sys.exit(1)
++    
++    # 建立 Qt 應用程式
++    app = QApplication(sys.argv)
++    app.setApplicationName("DSM Editor")
++    app.setOrganizationName("DSM Tools")
++    
++    # 設定樣式（選用）
++    app.setStyle('Fusion')  # 使用 Fusion 風格獲得更現代的外觀
++    
++    try:
++        # 建立並顯示主視窗
++        editor = DsmEditor(wbs_df)
++        
++        # 儲存佈局方向設定（供編輯器使用）
++        editor.default_layout_direction = args.direction
++        if args.debug:
++            print(f"佈局方向設定為：{args.direction}")
++        
++        # 顯示視窗
++        editor.show()
++        
++        # 如果有資料，自動執行一次階層式佈局
++        if not wbs_df.empty:
++            print("執行初始階層式佈局...")
++            # 延遲執行以確保視窗已完全顯示
++            from PyQt5.QtCore import QTimer
++            QTimer.singleShot(100, editor.applyHierarchicalLayout)
++        
++        # 執行應用程式
++        sys.exit(app.exec_())
++        
++    except Exception as e:
++        print(f"錯誤：{e}")
++        if args.debug:
++            import traceback
++            traceback.print_exc()
++        
++        # 顯示錯誤對話框
++        QMessageBox.critical(None, "錯誤", f"無法啟動編輯器：\n{e}")
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git spec_dropin/test_hierarchical.txt spec_dropin/test_hierarchical.txt
+new file mode 100644
+index 0000000..a6741c0
+--- /dev/null
++++ spec_dropin/test_hierarchical.txt
+@@ -0,0 +1,317 @@
++#!/usr/bin/env python3
++"""
++階層式佈局演算法測試
++Hierarchical Layout Algorithm Tests
++
++測試 layout_hierarchical 函數的基本功能和穩定性。
++"""
++
++import sys
++import os
++import unittest
++import math
++from typing import Dict, Tuple, Set
++
++# 將 src 目錄加入 Python 路徑
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../src'))
++
++import pandas as pd
++from layouts.hierarchical import (
++    layout_hierarchical,
++    _compute_layers_longest_path,
++    _simple_grid_layout,
++    _simple_hierarchical_fallback
++)
++
++
++class TestHierarchicalLayout(unittest.TestCase):
++    """階層式佈局測試類別。"""
++    
++    def setUp(self):
++        """設定測試環境。"""
++        # 建立簡單的測試 WBS
++        self.simple_wbs = pd.DataFrame({
++            'Task ID': ['A', 'B', 'C', 'D'],
++            'Name': ['Task A', 'Task B', 'Task C', 'Task D']
++        })
++        
++        # 建立較複雜的測試 WBS
++        self.complex_wbs = pd.DataFrame({
++            'Task ID': [f'T{i:02d}' for i in range(10)],
++            'Name': [f'Task {i}' for i in range(10)]
++        })
++        
++        # 簡單的依賴關係（無循環）
++        self.simple_edges = {
++            ('A', 'B'),  # A -> B
++            ('A', 'C'),  # A -> C
++            ('B', 'D'),  # B -> D
++            ('C', 'D'),  # C -> D
++        }
++        
++        # 複雜的依賴關係（無循環）
++        self.complex_edges = {
++            ('T00', 'T01'),
++            ('T00', 'T02'),
++            ('T01', 'T03'),
++            ('T02', 'T03'),
++            ('T03', 'T04'),
++            ('T03', 'T05'),
++            ('T04', 'T06'),
++            ('T05', 'T06'),
++        }
++        
++        # 有循環的依賴關係
++        self.cyclic_edges = {
++            ('A', 'B'),
++            ('B', 'C'),
++            ('C', 'A'),  # 形成循環
++        }
++    
++    def test_basic_functionality(self):
++        """測試基本功能。"""
++        # 測試無邊的情況
++        positions = layout_hierarchical(self.simple_wbs)
++        self.assertIsInstance(positions, dict)
++        self.assertEqual(len(positions), 4)
++        
++        # 檢查所有任務都有位置
++        for task_id in ['A', 'B', 'C', 'D']:
++            self.assertIn(task_id, positions)
++            pos = positions[task_id]
++            self.assertIsInstance(pos, tuple)
++            self.assertEqual(len(pos), 2)
++            self.assertIsInstance(pos[0], (int, float))
++            self.assertIsInstance(pos[1], (int, float))
++    
++    def test_with_edges(self):
++        """測試有依賴關係的情況。"""
++        positions = layout_hierarchical(self.simple_wbs, self.simple_edges)
++        
++        # 檢查層級關係
++        # A 應該在最上層（y=0）
++        # B 和 C 應該在第二層
++        # D 應該在最下層
++        
++        self.assertEqual(positions['A'][1], 0)  # A 在第 0 層
++        self.assertEqual(positions['B'][1], positions['C'][1])  # B 和 C 同層
++        self.assertTrue(positions['D'][1] > positions['B'][1])  # D 在 B 下方
++    
++    def test_deterministic_layout(self):
++        """測試佈局的確定性（重複執行結果相同）。"""
++        # 執行兩次佈局
++        positions1 = layout_hierarchical(self.complex_wbs, self.complex_edges)
++        positions2 = layout_hierarchical(self.complex_wbs, self.complex_edges)
++        
++        # 計算 RMS 位移
++        rms_displacement = self._calculate_rms_displacement(positions1, positions2)
++        
++        # RMS 位移應該非常小（< 1e-6）
++        self.assertLess(rms_displacement, 1e-6, 
++                       f"佈局不確定：RMS 位移 = {rms_displacement}")
++    
++    def test_cyclic_graph_fallback(self):
++        """測試循環圖的備用方案。"""
++        # 不應該拋出異常
++        positions = layout_hierarchical(self.simple_wbs, self.cyclic_edges)
++        
++        # 應該返回有效的位置
++        self.assertEqual(len(positions), 4)
++        for task_id in ['A', 'B', 'C', 'D']:
++            self.assertIn(task_id, positions)
++    
++    def test_direction_parameter(self):
++        """測試佈局方向參數。"""
++        # TB 方向
++        positions_tb = layout_hierarchical(
++            self.simple_wbs, 
++            self.simple_edges,
++            direction='TB'
++        )
++        
++        # LR 方向
++        positions_lr = layout_hierarchical(
++            self.simple_wbs,
++            self.simple_edges, 
++            direction='LR'
++        )
++        
++        # TB：垂直排列，x 變化較小，y 變化較大
++        # LR：水平排列，x 變化較大，y 變化較小
++        
++        y_range_tb = self._get_range([p[1] for p in positions_tb.values()])
++        x_range_lr = self._get_range([p[0] for p in positions_lr.values()])
++        
++        self.assertGreater(y_range_tb, 0)
++        self.assertGreater(x_range_lr, 0)
++    
++    def test_spacing_parameters(self):
++        """測試間距參數。"""
++        # 預設間距
++        positions1 = layout_hierarchical(
++            self.simple_wbs,
++            self.simple_edges
++        )
++        
++        # 較大間距
++        positions2 = layout_hierarchical(
++            self.simple_wbs,
++            self.simple_edges,
++            layer_spacing=400,
++            node_spacing=300
++        )
++        
++        # 較大間距應該產生更分散的佈局
++        bbox1 = self._get_bounding_box(positions1)
++        bbox2 = self._get_bounding_box(positions2)
++        
++        area1 = bbox1[0] * bbox1[1]
++        area2 = bbox2[0] * bbox2[1]
++        
++        self.assertGreater(area2, area1)
++    
++    def test_empty_wbs(self):
++        """測試空 WBS 的情況。"""
++        empty_wbs = pd.DataFrame()
++        positions = layout_hierarchical(empty_wbs)
++        
++        self.assertIsInstance(positions, dict)
++        self.assertEqual(len(positions), 0)
++    
++    def test_single_node(self):
++        """測試單一節點的情況。"""
++        single_wbs = pd.DataFrame({
++            'Task ID': ['SINGLE'],
++            'Name': ['Single Task']
++        })
++        
++        positions = layout_hierarchical(single_wbs)
++        
++        self.assertEqual(len(positions), 1)
++        self.assertIn('SINGLE', positions)
++    
++    def test_isolated_nodes(self):
++        """測試有孤立節點的情況。"""
++        # T09 沒有任何連線
++        positions = layout_hierarchical(self.complex_wbs, self.complex_edges)
++        
++        # 所有節點都應該有位置，包括孤立節點
++        self.assertEqual(len(positions), 10)
++        self.assertIn('T09', positions)  # 孤立節點
++        self.assertIn('T07', positions)  # 孤立節點
++        self.assertIn('T08', positions)  # 孤立節點
++    
++    def _calculate_rms_displacement(self, 
++                                   positions1: Dict[str, Tuple[float, float]],
++                                   positions2: Dict[str, Tuple[float, float]]) -> float:
++        """
++        計算兩個佈局之間的 RMS 位移。
++        
++        Args:
++            positions1: 第一個佈局
++            positions2: 第二個佈局
++        
++        Returns:
++            RMS 位移值
++        """
++        if not positions1 or not positions2:
++            return 0.0
++        
++        total_sq_displacement = 0.0
++        count = 0
++        
++        for task_id in positions1:
++            if task_id in positions2:
++                p1 = positions1[task_id]
++                p2 = positions2[task_id]
++                dx = p1[0] - p2[0]
++                dy = p1[1] - p2[1]
++                total_sq_displacement += dx*dx + dy*dy
++                count += 1
++        
++        if count == 0:
++            return 0.0
++        
++        return math.sqrt(total_sq_displacement / count)
++    
++    def _get_range(self, values: list) -> float:
++        """計算值的範圍。"""
++        if not values:
++            return 0.0
++        return max(values) - min(values)
++    
++    def _get_bounding_box(self, positions: Dict[str, Tuple[float, float]]) -> Tuple[float, float]:
++        """
++        計算佈局的邊界框。
++        
++        Args:
++            positions: 節點位置字典
++        
++        Returns:
++            (寬度, 高度)
++        """
++        if not positions:
++            return (0, 0)
++        
++        x_coords = [p[0] for p in positions.values()]
++        y_coords = [p[1] for p in positions.values()]
++        
++        width = max(x_coords) - min(x_coords)
++        height = max(y_coords) - min(y_coords)
++        
++        return (width, height)
++
++
++class TestHelperFunctions(unittest.TestCase):
++    """測試輔助函數。"""
++    
++    def test_simple_grid_layout(self):
++        """測試簡單網格佈局。"""
++        task_ids = ['A', 'B', 'C', 'D', 'E', 'F']
++        
++        positions = _simple_grid_layout(task_ids, 100, 150, 'TB')
++        
++        self.assertEqual(len(positions), 6)
++        
++        # 檢查網格排列（5 個一行）
++        self.assertEqual(positions['A'][1], positions['B'][1])  # 同一行
++        self.assertEqual(positions['F'][1], 150)  # 第二行
++    
++    def test_simple_hierarchical_fallback(self):
++        """測試簡單階層備用方案。"""
++        task_ids = ['A', 'B', 'C', 'D', 'E']
++        edges = {('A', 'B'), ('B', 'C')}  # 不重要，因為是備用方案
++        
++        positions = _simple_hierarchical_fallback(
++            task_ids, edges, 200, 150, 'TB'
++        )
++        
++        self.assertEqual(len(positions), 5)
++        
++        # 檢查分層（4 個一層）
++        self.assertEqual(positions['A'][1], positions['B'][1])  # 同層
++        self.assertEqual(positions['E'][1], 200)  # 第二層
++
++
++def run_tests():
++    """執行所有測試。"""
++    # 建立測試套件
++    loader = unittest.TestLoader()
++    suite = unittest.TestSuite()
++    
++    # 加入測試類別
++    suite.addTests(loader.loadTestsFromTestCase(TestHierarchicalLayout))
++    suite.addTests(loader.loadTestsFromTestCase(TestHelperFunctions))
++    
++    # 執行測試
++    runner = unittest.TextTestRunner(verbosity=2)
++    result = runner.run(suite)
++    
++    # 返回是否成功
++    return result.wasSuccessful()
++
++
++if __name__ == '__main__':
++    # 執行測試
++    success = run_tests()
++    sys.exit(0 if success else 1)
+\ No newline at end of file
+diff --git spec_dropin/updated_dsm_editor.txt spec_dropin/updated_dsm_editor.txt
+new file mode 100644
+index 0000000..606e0f8
+--- /dev/null
++++ spec_dropin/updated_dsm_editor.txt
+@@ -0,0 +1,89 @@
++"""
++修改 src/ui/dsm_editor.py 的必要部分
++
++在檔案開頭加入新的 import：
++"""
++
++# === 在檔案最上方的 import 區段加入 ===
++from ..layouts.hierarchical import layout_hierarchical
++from .routed_edge_item import RoutedEdgeItem, RoutedEdgeManager  # TODO(next): wire EdgeRoutingEngine -> RoutedEdgeItem
++
++# === 修改 DsmEditor 類別的 applyHierarchicalLayout 方法 ===
++
++def applyHierarchicalLayout(self) -> None:
++    """
++    階層式佈局 - 使用模組化的佈局演算法。
++    
++    LAYOUT: moved to src/layouts/hierarchical.py
++    """
++    # 準備 WBS DataFrame
++    task_ids = list(self.nodes.keys())
++    wbs_data = []
++    for task_id, node in self.nodes.items():
++        wbs_data.append({
++            'Task ID': task_id,
++            'Name': node.text
++        })
++    wbs_df = pd.DataFrame(wbs_data)
++    
++    # 取得佈局方向（如果有設定的話）
++    direction = getattr(self, 'default_layout_direction', 'TB')
++    
++    # 呼叫模組化的佈局函數
++    positions = layout_hierarchical(
++        wbs_df,
++        edges=self.edges,
++        direction=direction,
++        layer_spacing=200,
++        node_spacing=150
++    )
++    
++    # 套用位置到節點
++    for task_id, (x, y) in positions.items():
++        if task_id in self.nodes:
++            self.nodes[task_id].setPos(x, y)
++    
++    # 佈局完成後調整場景範圍並確保內容可見
++    self._updateSceneRectToFitNodes(padding=300)
++    self._ensureContentVisible(margin=80)
++
++# === 刪除原本的 applySimpleHierarchicalLayout 方法 ===
++# （因為已經移到 layouts/hierarchical.py 內部）
++
++# === 在 DsmEditor.__init__ 加入（選用）===
++def __init__(self, wbsDf: pd.DataFrame, parent=None) -> None:
++    super().__init__(parent)
++    # ... 原有的初始化代碼 ...
++    
++    # 新增：路由邊線管理器（未來使用）
++    self.routed_edge_manager = RoutedEdgeManager()  # TODO(next): 整合到實際邊線繪製
++    
++    # ... 其餘初始化代碼 ...
++
++# === 修改 applyOrthogonalLayout 方法（使用模組化方法）===
++
++def applyOrthogonalLayout(self) -> None:
++    """
++    正交式佈局 - 使用模組化的網格佈局。
++    
++    LAYOUT: moved to src/layouts/hierarchical.py (_simple_grid_layout)
++    """
++    from ..layouts.hierarchical import _simple_grid_layout
++    
++    task_ids = list(self.nodes.keys())
++    
++    # 使用模組化的網格佈局
++    positions = _simple_grid_layout(
++        task_ids,
++        node_spacing=180,
++        layer_spacing=120,
++        direction='TB'
++    )
++    
++    # 套用位置
++    for task_id, (x, y) in positions.items():
++        if task_id in self.nodes:
++            self.nodes[task_id].setPos(x, y)
++    
++    self._updateSceneRectToFitNodes(padding=300)
++    self._ensureContentVisible(margin=80)
+\ No newline at end of file
+diff --git "spec_dropin/\347\270\275\347\265\220.md" "spec_dropin/\347\270\275\347\265\220.md"
+new file mode 100644
+index 0000000..9b9f37d
+--- /dev/null
++++ "spec_dropin/\347\270\275\347\265\220.md"
+@@ -0,0 +1,106 @@
++# 總結
++
++我已經完成了 DSM 編輯器的模組化重構，以下是完成的內容：
++
++### ✅ 1. **模組化 DSM 編輯器**
++
++- 將階層式佈局演算法抽離到 `src/layouts/`[`hierarchical.py`](hierarchical.py)
++
++- 保持現有的 Longest-Path 分層邏輯
++
++- 提供了修改 `dsm_`[`editor.py`](editor.py) 的具體程式碼片段
++
++### ✅ 2. **建立可擴展的檔案骨架**
++
++#### 📄 `src/layouts/`[`hierarchical.py`](hierarchical.py)
++
++- 實作 `layout_hierarchical()` 函數，回傳 `{task_id: (x, y)}`
++
++- 保留現有邏輯（Longest-Path + 等距擺位）
++
++- 加入 TODO 註解標示未來優化方向
++
++- 包含備用方案處理循環圖
++
++#### 📄 `src/ui/routed_edge_`[`item.py`](item.py)
++
++- 建立 `RoutedEdgeItem` 類別骨架
++
++- 支援 polyline 路徑設定
++
++- 預留平行邊偏移、選取樣式、hover 等接口
++
++- 包含 `RoutedEdgeManager` 管理類別
++
++#### 📄 `run_dsm_`[`editor.py`](editor.py)
++
++- 最小啟動器，可讀取 sample 資料
++
++- 支援 `--wbs` 參數指定檔案
++
++- 支援 `--direction` 參數設定佈局方向
++
++- 包含詳細的使用說明和操作指南
++
++#### 📄 `tests/layouts/test_`[`hierarchical.py`](hierarchical.py)
++
++- 測試 `layout_hierarchical()` 基本功能
++
++- 驗證重複執行的確定性（RMS < 1e-6）
++
++- 測試各種邊界條件（空 WBS、單節點、循環圖等）
++
++### ✅ 3. **保持現有行為**
++
++- 階層式佈局結果與現在一致
++
++- 未引入新的第三方套件
++
++- 最小改動達到模組化
++
++### 📝 重構指引
++
++修改 `src/ui/dsm_`[`editor.py`](editor.py) 時，請按照以下步驟：
++
++1. **加入 import**：
++
++```python
++from ..layouts.hierarchical import layout_hierarchical
++from .routed_edge_item import RoutedEdgeItem, RoutedEdgeManager
++
++```
++
++1. **替換 `applyHierarchicalLayout` 方法**（使用我提供的程式碼）
++
++2. **刪除 `applySimpleHierarchicalLayout` 方法**（已移到模組內）
++
++3. **（選用）在 `__init__` 加入 `RoutedEdgeManager` 實例**
++
++### 🚀 使用方式
++
++```python
++# 執行編輯器
++python run_dsm_editor.py
++
++# 指定 WBS 檔案
++python run_dsm_editor.py --wbs sample_data/WBS.csv
++
++# 設定佈局方向
++python run_dsm_editor.py --direction LR
++
++# 執行測試
++python tests/layouts/test_hierarchical.py
++
++```
++
++### 📌 後續 TODO
++
++- 整合 `EdgeRoutingEngine` 到 `RoutedEdgeItem`
++
++- 實作交叉最小化演算法
++
++- 支援 dummy nodes 處理跨層邊
++
++- 實作佈局壓縮優化
++
++所有檔案都包含詳細註解和 TODO 標記，方便未來擴展。
+\ No newline at end of file
+diff --git src/layouts/__init__.py src/layouts/__init__.py
+new file mode 100644
+index 0000000..958f78f
+--- /dev/null
++++ src/layouts/__init__.py
+@@ -0,0 +1,8 @@
++"""
++佈局演算法模組
++Layout Algorithms Module
++"""
++
++from .hierarchical import layout_hierarchical
++
++__all__ = ['layout_hierarchical']
+\ No newline at end of file
+diff --git src/layouts/hierarchical.py src/layouts/hierarchical.py
+new file mode 100644
+index 0000000..6c1b704
+--- /dev/null
++++ src/layouts/hierarchical.py
+@@ -0,0 +1,294 @@
++"""
++階層式佈局演算法模組
++Hierarchical Layout Algorithm Module
++
++實現基於 Longest-Path 的階層式佈局，保持現有 DSM 編輯器的佈局行為。
++"""
++
++from typing import Dict, Tuple, List, Set, Optional
++import pandas as pd
++import networkx as nx
++
++
++def layout_hierarchical(
++    wbs_df: pd.DataFrame,
++    edges: Set[Tuple[str, str]] = None,
++    *,
++    direction: str = "TB",
++    layer_spacing: int = 200,
++    node_spacing: int = 150
++) -> Dict[str, Tuple[float, float]]:
++    """
++    計算階層式佈局的節點位置。
++    
++    使用 Longest-Path 分層演算法，保持現有 DSM 編輯器的行為：
++    - 基於拓撲排序的分層
++    - 每層等距擺位
++    - 不做 dummy nodes、交叉最小化或壓縮優化
++    
++    Args:
++        wbs_df: WBS 資料框，需包含 "Task ID" 欄位
++        edges: 邊的集合，格式為 {(src_id, dst_id), ...}。若為 None，則只做簡單網格佈局
++        direction: 佈局方向，"TB"(上到下) 或 "LR"(左到右)
++        layer_spacing: 層間距離（像素）
++        node_spacing: 同層節點間距離（像素）
++    
++    Returns:
++        節點位置字典 {task_id: (x, y)}
++    
++    TODO(next): 
++        - 支援 dummy nodes 以處理跨層邊
++        - 實作交叉最小化演算法
++        - 加入節點壓縮以減少空白
++        - 支援節點大小考量
++    """
++    # 提取任務 ID 列表
++    task_ids = []
++    for _, row in wbs_df.iterrows():
++        task_id = str(row.get("Task ID", f"Task_{_}"))
++        task_ids.append(task_id)
++    
++    if not task_ids:
++        return {}
++    
++    # 如果沒有邊，使用簡單網格佈局
++    if not edges:
++        return _simple_grid_layout(task_ids, node_spacing, layer_spacing, direction)
++    
++    # 建立有向圖
++    graph = nx.DiGraph()
++    for task_id in task_ids:
++        graph.add_node(task_id)
++    for src, dst in edges:
++        if src in task_ids and dst in task_ids:
++            graph.add_edge(src, dst)
++    
++    # 檢查是否有循環
++    if not nx.is_directed_acyclic_graph(graph):
++        print("警告：圖形包含循環，退回到簡單階層佈局")
++        return _simple_hierarchical_fallback(task_ids, edges, layer_spacing, node_spacing, direction)
++    
++    # 計算每個節點的層級（Longest-Path）
++    layers = _compute_layers_longest_path(graph)
++    
++    # 將節點按層級分組
++    level_groups = {}
++    for node, level in layers.items():
++        if level not in level_groups:
++            level_groups[level] = []
++        level_groups[level].append(node)
++    
++    # 計算節點位置
++    positions = {}
++    for level, nodes in sorted(level_groups.items()):
++        # 計算該層的位置
++        if direction == "TB":  # Top-Bottom
++            y = level * layer_spacing
++            start_x = -(len(nodes) - 1) * node_spacing / 2
++            for i, node_id in enumerate(nodes):
++                x = start_x + i * node_spacing
++                positions[node_id] = (x, y)
++        else:  # LR: Left-Right
++            x = level * layer_spacing
++            start_y = -(len(nodes) - 1) * node_spacing / 2
++            for i, node_id in enumerate(nodes):
++                y = start_y + i * node_spacing
++                positions[node_id] = (x, y)
++    
++    # 補充未在圖中的節點（孤立節點）
++    for task_id in task_ids:
++        if task_id not in positions:
++            # 放在最底層
++            max_level = max(level_groups.keys()) if level_groups else 0
++            if direction == "TB":
++                positions[task_id] = (0, (max_level + 1) * layer_spacing)
++            else:
++                positions[task_id] = ((max_level + 1) * layer_spacing, 0)
++    
++    return positions
++
++
++def _compute_layers_longest_path(graph: nx.DiGraph) -> Dict[str, int]:
++    """
++    使用 Longest-Path 演算法計算節點層級。
++    
++    Args:
++        graph: NetworkX 有向無環圖
++    
++    Returns:
++        節點層級字典 {node_id: layer}
++    """
++    layers = {}
++    
++    # 拓撲排序
++    try:
++        topo_order = list(nx.topological_sort(graph))
++    except nx.NetworkXError:
++        # 如果有循環，返回空字典
++        return {}
++    
++    # 計算每個節點的最大路徑長度
++    for node in topo_order:
++        predecessors = list(graph.predecessors(node))
++        if not predecessors:
++            # 沒有前驅節點，放在第 0 層
++            layers[node] = 0
++        else:
++            # 放在所有前驅節點的下一層
++            layers[node] = max(layers[pred] for pred in predecessors) + 1
++    
++    return layers
++
++
++def _simple_grid_layout(
++    task_ids: List[str],
++    node_spacing: int,
++    layer_spacing: int,
++    direction: str
++) -> Dict[str, Tuple[float, float]]:
++    """
++    簡單網格佈局，用於沒有邊的情況。
++    
++    Args:
++        task_ids: 任務 ID 列表
++        node_spacing: 節點間距
++        layer_spacing: 層間距
++        direction: 佈局方向
++    
++    Returns:
++        節點位置字典
++    """
++    positions = {}
++    cols = 5  # 每行/列 5 個節點
++    
++    for i, task_id in enumerate(task_ids):
++        row = i // cols
++        col = i % cols
++        
++        if direction == "TB":
++            x = (col - cols // 2) * node_spacing
++            y = row * layer_spacing
++        else:  # LR
++            x = row * layer_spacing
++            y = (col - cols // 2) * node_spacing
++        
++        positions[task_id] = (x, y)
++    
++    return positions
++
++
++def _simple_hierarchical_fallback(
++    task_ids: List[str],
++    edges: Set[Tuple[str, str]],
++    layer_spacing: int,
++    node_spacing: int,
++    direction: str
++) -> Dict[str, Tuple[float, float]]:
++    """
++    簡單階層式佈局備用方案，用於有循環的圖。
++    
++    將節點分成幾層，盡量減少回邊。
++    
++    Args:
++        task_ids: 任務 ID 列表
++        edges: 邊的集合
++        layer_spacing: 層間距
++        node_spacing: 節點間距
++        direction: 佈局方向
++    
++    Returns:
++        節點位置字典
++    """
++    positions = {}
++    nodes_per_level = 4
++    
++    for i, task_id in enumerate(task_ids):
++        level = i // nodes_per_level
++        pos_in_level = i % nodes_per_level
++        
++        if direction == "TB":
++            start_x = -(nodes_per_level - 1) * node_spacing / 2
++            x = start_x + pos_in_level * node_spacing
++            y = level * layer_spacing
++        else:  # LR
++            start_y = -(nodes_per_level - 1) * node_spacing / 2
++            x = level * layer_spacing
++            y = start_y + pos_in_level * node_spacing
++        
++        positions[task_id] = (x, y)
++    
++    return positions
++
++
++def optimize_crossing_reduction(
++    positions: Dict[str, Tuple[float, float]],
++    edges: Set[Tuple[str, str]],
++    iterations: int = 10
++) -> Dict[str, Tuple[float, float]]:
++    """
++    交叉最小化優化（骨架，尚未實作）。
++    
++    TODO(next): 實作基於重心法或中位數法的交叉最小化
++    
++    Args:
++        positions: 現有節點位置
++        edges: 邊的集合
++        iterations: 迭代次數
++    
++    Returns:
++        優化後的節點位置
++    """
++    # TODO: 實作交叉最小化演算法
++    # 1. 按層分組節點
++    # 2. 對每層計算節點順序以最小化與上/下層的交叉
++    # 3. 迭代優化直到收斂或達到最大迭代次數
++    
++    return positions  # 暫時直接返回原始位置
++
++
++def add_dummy_nodes(
++    positions: Dict[str, Tuple[float, float]],
++    edges: Set[Tuple[str, str]]
++) -> Tuple[Dict[str, Tuple[float, float]], Set[Tuple[str, str]]]:
++    """
++    添加虛擬節點以處理跨層邊（骨架，尚未實作）。
++    
++    TODO(next): 實作虛擬節點插入演算法
++    
++    Args:
++        positions: 節點位置
++        edges: 原始邊集合
++    
++    Returns:
++        (包含虛擬節點的位置字典, 更新後的邊集合)
++    """
++    # TODO: 實作虛擬節點演算法
++    # 1. 檢測跨層邊（跨越多於一層的邊）
++    # 2. 在中間層插入虛擬節點
++    # 3. 將原始邊分割成多段
++    
++    return positions, edges  # 暫時直接返回原始資料
++
++
++def compact_layout(
++    positions: Dict[str, Tuple[float, float]],
++    node_sizes: Dict[str, Tuple[float, float]] = None
++) -> Dict[str, Tuple[float, float]]:
++    """
++    壓縮佈局以減少空白（骨架，尚未實作）。
++    
++    TODO(next): 實作佈局壓縮演算法
++    
++    Args:
++        positions: 節點位置
++        node_sizes: 節點大小字典 {node_id: (width, height)}
++    
++    Returns:
++        壓縮後的節點位置
++    """
++    # TODO: 實作佈局壓縮
++    # 1. 考慮節點實際大小
++    # 2. 在不造成重疊的情況下移動節點
++    # 3. 最小化總體佈局面積
++    
++    return positions  # 暫時直接返回原始位置
+\ No newline at end of file
+diff --git src/ui/dsm_editor.py src/ui/dsm_editor.py
+index dfac22e..a562179 100644
+--- src/ui/dsm_editor.py
++++ src/ui/dsm_editor.py
+@@ -35,6 +35,10 @@ from PyQt5.QtWidgets import (
+ 
+ from .selection_styles import SelectionStyleManager
+ 
++# 引入新的模組化佈局系統
++from ..layouts.hierarchical import layout_hierarchical
++from .routed_edge_item import RoutedEdgeItem, RoutedEdgeManager
++
+ 
+ class EditorState(Enum):
+     """編輯器狀態枚舉"""
+@@ -1965,6 +1969,9 @@ class DsmEditor(QDialog):
+         self.nodes: Dict[str, TaskNode] = {}
+         self.edges: Set[tuple[str, str]] = set()
+ 
++        # 新增：路由邊線管理器（未來使用）
++        self.routed_edge_manager = RoutedEdgeManager()  # TODO(next): 整合到實際邊線繪製
++
+         self.setupUI()
+         self.loadWbs(wbsDf)
+ 
+@@ -2123,57 +2130,41 @@ class DsmEditor(QDialog):
+             self.applyForceDirectedLayout()
+ 
+     def applyHierarchicalLayout(self) -> None:
+-        """階層式佈局 - 增強循環檢測"""
+-        graph = nx.DiGraph()
+-        for taskId in self.nodes:
+-            graph.add_node(taskId)
+-        for src, dst in self.edges:
+-            graph.add_edge(src, dst)
+-
+-        try:
+-            # 檢查是否有循環
+-            if not nx.is_directed_acyclic_graph(graph):
+-                print("警告：圖形包含循環，無法進行拓撲排序。使用替代佈局...")
+-                self.applySimpleHierarchicalLayout()
+-                return
+-
+-            # 進行拓撲排序
+-            layers = {}
+-            for node in nx.topological_sort(graph):
+-                predecessors = list(graph.predecessors(node))
+-                if not predecessors:
+-                    layers[node] = 0
+-                else:
+-                    layers[node] = max(layers[pred] for pred in predecessors) + 1
+-
+-            level_groups = {}
+-            for node, level in layers.items():
+-                if level not in level_groups:
+-                    level_groups[level] = []
+-                level_groups[level].append(node)
+-
+-            level_spacing = 200
+-            node_spacing = 150
+-
+-            for level, nodes in level_groups.items():
+-                y = level * level_spacing
+-                start_x = -(len(nodes) - 1) * node_spacing / 2
+-
+-                for i, nodeId in enumerate(nodes):
+-                    x = start_x + i * node_spacing
+-                    if nodeId in self.nodes:
+-                        self.nodes[nodeId].setPos(x, y)
+-
+-            # 佈局完成後調整場景範圍並確保內容可見
+-            self._updateSceneRectToFitNodes(padding=300)
+-            self._ensureContentVisible(margin=80)
+-
+-        except nx.NetworkXError as e:
+-            print(f"NetworkX 錯誤：{e}")
+-            self.applySimpleHierarchicalLayout()
+-        except Exception as e:
+-            print(f"佈局錯誤：{e}")
+-            self.applySimpleHierarchicalLayout()
++        """
++        階層式佈局 - 使用模組化的佈局演算法。
++        
++        LAYOUT: moved to src/layouts/hierarchical.py
++        """
++        # 準備 WBS DataFrame
++        task_ids = list(self.nodes.keys())
++        wbs_data = []
++        for task_id, node in self.nodes.items():
++            wbs_data.append({
++                'Task ID': task_id,
++                'Name': node.text
++            })
++        wbs_df = pd.DataFrame(wbs_data)
++        
++        # 取得佈局方向（如果有設定的話）
++        direction = getattr(self, 'default_layout_direction', 'TB')
++        
++        # 呼叫模組化的佈局函數
++        positions = layout_hierarchical(
++            wbs_df,
++            edges=self.edges,
++            direction=direction,
++            layer_spacing=200,
++            node_spacing=150
++        )
++        
++        # 套用位置到節點
++        for task_id, (x, y) in positions.items():
++            if task_id in self.nodes:
++                self.nodes[task_id].setPos(x, y)
++        
++        # 佈局完成後調整場景範圍並確保內容可見
++        self._updateSceneRectToFitNodes(padding=300)
++        self._ensureContentVisible(margin=80)
+ 
+     def applySimpleHierarchicalLayout(self) -> None:
+         """簡單階層式佈局"""
+@@ -2195,28 +2186,30 @@ class DsmEditor(QDialog):
+     
+ 
+     def applyOrthogonalLayout(self) -> None:
+-        """正交式佈局"""
+-        nodes = list(self.nodes.values())
+-        if not nodes:
+-            return
+-
+-        node_count = len(nodes)
+-        cols = max(1, int(math.sqrt(node_count) * 1.5))
+-
+-        spacing_x = 180
+-        spacing_y = 120
+-
+-        total_width = (cols - 1) * spacing_x
+-        start_x = -total_width / 2
+-
+-        for i, node in enumerate(nodes):
+-            row = i // cols
+-            col = i % cols
+-
+-            x = start_x + col * spacing_x
+-            y = row * spacing_y
+-
+-            node.setPos(x, y)
++        """
++        正交式佈局 - 使用模組化的網格佈局。
++        
++        LAYOUT: moved to src/layouts/hierarchical.py (_simple_grid_layout)
++        """
++        from ..layouts.hierarchical import _simple_grid_layout
++        
++        task_ids = list(self.nodes.keys())
++        
++        # 使用模組化的網格佈局
++        positions = _simple_grid_layout(
++            task_ids,
++            node_spacing=180,
++            layer_spacing=120,
++            direction='TB'
++        )
++        
++        # 套用位置
++        for task_id, (x, y) in positions.items():
++            if task_id in self.nodes:
++                self.nodes[task_id].setPos(x, y)
++        
++        self._updateSceneRectToFitNodes(padding=300)
++        self._ensureContentVisible(margin=80)
+ 
+     
+ 
+diff --git src/ui/routed_edge_item.py src/ui/routed_edge_item.py
+new file mode 100644
+index 0000000..58771b4
+--- /dev/null
++++ src/ui/routed_edge_item.py
+@@ -0,0 +1,386 @@
++"""
++可路由邊線繪製元件
++Routed Edge Item Component
++
++支援 polyline 路徑的邊線繪製，為未來整合 EdgeRoutingEngine 做準備。
++"""
++
++from typing import List, Optional, Tuple
++from PyQt5.QtWidgets import QGraphicsPathItem
++from PyQt5.QtGui import QPainterPath, QPen, QBrush, QColor, QPainter
++from PyQt5.QtCore import QPointF, Qt, QRectF
++
++
++class RoutedEdgeItem(QGraphicsPathItem):
++    """
++    支援 polyline 路徑的邊線繪製元件。
++    
++    可接收一系列點來繪製折線路徑，為未來整合智慧路由做準備。
++    
++    TODO(next): 
++        - 支援平行邊偏移（多條邊之間的間距）
++        - 實作選取樣式與發光效果
++        - 加入 hover 提示與互動
++        - 整合 EdgeRoutingEngine 自動路由
++        - 支援箭頭繪製
++        - 加入標籤顯示
++    """
++    
++    def __init__(self, points: List[QPointF] = None, parent=None):
++        """
++        初始化路由邊線。
++        
++        Args:
++            points: 路徑點列表，至少需要 2 個點
++            parent: 父項目
++        """
++        super().__init__(parent)
++        
++        # 基本屬性
++        self.setZValue(-1)  # 放在節點下方
++        self.setAcceptedMouseButtons(Qt.NoButton)  # 暫時不接受滑鼠事件
++        
++        # 路徑點
++        self._points = points or []
++        
++        # 樣式設定
++        self._pen = QPen(Qt.gray, 1.25)
++        self._pen.setCapStyle(Qt.RoundCap)
++        self._pen.setJoinStyle(Qt.RoundJoin)
++        self.setPen(self._pen)
++        self.setBrush(Qt.NoBrush)
++        
++        # 選取狀態
++        self._is_selected = False
++        self._is_hovered = False
++        
++        # 平行邊偏移
++        self._parallel_offset = 0.0  # 偏移量（像素）
++        
++        # 箭頭設定
++        self._show_arrow = False
++        self._arrow_size = 10.0
++        
++        # 標籤
++        self._label = ""
++        self._label_position = 0.5  # 標籤在路徑上的位置（0-1）
++        
++        # 更新路徑
++        self.update_path()
++    
++    def set_points(self, points: List[QPointF]):
++        """
++        設定路徑點。
++        
++        Args:
++            points: 新的路徑點列表
++        """
++        self._points = points or []
++        self.update_path()
++    
++    def get_points(self) -> List[QPointF]:
++        """
++        獲取當前路徑點。
++        
++        Returns:
++            路徑點列表的副本
++        """
++        return self._points.copy()
++    
++    def set_parallel_offset(self, offset: float):
++        """
++        設定平行邊偏移量。
++        
++        用於多條平行邊之間的視覺分離。
++        
++        Args:
++            offset: 偏移量（像素），正值向右/上偏移，負值向左/下偏移
++        
++        TODO(next): 實作偏移計算邏輯
++        """
++        self._parallel_offset = offset
++        self.update_path()
++    
++    def set_selected(self, selected: bool):
++        """
++        設定選取狀態。
++        
++        Args:
++            selected: 是否選取
++        
++        TODO(next): 實作選取樣式變化
++        """
++        self._is_selected = selected
++        self._update_style()
++    
++    def set_hovered(self, hovered: bool):
++        """
++        設定懸停狀態。
++        
++        Args:
++            hovered: 是否懸停
++        
++        TODO(next): 實作懸停樣式變化
++        """
++        self._is_hovered = hovered
++        self._update_style()
++    
++    def set_show_arrow(self, show: bool):
++        """
++        設定是否顯示箭頭。
++        
++        Args:
++            show: 是否顯示箭頭
++        
++        TODO(next): 實作箭頭繪製
++        """
++        self._show_arrow = show
++        self.update_path()
++    
++    def set_label(self, label: str, position: float = 0.5):
++        """
++        設定標籤文字。
++        
++        Args:
++            label: 標籤文字
++            position: 標籤在路徑上的位置（0-1）
++        
++        TODO(next): 實作標籤繪製
++        """
++        self._label = label
++        self._label_position = max(0.0, min(1.0, position))
++        self.update()
++    
++    def update_path(self):
++        """
++        更新繪製路徑。
++        
++        根據當前的點列表和設定更新 QPainterPath。
++        """
++        path = QPainterPath()
++        pts = self._points
++        
++        if not pts:
++            self.setPath(path)
++            return
++        
++        if len(pts) < 2:
++            # 至少需要兩個點
++            self.setPath(path)
++            return
++        
++        # TODO(next): 實作平行偏移計算
++        # if self._parallel_offset != 0:
++        #     pts = self._calculate_offset_points(pts, self._parallel_offset)
++        
++        # 繪製主路徑
++        path.moveTo(pts[0])
++        for p in pts[1:]:
++            path.lineTo(p)
++        
++        # TODO(next): 實作箭頭繪製
++        # if self._show_arrow and len(pts) >= 2:
++        #     arrow_path = self._create_arrow_path(pts[-2], pts[-1])
++        #     path.addPath(arrow_path)
++        
++        self.setPath(path)
++    
++    def _update_style(self):
++        """
++        根據狀態更新繪製樣式。
++        
++        TODO(next): 實作不同狀態的視覺樣式
++        """
++        if self._is_selected:
++            # 選取狀態：加粗、變色
++            pen = QPen(QColor(0, 120, 215), 2.0)
++        elif self._is_hovered:
++            # 懸停狀態：稍微加粗
++            pen = QPen(Qt.darkGray, 1.5)
++        else:
++            # 正常狀態
++            pen = QPen(Qt.gray, 1.25)
++        
++        pen.setCapStyle(Qt.RoundCap)
++        pen.setJoinStyle(Qt.RoundJoin)
++        self.setPen(pen)
++    
++    def _calculate_offset_points(self, points: List[QPointF], offset: float) -> List[QPointF]:
++        """
++        計算偏移後的點列表（骨架，尚未實作）。
++        
++        Args:
++            points: 原始點列表
++            offset: 偏移量
++        
++        Returns:
++            偏移後的點列表
++        
++        TODO(next): 實作平行偏移演算法
++        """
++        # TODO: 計算每個線段的法向量
++        # TODO: 根據偏移量移動點
++        # TODO: 處理轉角的平滑連接
++        return points
++    
++    def _create_arrow_path(self, start: QPointF, end: QPointF) -> QPainterPath:
++        """
++        創建箭頭路徑（骨架，尚未實作）。
++        
++        Args:
++            start: 箭頭起始點（倒數第二個點）
++            end: 箭頭終點（最後一個點）
++        
++        Returns:
++            箭頭的 QPainterPath
++        
++        TODO(next): 實作箭頭繪製
++        """
++        arrow_path = QPainterPath()
++        # TODO: 計算箭頭方向
++        # TODO: 計算箭頭三個頂點
++        # TODO: 繪製填充的三角形
++        return arrow_path
++    
++    def paint(self, painter: QPainter, option, widget=None):
++        """
++        自訂繪製方法。
++        
++        Args:
++            painter: 繪製器
++            option: 繪製選項
++            widget: 繪製目標 widget
++        
++        TODO(next): 實作標籤繪製和發光效果
++        """
++        # 繪製主路徑（由父類處理）
++        super().paint(painter, option, widget)
++        
++        # TODO(next): 繪製標籤
++        # if self._label:
++        #     self._draw_label(painter)
++        
++        # TODO(next): 繪製選取/懸停發光效果
++        # if self._is_selected or self._is_hovered:
++        #     self._draw_glow(painter)
++    
++    def _draw_label(self, painter: QPainter):
++        """
++        繪製標籤（骨架，尚未實作）。
++        
++        Args:
++            painter: 繪製器
++        
++        TODO(next): 實作標籤繪製
++        """
++        # TODO: 計算標籤位置
++        # TODO: 計算標籤角度
++        # TODO: 繪製背景框
++        # TODO: 繪製文字
++        pass
++    
++    def _draw_glow(self, painter: QPainter):
++        """
++        繪製發光效果（骨架，尚未實作）。
++        
++        Args:
++            painter: 繪製器
++        
++        TODO(next): 實作發光效果
++        """
++        # TODO: 使用較粗的半透明筆刷重繪路徑
++        # TODO: 可能需要多層漸變效果
++        pass
++    
++    def boundingRect(self) -> QRectF:
++        """
++        返回邊界矩形。
++        
++        Returns:
++            包含整個邊線的邊界矩形
++        """
++        # 獲取路徑的邊界矩形
++        rect = super().boundingRect()
++        
++        # 擴展以包含筆刷寬度
++        pen_width = self.pen().widthF()
++        margin = pen_width / 2.0 + 1.0
++        
++        # TODO(next): 考慮箭頭和標籤的邊界
++        
++        return rect.adjusted(-margin, -margin, margin, margin)
++    
++    def shape(self) -> QPainterPath:
++        """
++        返回用於碰撞檢測的形狀。
++        
++        Returns:
++            擴展後的路徑形狀，便於選取
++        
++        TODO(next): 擴大選取區域以改善使用體驗
++        """
++        # 暫時使用預設形狀
++        return super().shape()
++        
++        # TODO: 使用 QPainterPathStroker 擴大路徑
++        # from PyQt5.QtGui import QPainterPathStroker
++        # stroker = QPainterPathStroker()
++        # stroker.setWidth(10.0)  # 擴大選取區域
++        # return stroker.createStroke(self.path())
++
++
++class RoutedEdgeManager:
++    """
++    路由邊線管理器（骨架）。
++    
++    管理多條邊線的路由和佈局。
++    
++    TODO(next): 實作邊線管理邏輯
++    """
++    
++    def __init__(self):
++        """初始化管理器。"""
++        self.edges: List[RoutedEdgeItem] = []
++        self.routing_engine = None  # 未來整合 EdgeRoutingEngine
++    
++    def add_edge(self, edge: RoutedEdgeItem):
++        """
++        添加邊線。
++        
++        Args:
++            edge: 要添加的邊線
++        """
++        self.edges.append(edge)
++        self._update_parallel_offsets()
++    
++    def remove_edge(self, edge: RoutedEdgeItem):
++        """
++        移除邊線。
++        
++        Args:
++            edge: 要移除的邊線
++        """
++        if edge in self.edges:
++            self.edges.remove(edge)
++            self._update_parallel_offsets()
++    
++    def _update_parallel_offsets(self):
++        """
++        更新平行邊的偏移量。
++        
++        TODO(next): 實作平行邊偏移計算
++        """
++        # TODO: 檢測平行邊
++        # TODO: 計算適當的偏移量
++        # TODO: 應用偏移
++        pass
++    
++    def route_all_edges(self):
++        """
++        對所有邊線進行路由。
++        
++        TODO(next): 整合 EdgeRoutingEngine
++        """
++        # TODO: 使用 routing_engine 計算路徑
++        # TODO: 更新每條邊的點列表
++        pass
+\ No newline at end of file
+diff --git tests/__init__.py tests/__init__.py
+new file mode 100644
+index 0000000..718c0c9
+--- /dev/null
++++ tests/__init__.py
+@@ -0,0 +1,4 @@
++"""
++測試模組
++Test Module
++"""
+\ No newline at end of file
+diff --git tests/layouts/__init__.py tests/layouts/__init__.py
+new file mode 100644
+index 0000000..c0e17ff
+--- /dev/null
++++ tests/layouts/__init__.py
+@@ -0,0 +1,4 @@
++"""
++佈局演算法測試模組
++Layout Algorithms Test Module
++"""
+\ No newline at end of file
+diff --git tests/layouts/test_hierarchical.py tests/layouts/test_hierarchical.py
+new file mode 100644
+index 0000000..a6741c0
+--- /dev/null
++++ tests/layouts/test_hierarchical.py
+@@ -0,0 +1,317 @@
++#!/usr/bin/env python3
++"""
++階層式佈局演算法測試
++Hierarchical Layout Algorithm Tests
++
++測試 layout_hierarchical 函數的基本功能和穩定性。
++"""
++
++import sys
++import os
++import unittest
++import math
++from typing import Dict, Tuple, Set
++
++# 將 src 目錄加入 Python 路徑
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../src'))
++
++import pandas as pd
++from layouts.hierarchical import (
++    layout_hierarchical,
++    _compute_layers_longest_path,
++    _simple_grid_layout,
++    _simple_hierarchical_fallback
++)
++
++
++class TestHierarchicalLayout(unittest.TestCase):
++    """階層式佈局測試類別。"""
++    
++    def setUp(self):
++        """設定測試環境。"""
++        # 建立簡單的測試 WBS
++        self.simple_wbs = pd.DataFrame({
++            'Task ID': ['A', 'B', 'C', 'D'],
++            'Name': ['Task A', 'Task B', 'Task C', 'Task D']
++        })
++        
++        # 建立較複雜的測試 WBS
++        self.complex_wbs = pd.DataFrame({
++            'Task ID': [f'T{i:02d}' for i in range(10)],
++            'Name': [f'Task {i}' for i in range(10)]
++        })
++        
++        # 簡單的依賴關係（無循環）
++        self.simple_edges = {
++            ('A', 'B'),  # A -> B
++            ('A', 'C'),  # A -> C
++            ('B', 'D'),  # B -> D
++            ('C', 'D'),  # C -> D
++        }
++        
++        # 複雜的依賴關係（無循環）
++        self.complex_edges = {
++            ('T00', 'T01'),
++            ('T00', 'T02'),
++            ('T01', 'T03'),
++            ('T02', 'T03'),
++            ('T03', 'T04'),
++            ('T03', 'T05'),
++            ('T04', 'T06'),
++            ('T05', 'T06'),
++        }
++        
++        # 有循環的依賴關係
++        self.cyclic_edges = {
++            ('A', 'B'),
++            ('B', 'C'),
++            ('C', 'A'),  # 形成循環
++        }
++    
++    def test_basic_functionality(self):
++        """測試基本功能。"""
++        # 測試無邊的情況
++        positions = layout_hierarchical(self.simple_wbs)
++        self.assertIsInstance(positions, dict)
++        self.assertEqual(len(positions), 4)
++        
++        # 檢查所有任務都有位置
++        for task_id in ['A', 'B', 'C', 'D']:
++            self.assertIn(task_id, positions)
++            pos = positions[task_id]
++            self.assertIsInstance(pos, tuple)
++            self.assertEqual(len(pos), 2)
++            self.assertIsInstance(pos[0], (int, float))
++            self.assertIsInstance(pos[1], (int, float))
++    
++    def test_with_edges(self):
++        """測試有依賴關係的情況。"""
++        positions = layout_hierarchical(self.simple_wbs, self.simple_edges)
++        
++        # 檢查層級關係
++        # A 應該在最上層（y=0）
++        # B 和 C 應該在第二層
++        # D 應該在最下層
++        
++        self.assertEqual(positions['A'][1], 0)  # A 在第 0 層
++        self.assertEqual(positions['B'][1], positions['C'][1])  # B 和 C 同層
++        self.assertTrue(positions['D'][1] > positions['B'][1])  # D 在 B 下方
++    
++    def test_deterministic_layout(self):
++        """測試佈局的確定性（重複執行結果相同）。"""
++        # 執行兩次佈局
++        positions1 = layout_hierarchical(self.complex_wbs, self.complex_edges)
++        positions2 = layout_hierarchical(self.complex_wbs, self.complex_edges)
++        
++        # 計算 RMS 位移
++        rms_displacement = self._calculate_rms_displacement(positions1, positions2)
++        
++        # RMS 位移應該非常小（< 1e-6）
++        self.assertLess(rms_displacement, 1e-6, 
++                       f"佈局不確定：RMS 位移 = {rms_displacement}")
++    
++    def test_cyclic_graph_fallback(self):
++        """測試循環圖的備用方案。"""
++        # 不應該拋出異常
++        positions = layout_hierarchical(self.simple_wbs, self.cyclic_edges)
++        
++        # 應該返回有效的位置
++        self.assertEqual(len(positions), 4)
++        for task_id in ['A', 'B', 'C', 'D']:
++            self.assertIn(task_id, positions)
++    
++    def test_direction_parameter(self):
++        """測試佈局方向參數。"""
++        # TB 方向
++        positions_tb = layout_hierarchical(
++            self.simple_wbs, 
++            self.simple_edges,
++            direction='TB'
++        )
++        
++        # LR 方向
++        positions_lr = layout_hierarchical(
++            self.simple_wbs,
++            self.simple_edges, 
++            direction='LR'
++        )
++        
++        # TB：垂直排列，x 變化較小，y 變化較大
++        # LR：水平排列，x 變化較大，y 變化較小
++        
++        y_range_tb = self._get_range([p[1] for p in positions_tb.values()])
++        x_range_lr = self._get_range([p[0] for p in positions_lr.values()])
++        
++        self.assertGreater(y_range_tb, 0)
++        self.assertGreater(x_range_lr, 0)
++    
++    def test_spacing_parameters(self):
++        """測試間距參數。"""
++        # 預設間距
++        positions1 = layout_hierarchical(
++            self.simple_wbs,
++            self.simple_edges
++        )
++        
++        # 較大間距
++        positions2 = layout_hierarchical(
++            self.simple_wbs,
++            self.simple_edges,
++            layer_spacing=400,
++            node_spacing=300
++        )
++        
++        # 較大間距應該產生更分散的佈局
++        bbox1 = self._get_bounding_box(positions1)
++        bbox2 = self._get_bounding_box(positions2)
++        
++        area1 = bbox1[0] * bbox1[1]
++        area2 = bbox2[0] * bbox2[1]
++        
++        self.assertGreater(area2, area1)
++    
++    def test_empty_wbs(self):
++        """測試空 WBS 的情況。"""
++        empty_wbs = pd.DataFrame()
++        positions = layout_hierarchical(empty_wbs)
++        
++        self.assertIsInstance(positions, dict)
++        self.assertEqual(len(positions), 0)
++    
++    def test_single_node(self):
++        """測試單一節點的情況。"""
++        single_wbs = pd.DataFrame({
++            'Task ID': ['SINGLE'],
++            'Name': ['Single Task']
++        })
++        
++        positions = layout_hierarchical(single_wbs)
++        
++        self.assertEqual(len(positions), 1)
++        self.assertIn('SINGLE', positions)
++    
++    def test_isolated_nodes(self):
++        """測試有孤立節點的情況。"""
++        # T09 沒有任何連線
++        positions = layout_hierarchical(self.complex_wbs, self.complex_edges)
++        
++        # 所有節點都應該有位置，包括孤立節點
++        self.assertEqual(len(positions), 10)
++        self.assertIn('T09', positions)  # 孤立節點
++        self.assertIn('T07', positions)  # 孤立節點
++        self.assertIn('T08', positions)  # 孤立節點
++    
++    def _calculate_rms_displacement(self, 
++                                   positions1: Dict[str, Tuple[float, float]],
++                                   positions2: Dict[str, Tuple[float, float]]) -> float:
++        """
++        計算兩個佈局之間的 RMS 位移。
++        
++        Args:
++            positions1: 第一個佈局
++            positions2: 第二個佈局
++        
++        Returns:
++            RMS 位移值
++        """
++        if not positions1 or not positions2:
++            return 0.0
++        
++        total_sq_displacement = 0.0
++        count = 0
++        
++        for task_id in positions1:
++            if task_id in positions2:
++                p1 = positions1[task_id]
++                p2 = positions2[task_id]
++                dx = p1[0] - p2[0]
++                dy = p1[1] - p2[1]
++                total_sq_displacement += dx*dx + dy*dy
++                count += 1
++        
++        if count == 0:
++            return 0.0
++        
++        return math.sqrt(total_sq_displacement / count)
++    
++    def _get_range(self, values: list) -> float:
++        """計算值的範圍。"""
++        if not values:
++            return 0.0
++        return max(values) - min(values)
++    
++    def _get_bounding_box(self, positions: Dict[str, Tuple[float, float]]) -> Tuple[float, float]:
++        """
++        計算佈局的邊界框。
++        
++        Args:
++            positions: 節點位置字典
++        
++        Returns:
++            (寬度, 高度)
++        """
++        if not positions:
++            return (0, 0)
++        
++        x_coords = [p[0] for p in positions.values()]
++        y_coords = [p[1] for p in positions.values()]
++        
++        width = max(x_coords) - min(x_coords)
++        height = max(y_coords) - min(y_coords)
++        
++        return (width, height)
++
++
++class TestHelperFunctions(unittest.TestCase):
++    """測試輔助函數。"""
++    
++    def test_simple_grid_layout(self):
++        """測試簡單網格佈局。"""
++        task_ids = ['A', 'B', 'C', 'D', 'E', 'F']
++        
++        positions = _simple_grid_layout(task_ids, 100, 150, 'TB')
++        
++        self.assertEqual(len(positions), 6)
++        
++        # 檢查網格排列（5 個一行）
++        self.assertEqual(positions['A'][1], positions['B'][1])  # 同一行
++        self.assertEqual(positions['F'][1], 150)  # 第二行
++    
++    def test_simple_hierarchical_fallback(self):
++        """測試簡單階層備用方案。"""
++        task_ids = ['A', 'B', 'C', 'D', 'E']
++        edges = {('A', 'B'), ('B', 'C')}  # 不重要，因為是備用方案
++        
++        positions = _simple_hierarchical_fallback(
++            task_ids, edges, 200, 150, 'TB'
++        )
++        
++        self.assertEqual(len(positions), 5)
++        
++        # 檢查分層（4 個一層）
++        self.assertEqual(positions['A'][1], positions['B'][1])  # 同層
++        self.assertEqual(positions['E'][1], 200)  # 第二層
++
++
++def run_tests():
++    """執行所有測試。"""
++    # 建立測試套件
++    loader = unittest.TestLoader()
++    suite = unittest.TestSuite()
++    
++    # 加入測試類別
++    suite.addTests(loader.loadTestsFromTestCase(TestHierarchicalLayout))
++    suite.addTests(loader.loadTestsFromTestCase(TestHelperFunctions))
++    
++    # 執行測試
++    runner = unittest.TextTestRunner(verbosity=2)
++    result = runner.run(suite)
++    
++    # 返回是否成功
++    return result.wasSuccessful()
++
++
++if __name__ == '__main__':
++    # 執行測試
++    success = run_tests()
++    sys.exit(0 if success else 1)
+\ No newline at end of file
