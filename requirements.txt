@@ -2,3 +2,8 @@ pandas
 openpyxl
 networkx
 matplotlib
+PyQt5
+numpy
+scipy
+qdarkstyle
+ortools
