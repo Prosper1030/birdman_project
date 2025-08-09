@@ -76,6 +76,11 @@ def layout_hierarchical(
         
         print(f"循環移除完成 - 原始邊數: {len(graph.edges())}, 反轉邊數: {len(reversed_edges)}")
         
+        # 驗證 DAG
+        if not nx.is_directed_acyclic_graph(dag_graph):
+            print("警告：循環移除後仍不是 DAG，進行額外清理")
+            dag_graph = _ensure_dag(dag_graph)
+        
         # 計算層級（使用無循環的圖）
         layers = _compute_yed_style_layers(dag_graph, isolated_nodes)
         
@@ -302,6 +307,41 @@ def _identify_isolated_nodes(graph: nx.DiGraph, all_task_ids: List[str]) -> Set[
             # 不在圖中的節點也視為孤立節點
             isolated.add(task_id)
     return isolated
+
+
+def _ensure_dag(graph: nx.DiGraph) -> nx.DiGraph:
+    """
+    確保圖形是有向無環圖（DAG）
+    如果還有循環，繼續移除直到成為 DAG
+    
+    Args:
+        graph: NetworkX 有向圖
+        
+    Returns:
+        確保無循環的 DAG
+    """
+    result_graph = graph.copy()
+    max_iterations = 100  # 防止無限循環
+    iteration = 0
+    
+    while not nx.is_directed_acyclic_graph(result_graph) and iteration < max_iterations:
+        iteration += 1
+        try:
+            # 找到一個循環
+            cycle = nx.find_cycle(result_graph, orientation='original')
+            if cycle:
+                # 移除循環中的第一條邊
+                edge_to_remove = cycle[0][:2]  # 取 (source, target)
+                print(f"額外移除邊: {edge_to_remove[0]} -> {edge_to_remove[1]} (迭代 {iteration})")
+                result_graph.remove_edge(*edge_to_remove)
+        except nx.NetworkXNoCycle:
+            # 沒有循環了，結束
+            break
+    
+    if iteration >= max_iterations:
+        print(f"警告：達到最大迭代次數 ({max_iterations})，可能還有循環")
+    
+    return result_graph
 
 
 def _compute_yed_style_layers(graph: nx.DiGraph, isolated_nodes: Set[str]) -> Dict[str, int]:
