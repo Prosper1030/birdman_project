@@ -4,7 +4,7 @@ DSM Editor 是一個視覺化的依賴結構矩陣 (Dependency Structure Matrix)
 
 ## 📁 架構概覽
 
-本模組已完成重構，從單一巨型檔案 (2316行) 拆分為 9 個職責分明的模組：
+本模組已完成重構，從單一巨型檔案 (2316行) 拆分為 10 個職責分明的模組：
 
 ```
 src/ui/dsm_editor/
@@ -17,8 +17,7 @@ src/ui/dsm_editor/
 ├── commands.py              # 命令模式類 (139行)
 ├── handles.py               # 調整手柄 (269行)
 ├── routing.py               # 簡單路由器 (66行)
-├── advanced_routing.py      # 高級路由引擎 (完整實現)
-├── enums.py                 # 枚舉定義 (18行)
+├── layouts.py               # 階層式佈局演算法 (294行)
 └── README.md                # 本說明文件
 ```
 
@@ -129,17 +128,20 @@ app.exec_()  # 執行 Qt 應用程式
 - **功能**：8個方向的節點大小調整
 - **特色**：保持中心點固定、即時連線更新、精確游標樣式
 
-### 🛤️ 路由系統 (routing.py, advanced_routing.py)
+### 🛤️ 路由系統 (routing.py)
 
 **`SimpleEdgeRouter`** - 基本的直線路由器
 
 - **用途**：提供簡單的點對點連線
 - **擴展性**：可升級為智能路由
 
-**`advanced_routing.py`** - 高級路由引擎
+### 📐 佈局系統 (layouts.py)
 
-- **功能**：正交可見性圖、A* 路徑尋找、障礙物迴避
-- **用途**：未來支援複雜路由需求
+**階層式佈局演算法** - 從 src/layouts/ 整合移入
+
+- **功能**：基於拓樸排序的層次佈局、SCC 循環依賴處理
+- **特色**：Longest-Path 分層演算法、網格對齊、客製化參數
+- **模式**：簡單網格佈局、階層式分層、循環回退處理
 
 ## 🎨 主要功能特色
 
@@ -265,8 +267,8 @@ from src.ui.dsm_editor import TaskNode, EdgeItem
 
 - **功能問題**：檢查對應模組的實現
 - **效能問題**：關注 `view.py` 的渲染邏輯
-- **佈局問題**：參考 `src/layouts/hierarchical.py`
-- **路由問題**：使用 `advanced_routing.py` 的診斷功能
+- **佈局問題**：參考 `layouts.py` 中的階層式演算法
+- **路由問題**：檢查 `routing.py` 的基礎路由功能
 
 ---
 
