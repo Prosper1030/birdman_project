@@ -12,7 +12,10 @@
       "Bash(grep:*)",
       "Bash(sed:*)",
       "Bash(git fetch:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "Bash(rmdir:*)",
+      "Bash(rm:*)"
     ],
     "deny": []
   }
