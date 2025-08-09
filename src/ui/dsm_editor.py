@@ -35,6 +35,10 @@ from PyQt5.QtWidgets import (
 
 from .selection_styles import SelectionStyleManager
 
+# 引入新的模組化佈局系統
+from ..layouts.hierarchical import layout_hierarchical
+from .routed_edge_item import RoutedEdgeItem, RoutedEdgeManager
+
 
 class EditorState(Enum):
     """編輯器狀態枚舉"""
@@ -1965,6 +1969,9 @@ class DsmEditor(QDialog):
         self.nodes: Dict[str, TaskNode] = {}
         self.edges: Set[tuple[str, str]] = set()
 
+        # 新增：路由邊線管理器（未來使用）
+        self.routed_edge_manager = RoutedEdgeManager()  # TODO(next): 整合到實際邊線繪製
+
         self.setupUI()
         self.loadWbs(wbsDf)
 
@@ -2123,57 +2130,41 @@ class DsmEditor(QDialog):
             self.applyForceDirectedLayout()
 
     def applyHierarchicalLayout(self) -> None:
-        """階層式佈局 - 增強循環檢測"""
-        graph = nx.DiGraph()
-        for taskId in self.nodes:
-            graph.add_node(taskId)
-        for src, dst in self.edges:
-            graph.add_edge(src, dst)
-
-        try:
-            # 檢查是否有循環
-            if not nx.is_directed_acyclic_graph(graph):
-                print("警告：圖形包含循環，無法進行拓撲排序。使用替代佈局...")
-                self.applySimpleHierarchicalLayout()
-                return
-
-            # 進行拓撲排序
-            layers = {}
-            for node in nx.topological_sort(graph):
-                predecessors = list(graph.predecessors(node))
-                if not predecessors:
-                    layers[node] = 0
-                else:
-                    layers[node] = max(layers[pred] for pred in predecessors) + 1
-
-            level_groups = {}
-            for node, level in layers.items():
-                if level not in level_groups:
-                    level_groups[level] = []
-                level_groups[level].append(node)
-
-            level_spacing = 200
-            node_spacing = 150
-
-            for level, nodes in level_groups.items():
-                y = level * level_spacing
-                start_x = -(len(nodes) - 1) * node_spacing / 2
-
-                for i, nodeId in enumerate(nodes):
-                    x = start_x + i * node_spacing
-                    if nodeId in self.nodes:
-                        self.nodes[nodeId].setPos(x, y)
-
-            # 佈局完成後調整場景範圍並確保內容可見
-            self._updateSceneRectToFitNodes(padding=300)
-            self._ensureContentVisible(margin=80)
-
-        except nx.NetworkXError as e:
-            print(f"NetworkX 錯誤：{e}")
-            self.applySimpleHierarchicalLayout()
-        except Exception as e:
-            print(f"佈局錯誤：{e}")
-            self.applySimpleHierarchicalLayout()
+        """
+        階層式佈局 - 使用模組化的佈局演算法。
+        
+        LAYOUT: moved to src/layouts/hierarchical.py
+        """
+        # 準備 WBS DataFrame
+        task_ids = list(self.nodes.keys())
+        wbs_data = []
+        for task_id, node in self.nodes.items():
+            wbs_data.append({
+                'Task ID': task_id,
+                'Name': node.text
+            })
+        wbs_df = pd.DataFrame(wbs_data)
+        
+        # 取得佈局方向（如果有設定的話）
+        direction = getattr(self, 'default_layout_direction', 'TB')
+        
+        # 呼叫模組化的佈局函數
+        positions = layout_hierarchical(
+            wbs_df,
+            edges=self.edges,
+            direction=direction,
+            layer_spacing=200,
+            node_spacing=150
+        )
+        
+        # 套用位置到節點
+        for task_id, (x, y) in positions.items():
+            if task_id in self.nodes:
+                self.nodes[task_id].setPos(x, y)
+        
+        # 佈局完成後調整場景範圍並確保內容可見
+        self._updateSceneRectToFitNodes(padding=300)
+        self._ensureContentVisible(margin=80)
 
     def applySimpleHierarchicalLayout(self) -> None:
         """簡單階層式佈局"""
@@ -2195,28 +2186,30 @@ class DsmEditor(QDialog):
     
 
     def applyOrthogonalLayout(self) -> None:
-        """正交式佈局"""
-        nodes = list(self.nodes.values())
-        if not nodes:
-            return
-
-        node_count = len(nodes)
-        cols = max(1, int(math.sqrt(node_count) * 1.5))
-
-        spacing_x = 180
-        spacing_y = 120
-
-        total_width = (cols - 1) * spacing_x
-        start_x = -total_width / 2
-
-        for i, node in enumerate(nodes):
-            row = i // cols
-            col = i % cols
-
-            x = start_x + col * spacing_x
-            y = row * spacing_y
-
-            node.setPos(x, y)
+        """
+        正交式佈局 - 使用模組化的網格佈局。
+        
+        LAYOUT: moved to src/layouts/hierarchical.py (_simple_grid_layout)
+        """
+        from ..layouts.hierarchical import _simple_grid_layout
+        
+        task_ids = list(self.nodes.keys())
+        
+        # 使用模組化的網格佈局
+        positions = _simple_grid_layout(
+            task_ids,
+            node_spacing=180,
+            layer_spacing=120,
+            direction='TB'
+        )
+        
+        # 套用位置
+        for task_id, (x, y) in positions.items():
+            if task_id in self.nodes:
+                self.nodes[task_id].setPos(x, y)
+        
+        self._updateSceneRectToFitNodes(padding=300)
+        self._ensureContentVisible(margin=80)
 
     
 
