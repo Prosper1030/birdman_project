@@ -40,11 +40,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 import pandas as pd
-from PyQt5.QtWidgets import QApplication, QMessageBox
-try:
-    from ui.dsm_editor import DsmEditor
-except ImportError:
-    from src.ui.dsm_editor import DsmEditor
+from src.gui_qt import launch_editor
 
 
 def load_sample_wbs() -> pd.DataFrame:
@@ -233,25 +229,14 @@ def main():
         if response.lower() != 'y':
             sys.exit(1)
     
-    # 建立 Qt 應用程式
-    app = QApplication(sys.argv)
-    app.setApplicationName("DSM Editor")
-    app.setOrganizationName("DSM Tools")
-    
-    # 設定樣式（選用）
-    app.setStyle('Fusion')  # 使用 Fusion 風格獲得更現代的外觀
-    
+    # 使用統一的啟動器
     try:
-        # 建立並顯示主視窗
-        editor = DsmEditor(wbs_df)
+        app, editor = launch_editor(wbs_df)
         
         # 儲存佈局方向設定（供編輯器使用）
         editor.default_layout_direction = args.direction
         if args.debug:
             print(f"佈局方向設定為：{args.direction}")
-        
-        # 顯示視窗
-        editor.show()
         
         # 如果有資料，自動執行一次階層式佈局
         if not wbs_df.empty:
@@ -270,6 +255,7 @@ def main():
             traceback.print_exc()
         
         # 顯示錯誤對話框
+        from PyQt5.QtWidgets import QMessageBox
         QMessageBox.critical(None, "錯誤", f"無法啟動編輯器：\n{e}")
         sys.exit(1)
 

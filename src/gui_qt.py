@@ -2618,5 +2618,31 @@ def main():
     sys.exit(exit_code)
 
 
+def launch_editor(wbs_df=None):
+    """啟動 DSM 編輯器。
+    
+    Args:
+        wbs_df: WBS 資料表，如果為 None 則使用空資料表
+        
+    Returns:
+        tuple: (QApplication, DsmEditor) 應用程式物件和編輯器實例
+    """
+    from .ui.dsm_editor import DsmEditor
+    
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+        app.setQuitOnLastWindowClosed(True)
+    
+    # 如果沒有提供 wbs_df，建立空的 DataFrame
+    if wbs_df is None:
+        wbs_df = pd.DataFrame()
+    
+    editor = DsmEditor(wbs_df)
+    editor.show()
+    
+    return app, editor
+
+
 if __name__ == "__main__":
     main()
