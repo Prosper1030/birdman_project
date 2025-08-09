@@ -351,3 +351,168 @@ if __name__ == "__main__":
     print(f"性能統計: {router.get_performance_stats()}")
     
     sys.exit()
+
+
+class AdvancedEdgeRouter:
+    """
+    高級邊線路由器 - 整合 yEd 風格的正交路由功能
+    
+    提供完整的正交路由接口，整合可見性圖和 A* 路徑搜尋，
+    為 EdgeRouterManager 提供高級路由能力。
+    """
+    
+    def __init__(self):
+        """初始化高級路由器"""
+        self.routing_engine = EdgeRoutingEngine()
+        self.cache_enabled = True
+        self.routing_cache = {}
+        
+    def route_edge(self, start_pos, end_pos, obstacles=None):
+        """
+        路由單條邊線 - 主要接口
+        
+        Args:
+            start_pos: 起始位置 (QPointF)
+            end_pos: 結束位置 (QPointF) 
+            obstacles: 障礙物列表 (List[QRectF])
+            
+        Returns:
+            路徑點列表 [QPointF, ...]
+        """
+        from PyQt5.QtCore import QPointF
+        
+        # 快取檢查
+        cache_key = None
+        if self.cache_enabled:
+            cache_key = self._create_cache_key(start_pos, end_pos, obstacles)
+            if cache_key in self.routing_cache:
+                cached_path = self.routing_cache[cache_key]
+                return [QPointF(x, y) for x, y in cached_path]
+        
+        try:
+            # 設置障礙物
+            if obstacles:
+                obstacle_data = [(rect, f"obstacle_{i}") for i, rect in enumerate(obstacles)]
+                self.routing_engine.set_obstacles(obstacle_data)
+            
+            # 執行路由
+            path = self.routing_engine.route_edge(start_pos, end_pos)
+            
+            # 將 QPainterPath 轉換為點列表
+            points = self._painter_path_to_points(path)
+            
+            # 快取結果
+            if self.cache_enabled and cache_key:
+                self.routing_cache[cache_key] = [(p.x(), p.y()) for p in points]
+                # 限制快取大小
+                if len(self.routing_cache) > 100:
+                    # 移除最舊的一半條目
+                    keys_to_remove = list(self.routing_cache.keys())[:50]
+                    for key in keys_to_remove:
+                        del self.routing_cache[key]
+            
+            return points
+            
+        except Exception as e:
+            print(f"高級路由失敗: {e}")
+            # 回退到直線
+            from PyQt5.QtCore import QPointF
+            return [QPointF(start_pos.x(), start_pos.y()), QPointF(end_pos.x(), end_pos.y())]
+    
+    def _painter_path_to_points(self, path):
+        """
+        將 QPainterPath 轉換為點列表
+        
+        Args:
+            path: QPainterPath 對象
+            
+        Returns:
+            QPointF 列表
+        """
+        from PyQt5.QtCore import QPointF
+        
+        points = []
+        
+        # 提取路徑中的所有點
+        for i in range(path.elementCount()):
+            element = path.elementAt(i)
+            point = QPointF(element.x, element.y)
+            
+            # 避免重複點
+            if not points or (points[-1] - point).manhattanLength() > 1.0:
+                points.append(point)
+        
+        # 確保至少有起點和終點
+        if not points:
+            current_pos = path.currentPosition()
+            points = [QPointF(current_pos.x(), current_pos.y())]
+        
+        return points
+    
+    def _create_cache_key(self, start_pos, end_pos, obstacles):
+        """
+        創建快取鍵
+        
+        Args:
+            start_pos: 起始位置
+            end_pos: 結束位置
+            obstacles: 障礙物列表
+            
+        Returns:
+            快取鍵字符串
+        """
+        # 簡化的快取鍵，基於主要參數
+        start_key = f"{int(start_pos.x())},{int(start_pos.y())}"
+        end_key = f"{int(end_pos.x())},{int(end_pos.y())}"
+        
+        obstacles_key = ""
+        if obstacles:
+            # 只考慮前幾個障礙物以避免鍵過長
+            for i, rect in enumerate(obstacles[:5]):
+                obstacles_key += f"_{int(rect.x())},{int(rect.y())},{int(rect.width())},{int(rect.height())}"
+        
+        return f"{start_key}-{end_key}{obstacles_key}"
+    
+    def clear_cache(self):
+        """清空路由快取"""
+        self.routing_cache.clear()
+        print("路由快取已清空")
+    
+    def set_cache_enabled(self, enabled: bool):
+        """設置是否啟用快取"""
+        self.cache_enabled = enabled
+        if not enabled:
+            self.clear_cache()
+    
+    def get_stats(self):
+        """
+        獲取路由器統計信息
+        
+        Returns:
+            統計信息字典
+        """
+        engine_stats = self.routing_engine.get_performance_stats()
+        return {
+            **engine_stats,
+            "cache_size": len(self.routing_cache),
+            "cache_enabled": self.cache_enabled
+        }
+    
+    def optimize_for_large_graphs(self, enable: bool = True):
+        """
+        為大型圖形優化路由器性能
+        
+        Args:
+            enable: 是否啟用優化模式
+        """
+        if enable:
+            # 啟用性能優化
+            self.routing_engine.optimization_enabled = True
+            self.routing_engine.minimum_edge_distance = 12  # 增加最小距離
+            self.cache_enabled = True
+            print("已啟用大型圖形優化模式")
+        else:
+            # 恢復標準模式
+            self.routing_engine.optimization_enabled = True
+            self.routing_engine.minimum_edge_distance = 8
+            print("已恢復標準路由模式")

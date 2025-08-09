@@ -70,12 +70,18 @@ def layout_force_directed(
             if src in task_ids and dst in task_ids:
                 graph.add_edge(src, dst)
         
-        # 計算佈局
+        # 計算佈局 - 調整參數以適應節點數量
+        node_count = len(task_ids)
+        
+        # 根據節點數量調整參數
+        adjusted_k = k_spring / max(1, node_count ** 0.5)  # 節點多時減小 k 值
+        adjusted_scale = scale * max(1, node_count ** 0.3)  # 節點多時增大 scale
+        
         pos_dict = nx.spring_layout(
             graph,
             iterations=iterations,
-            k=k_spring,
-            scale=scale,
+            k=adjusted_k,
+            scale=adjusted_scale,
             seed=seed
         )
         

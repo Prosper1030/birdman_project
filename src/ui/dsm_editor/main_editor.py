@@ -336,12 +336,17 @@ class DsmEditor(QDialog):
         
         try:
             # 使用模組化的力導向佈局
+            node_count = len(task_ids)
+            # 根據節點數量調整迭代次數
+            iterations = min(200, max(50, node_count * 2))
+            
             positions = layout_force_directed(
                 wbs_df,
                 edges,
-                iterations=100,
-                k_spring=1.5,
-                scale=400,
+                iterations=iterations,
+                k_spring=2.0,  # 增加彈簧力
+                k_repulsion=1.0,
+                scale=500,  # 增加縮放
                 seed=42  # 固定種子確保結果一致
             )
             
