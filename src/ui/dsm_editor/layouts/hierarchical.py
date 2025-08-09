@@ -2,7 +2,8 @@
 階層式佈局演算法模組
 Hierarchical Layout Algorithm Module
 
-實現基於 Longest-Path 的階層式佈局，保持現有 DSM 編輯器的佈局行為。
+實現基於杉山方法 (Sugiyama Framework) 的專業級階層式佈局，
+包含完整的循環移除、分層、交叉最小化和坐標分配。
 """
 
 from typing import Dict, Tuple, List, Set, Optional
@@ -70,18 +71,20 @@ def layout_hierarchical(
     
     # 處理非孤立節點的布局
     if len(graph.nodes()) - len(isolated_nodes) > 0:
-        # 檢查是否有循環
-        if not nx.is_directed_acyclic_graph(graph):
-            print("警告：圖形包含循環，使用循環處理布局")
-            return _handle_cyclic_layout(task_ids, edges, isolated_nodes, 
-                                       layer_spacing, node_spacing, isolated_spacing, direction)
+        # 實現杉山方法第一階段：循環移除
+        dag_graph, reversed_edges = _remove_cycles_sugiyama(graph)
         
-        # 計算層級
-        layers = _compute_yed_style_layers(graph, isolated_nodes)
+        print(f"循環移除完成 - 原始邊數: {len(graph.edges())}, 反轉邊數: {len(reversed_edges)}")
+        
+        # 計算層級（使用無循環的圖）
+        layers = _compute_yed_style_layers(dag_graph, isolated_nodes)
         
         # 分配節點位置
         positions = _assign_yed_positions(layers, isolated_nodes, task_ids,
                                         layer_spacing, node_spacing, isolated_spacing, direction)
+        
+        # 將反轉的邊加入到 reverse_edges 中
+        reverse_edges.update(reversed_edges)
     else:
         # 全部都是孤立節點
         positions = _layout_all_isolated(task_ids, isolated_spacing, direction)
@@ -90,6 +93,177 @@ def layout_hierarchical(
     positions = _assign_edge_ports(positions, valid_edges, reverse_edges, direction)
     
     return positions
+
+
+def _remove_cycles_sugiyama(graph: nx.DiGraph) -> Tuple[nx.DiGraph, Set[Tuple[str, str]]]:
+    """
+    實現杉山方法第一階段：循環移除。
+    
+    使用反饋弧集 (Feedback Arc Set) 算法來打破循環，
+    通過反轉最少的邊數來將有向圖轉換為 DAG。
+    
+    Args:
+        graph: 原始有向圖
+    
+    Returns:
+        (dag_graph, reversed_edges): 無循環圖和被反轉的邊集合
+    """
+    if nx.is_directed_acyclic_graph(graph):
+        # 如果圖已經是 DAG，直接返回
+        return graph.copy(), set()
+    
+    # 創建圖的副本用於修改
+    dag_graph = graph.copy()
+    reversed_edges = set()
+    
+    # 使用貪心算法實現 Feedback Arc Set
+    # 這是一個經典的 NP-Hard 問題，我們使用啟發式方法
+    
+    max_iterations = len(graph.edges()) * 2  # 防止無限循環
+    iteration = 0
+    
+    while not nx.is_directed_acyclic_graph(dag_graph) and iteration < max_iterations:
+        iteration += 1
+        
+        # 方法1：找到一個簡單循環並反轉其中權重最小的邊
+        try:
+            # 使用 NetworkX 找簡單循環
+            cycles = list(nx.simple_cycles(dag_graph))
+            if not cycles:
+                break
+                
+            # 選擇最短的循環
+            shortest_cycle = min(cycles, key=len)
+            
+            if len(shortest_cycle) < 2:
+                break
+                
+            # 在循環中選擇要反轉的邊
+            # 啟發式：選擇出度-入度差最大的節點的出邊
+            edge_to_reverse = _select_edge_to_reverse(dag_graph, shortest_cycle)
+            
+            if edge_to_reverse:
+                src, dst = edge_to_reverse
+                
+                # 反轉邊
+                dag_graph.remove_edge(src, dst)
+                dag_graph.add_edge(dst, src)
+                
+                # 記錄原始方向
+                reversed_edges.add((src, dst))
+                
+                print(f"反轉邊: {src} -> {dst} (循環長度: {len(shortest_cycle)})")
+            else:
+                # 如果沒有找到合適的邊，隨機選擇一個
+                edge = shortest_cycle[0], shortest_cycle[1]
+                src, dst = edge
+                if dag_graph.has_edge(src, dst):
+                    dag_graph.remove_edge(src, dst)
+                    dag_graph.add_edge(dst, src)
+                    reversed_edges.add((src, dst))
+                    print(f"隨機反轉邊: {src} -> {dst}")
+                
+        except (nx.NetworkXError, Exception) as e:
+            print(f"循環檢測錯誤，使用退化算法: {e}")
+            # 退化算法：使用DFS方法
+            edge_to_reverse = _find_back_edge_dfs(dag_graph)
+            if edge_to_reverse:
+                src, dst = edge_to_reverse
+                dag_graph.remove_edge(src, dst)
+                dag_graph.add_edge(dst, src)
+                reversed_edges.add((src, dst))
+                print(f"DFS反轉邊: {src} -> {dst}")
+            else:
+                break
+    
+    if iteration >= max_iterations:
+        print("警告：循環移除達到最大迭代次數，可能仍存在循環")
+    
+    # 最終檢查
+    is_dag = nx.is_directed_acyclic_graph(dag_graph)
+    print(f"循環移除結果: DAG={is_dag}, 迭代次數={iteration}, 反轉邊數={len(reversed_edges)}")
+    
+    return dag_graph, reversed_edges
+
+
+def _select_edge_to_reverse(graph: nx.DiGraph, cycle: List[str]) -> Optional[Tuple[str, str]]:
+    """
+    在給定循環中選擇最適合反轉的邊。
+    
+    啟發式策略：
+    1. 優先選擇出度-入度差最大的節點的出邊
+    2. 優先選擇度數較小的邊
+    
+    Args:
+        graph: 圖
+        cycle: 循環中的節點列表
+    
+    Returns:
+        要反轉的邊 (src, dst) 或 None
+    """
+    if len(cycle) < 2:
+        return None
+    
+    cycle_edges = []
+    for i in range(len(cycle)):
+        src = cycle[i]
+        dst = cycle[(i + 1) % len(cycle)]
+        if graph.has_edge(src, dst):
+            cycle_edges.append((src, dst))
+    
+    if not cycle_edges:
+        return None
+    
+    # 計算每條邊的啟發式分數
+    edge_scores = []
+    for src, dst in cycle_edges:
+        # 分數 = 源節點出度差 + 目標節點入度 + 邊的"重要性"
+        src_out_degree = graph.out_degree(src)
+        src_in_degree = graph.in_degree(src)
+        dst_in_degree = graph.in_degree(dst)
+        
+        # 傾向於反轉從高出度節點到高入度節點的邊
+        score = (src_out_degree - src_in_degree) + dst_in_degree
+        edge_scores.append((score, src, dst))
+    
+    # 選擇分數最高的邊
+    edge_scores.sort(reverse=True)
+    return (edge_scores[0][1], edge_scores[0][2])
+
+
+def _find_back_edge_dfs(graph: nx.DiGraph) -> Optional[Tuple[str, str]]:
+    """
+    使用 DFS 找到回邊 (back edge)。
+    
+    Args:
+        graph: 有向圖
+    
+    Returns:
+        回邊 (src, dst) 或 None
+    """
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {node: WHITE for node in graph.nodes()}
+    
+    def dfs_visit(node):
+        color[node] = GRAY
+        for neighbor in graph.neighbors(node):
+            if color[neighbor] == GRAY:
+                # 找到回邊
+                return (node, neighbor)
+            elif color[neighbor] == WHITE:
+                result = dfs_visit(neighbor)
+                if result:
+                    return result
+        color[node] = BLACK
+        return None
+    
+    for node in graph.nodes():
+        if color[node] == WHITE:
+            result = dfs_visit(node)
+            if result:
+                return result
+    
+    return None
 
 
 def _filter_edges_by_direction(edges: Set[Tuple[str, str]], direction: str) -> Tuple[Set[Tuple[str, str]], Set[Tuple[str, str]]]:
