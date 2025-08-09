@@ -21,8 +21,9 @@ def layout_hierarchical(
     """
     計算階層式佈局的節點位置。
     
-    使用 Longest-Path 分層演算法，保持現有 DSM 編輯器的行為：
+    使用改良的 Longest-Path 分層演算法，符合 yEd 風格的層級劃分：
     - 基於拓撲排序的分層
+    - 區分源節點（有依賴輸出）與獨立節點（無任何連接）
     - 每層等距擺位
     - 不做 dummy nodes、交叉最小化或壓縮優化
     
@@ -78,45 +79,61 @@ def layout_hierarchical(
             level_groups[level] = []
         level_groups[level].append(node)
     
-    # 計算節點位置
+    # 計算節點位置（考慮獨立節點層 -1）
     positions = {}
+    
+    # 獲取正常層級範圍
+    normal_levels = [level for level in level_groups.keys() if level >= 0]
+    max_normal_level = max(normal_levels) if normal_levels else -1
+    
     for level, nodes in sorted(level_groups.items()):
+        # 計算該層的實際位置
+        if level == -1:
+            # 獨立節點放在所有正常層級之後
+            actual_level = max_normal_level + 2
+        else:
+            actual_level = level
+            
         # 計算該層的位置
         if direction == "TB":  # Top-Bottom
-            y = level * layer_spacing
+            y = actual_level * layer_spacing
             start_x = -(len(nodes) - 1) * node_spacing / 2
             for i, node_id in enumerate(nodes):
                 x = start_x + i * node_spacing
                 positions[node_id] = (x, y)
         else:  # LR: Left-Right
-            x = level * layer_spacing
+            x = actual_level * layer_spacing
             start_y = -(len(nodes) - 1) * node_spacing / 2
             for i, node_id in enumerate(nodes):
                 y = start_y + i * node_spacing
                 positions[node_id] = (x, y)
     
-    # 補充未在圖中的節點（孤立節點）
+    # 補充未在圖中的節點（完全不在邊集合中的節點）
     for task_id in task_ids:
         if task_id not in positions:
-            # 放在最底層
-            max_level = max(level_groups.keys()) if level_groups else 0
+            # 放在獨立節點層
+            isolated_level = max_normal_level + 2
             if direction == "TB":
-                positions[task_id] = (0, (max_level + 1) * layer_spacing)
+                positions[task_id] = (0, isolated_level * layer_spacing)
             else:
-                positions[task_id] = ((max_level + 1) * layer_spacing, 0)
+                positions[task_id] = (isolated_level * layer_spacing, 0)
     
     return positions
 
 
 def _compute_layers_longest_path(graph: nx.DiGraph) -> Dict[str, int]:
     """
-    使用 Longest-Path 演算法計算節點層級。
+    使用改良的 Longest-Path 演算法計算節點層級。
+    
+    改良版本區分兩種無前驅節點的情況：
+    1. 源節點：有後繼節點但無前驅節點（提供依賴） → 第 0 層
+    2. 獨立節點：既無前驅也無後繼節點（完全獨立） → 獨立層 (-1)
     
     Args:
         graph: NetworkX 有向無環圖
     
     Returns:
-        節點層級字典 {node_id: layer}
+        節點層級字典 {node_id: layer}，其中 -1 表示獨立節點層
     """
     layers = {}
     
@@ -127,15 +144,25 @@ def _compute_layers_longest_path(graph: nx.DiGraph) -> Dict[str, int]:
         # 如果有循環，返回空字典
         return {}
     
+    # 預先識別獨立節點（既無前驅也無後繼）
+    isolated_nodes = set()
+    for node in graph.nodes():
+        if graph.in_degree(node) == 0 and graph.out_degree(node) == 0:
+            isolated_nodes.add(node)
+    
     # 計算每個節點的最大路徑長度
     for node in topo_order:
-        predecessors = list(graph.predecessors(node))
-        if not predecessors:
-            # 沒有前驅節點，放在第 0 層
-            layers[node] = 0
+        if node in isolated_nodes:
+            # 獨立節點放在特殊層 (-1)
+            layers[node] = -1
         else:
-            # 放在所有前驅節點的下一層
-            layers[node] = max(layers[pred] for pred in predecessors) + 1
+            predecessors = list(graph.predecessors(node))
+            if not predecessors:
+                # 源節點：有後繼但無前驅，放在第 0 層
+                layers[node] = 0
+            else:
+                # 放在所有前驅節點的下一層
+                layers[node] = max(layers[pred] for pred in predecessors) + 1
     
     return layers
 

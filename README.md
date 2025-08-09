@@ -43,6 +43,16 @@ python -m src.gui_qt
 
 使用視窗選擇檔案後執行，畫面中央會預覽資料，可放大或縮小。分析完成後，可依需求按下按鈕匯出 `sorted_wbs.csv`、`merged_wbs.csv` 或 `sorted_dsm.csv`。
 
+### DSM 編輯器 (快速測試工具)
+
+```bash
+python run_dsm_editor.py                    # 使用預設 sample 資料
+python run_dsm_editor.py --wbs path/to.csv  # 指定 WBS 檔案
+python run_dsm_editor.py --help             # 顯示說明
+```
+
+直接啟動視覺化的 DSM 依賴關係編輯器，支援 yEd 風格的節點拖拽、連線編輯和階層式佈局。包含改良的分層邏輯，能區分源節點與獨立節點。
+
 ## 安裝套件
 
 ```bash
