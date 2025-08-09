@@ -103,27 +103,23 @@ def layout_hierarchical(
 def _remove_cycles_sugiyama(graph: nx.DiGraph) -> Tuple[nx.DiGraph, Set[Tuple[str, str]]]:
     """
     實現杉山方法第一階段：循環移除。
-    按照 GPT 建議的三個重點：
-    1. 先複製一份圖 H，之後只在 H 上動手
-    2. 打破循環：把 H 變成 DAG  
-    3. 再做 topological_sort(H)；排序期間不要再改 H
+    按照 Reference 要求：偵測循環並暫時反轉邊來打破循環，而非移除邊。
     
     Args:
         graph: 原始有向圖
     
     Returns:
-        (dag_graph, reversed_edges): 無循環圖和被移除的邊集合
+        (dag_graph, reversed_edges): 無循環圖和被反轉的邊集合
     """
     if nx.is_directed_acyclic_graph(graph):
         # 如果圖已經是 DAG，直接返回
         return graph.copy(), set()
     
-    # 重點 1: 先複製一份圖 H，之後只在 H 上動手
-    H = graph.copy()  # 工作圖，只在這個圖上修改
-    removed_edges = set()  # 記錄被移除的邊
+    # 創建工作圖的深度拷貝
+    H = graph.copy()
+    reversed_edges = set()  # 記錄被反轉的邊
     
-    # 重點 2: 打破循環：把 H 變成 DAG
-    max_iterations = len(graph.edges()) + 10  # 合理的最大迭代次數
+    max_iterations = len(graph.edges()) + 10
     iteration = 0
     
     while not nx.is_directed_acyclic_graph(H) and iteration < max_iterations:
@@ -135,33 +131,31 @@ def _remove_cycles_sugiyama(graph: nx.DiGraph) -> Tuple[nx.DiGraph, Set[Tuple[st
             if not cycle:
                 break
                 
-            # 從循環中選擇一條邊來移除
-            edge_to_remove = _select_best_edge_to_remove(H, cycle)
+            # 按照 Reference：選擇邊來反轉（不是移除）
+            edge_to_reverse = _select_best_edge_to_remove(H, cycle)
             
-            # 移除這條邊（不是反轉，是直接移除）
-            if H.has_edge(*edge_to_remove):
-                H.remove_edge(*edge_to_remove)
-                removed_edges.add(edge_to_remove)
-                print(f"移除循環邊: {edge_to_remove[0]} -> {edge_to_remove[1]} (循環長度: {len(cycle)})")
+            # 反轉邊（這樣可以在渲染時恢復原始方向）
+            if H.has_edge(*edge_to_reverse):
+                src, dst = edge_to_reverse
+                H.remove_edge(src, dst)
+                H.add_edge(dst, src)  # 反轉方向
+                reversed_edges.add(edge_to_reverse)
+                print(f"反轉循環邊: {src} -> {dst} (循環長度: {len(cycle)})")
                 
         except nx.NetworkXNoCycle:
-            # 沒有循環了，完成
             break
         except Exception as e:
             print(f"循環檢測錯誤: {e}")
             break
     
-    # 驗證結果
     is_dag = nx.is_directed_acyclic_graph(H)
-    print(f"循環移除結果: DAG={is_dag}, 迭代次數={iteration}, 移除邊數={len(removed_edges)}")
+    print(f"循環移除結果: DAG={is_dag}, 迭代次數={iteration}, 反轉邊數={len(reversed_edges)}")
     
     if not is_dag:
-        print("警告：未能完全移除所有循環，將使用最小生成樹回退")
-        # 最後的回退：創建一個最小生成樹
+        print("警告：未能完全移除所有循環，將使用回退策略")
         H = _create_dag_fallback(graph)
     
-    # 重點 3: 現在 H 是 DAG，可以安全地進行拓撲排序，排序期間不要再改 H
-    return H, removed_edges
+    return H, reversed_edges
 
 def _select_best_edge_to_remove(graph: nx.DiGraph, cycle) -> Tuple[str, str]:
     """
