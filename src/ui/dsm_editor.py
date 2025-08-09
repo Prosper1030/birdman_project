@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Dict, Set, Optional, List
+from typing import Dict, Set, Optional, List, Tuple
 from enum import Enum
 
 import pandas as pd
@@ -36,8 +36,8 @@ from PyQt5.QtWidgets import (
 from .selection_styles import SelectionStyleManager
 
 # 引入新的模組化佈局系統
-from ..layouts.hierarchical import layout_hierarchical
 from .routed_edge_item import RoutedEdgeItem, RoutedEdgeManager
+from src.ui import layout_engine, router_engine
 
 
 class EditorState(Enum):
@@ -2130,13 +2130,8 @@ class DsmEditor(QDialog):
             self.applyForceDirectedLayout()
 
     def applyHierarchicalLayout(self) -> None:
-        """
-        階層式佈局 - 使用模組化的佈局演算法。
-        
-        LAYOUT: moved to src/layouts/hierarchical.py
-        """
-        # 準備 WBS DataFrame
-        task_ids = list(self.nodes.keys())
+        """階層式佈局與繞線委派封裝。"""
+        # 收集佈局所需輸入資料
         wbs_data = []
         for task_id, node in self.nodes.items():
             wbs_data.append({
@@ -2144,27 +2139,68 @@ class DsmEditor(QDialog):
                 'Name': node.text
             })
         wbs_df = pd.DataFrame(wbs_data)
-        
-        # 取得佈局方向（如果有設定的話）
-        direction = getattr(self, 'default_layout_direction', 'TB')
-        
-        # 呼叫模組化的佈局函數
-        positions = layout_hierarchical(
-            wbs_df,
-            edges=self.edges,
-            direction=direction,
-            layer_spacing=200,
-            node_spacing=150
-        )
-        
-        # 套用位置到節點
-        for task_id, (x, y) in positions.items():
-            if task_id in self.nodes:
-                self.nodes[task_id].setPos(x, y)
-        
-        # 佈局完成後調整場景範圍並確保內容可見
-        self._updateSceneRectToFitNodes(padding=300)
+        edges = self.edges
+
+        # 委派至佈局模組計算節點座標
+        positions = layout_engine.apply_hierarchical(wbs_df, edges, grid=10)
+
+        # 更新節點座標
+        for tid, (x, y) in positions.items():
+            if tid in self.nodes:
+                self.nodes[tid].setPos(x, y)
+
+        # 委派至繞線模組計算邊線
+        node_rects = {tid: node.sceneBoundingRect() for tid, node in self.nodes.items()}
+        edge_list = list(edges)
+        polylines = router_engine.route_all(node_rects, edge_list)
+        self._applyPolylinesToEdges(polylines)
+
+        # 調整場景範圍並確保內容可見
+        self._updateSceneRectToFitNodes()
         self._ensureContentVisible(margin=80)
+
+    def _applyPolylinesToEdges(self, polylines: Dict[Tuple[str, str], List[QPointF]]) -> None:
+        """將繞線結果套用到現有邊線。"""
+        for (src_id, dst_id), points in polylines.items():
+            src_node = self.nodes.get(src_id)
+            if not src_node:
+                continue
+            edge_item = None
+            for edge in src_node.edges:
+                if getattr(edge, 'dst', None) and edge.dst.taskId == dst_id:
+                    edge_item = edge
+                    break
+            if edge_item is None or not points:
+                continue
+            path = QPainterPath(points[0])
+            for pt in points[1:]:
+                path.lineTo(pt)
+            edge_item.setPath(path)
+            if hasattr(edge_item, 'arrowHead'):
+                if len(points) >= 2:
+                    p0 = points[-2]
+                    p1 = points[-1]
+                    angle = math.atan2(p1.y() - p0.y(), p1.x() - p0.x())
+                    size = edge_item.ARROW_SIZE
+                    back = edge_item.ARROW_BACK_OFFSET
+                    end = QPointF(p1.x() - math.cos(angle) * back,
+                                  p1.y() - math.sin(angle) * back)
+                    left = QPointF(
+                        end.x() - math.cos(angle - edge_item.ARROW_ANGLE) * size,
+                        end.y() - math.sin(angle - edge_item.ARROW_ANGLE) * size,
+                    )
+                    right = QPointF(
+                        end.x() - math.cos(angle + edge_item.ARROW_ANGLE) * size,
+                        end.y() - math.sin(angle + edge_item.ARROW_ANGLE) * size,
+                    )
+                    arrow_path = QPainterPath(end)
+                    arrow_path.lineTo(left)
+                    arrow_path.lineTo(right)
+                    arrow_path.closeSubpath()
+                    edge_item.arrowHead.setPath(arrow_path)
+                else:
+                    edge_item.arrowHead.setPath(QPainterPath())
+
 
     def applySimpleHierarchicalLayout(self) -> None:
         """簡單階層式佈局"""
