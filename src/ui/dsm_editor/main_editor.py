@@ -17,7 +17,7 @@ from .view import CanvasView
 from .nodes import TaskNode
 from .edges import EdgeItem
 from .routing import SimpleEdgeRouter
-from ...layouts.hierarchical import layout_hierarchical
+from .layouts import layout_hierarchical
 
 
 class DsmEditor(QDialog):
@@ -266,7 +266,7 @@ class DsmEditor(QDialog):
         
         LAYOUT: moved to src/layouts/hierarchical.py (_simple_grid_layout)
         """
-        from ...layouts.hierarchical import _simple_grid_layout
+        from .layouts import _simple_grid_layout
         
         task_ids = list(self.nodes.keys())
         

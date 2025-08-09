@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 from .handles import ResizeHandle
 from .commands import MoveNodeCommand
-from ..selection_styles import SelectionStyleManager
+from ..shared.selection_styles import SelectionStyleManager
 
 
 class TaskNode(QGraphicsRectItem):
