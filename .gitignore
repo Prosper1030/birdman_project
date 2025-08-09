@@ -13,4 +13,15 @@ venv/
 sorted_wbs.csv
 merged_wbs.csv
 sorted_dsm.csv
-sorted_dsm.csv
+
+# 備份和臨時檔案
+*.backup
+*.patch
+*.orig
+*.bak
+*.tmp
+
+# 開發過程產生的檔案
+test_parallel_edges.py
+PACKAGE_README.md
+package.ps1
