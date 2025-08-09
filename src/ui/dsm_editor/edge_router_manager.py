@@ -1,0 +1,419 @@
+"""
+yEd 風格邊線路由管理器
+Edge Router Manager for yEd-style Routing
+
+管理兩種路由模式：
+- 日常互動：直線或簡單折線
+- 佈局觸發：正交 90° 路由
+
+實現用戶需求：
+- 平時拖拽：只做直線更新
+- 點擊佈局：節點佈局 + 全圖正交路由
+- 手動調整邊線：保持用戶指定形狀直到下次佈局
+- 計算失敗：安全回退到直線
+"""
+
+import time
+from typing import List, Dict, Tuple, Set, Optional
+from enum import Enum
+from PyQt5.QtCore import QPointF, QRectF, QObject, QTimer
+from PyQt5.QtGui import QPainterPath
+from PyQt5.QtWidgets import QGraphicsItem
+
+
+class RoutingMode(Enum):
+    """路由模式枚舉"""
+    INTERACTIVE = "interactive"  # 日常互動：直線模式
+    LAYOUT = "layout"            # 佈局觸發：正交路由模式
+
+
+class EdgeRouterManager(QObject):
+    """
+    yEd 風格的邊線路由管理器
+    
+    核心功能：
+    1. 區分兩種路由狀態
+    2. 管理用戶手動調整的邊線
+    3. 提供安全回退機制
+    4. 與佈局系統整合
+    """
+    
+    def __init__(self, scene=None, timeout_ms: int = 2000):
+        """
+        初始化路由管理器
+        
+        Args:
+            scene: DSM 場景對象
+            timeout_ms: 路由計算超時時間（毫秒）
+        """
+        super().__init__()
+        self.scene = scene
+        self.timeout_ms = timeout_ms
+        
+        # 路由狀態
+        self.current_mode = RoutingMode.INTERACTIVE
+        
+        # 手動調整的邊線（用戶希望保持的形狀）
+        self.user_modified_edges: Set[Tuple[str, str]] = set()
+        
+        # 路由器組件
+        self._simple_router = None
+        self._orthogonal_router = None
+        
+        # 性能監控
+        self.last_routing_time = 0
+        self.routing_stats = {
+            'interactive_count': 0,
+            'layout_count': 0,
+            'timeout_count': 0,
+            'fallback_count': 0
+        }
+    
+    def set_routing_mode(self, mode: RoutingMode) -> None:
+        """
+        設置路由模式
+        
+        Args:
+            mode: 新的路由模式
+        """
+        if mode != self.current_mode:
+            self.current_mode = mode
+            print(f"路由模式切換為: {mode.value}")
+    
+    def route_single_edge(
+        self, 
+        edge_item, 
+        start_pos: QPointF, 
+        end_pos: QPointF,
+        force_mode: Optional[RoutingMode] = None
+    ) -> List[QPointF]:
+        """
+        路由單條邊線
+        
+        Args:
+            edge_item: 邊線圖形項目
+            start_pos: 起始位置
+            end_pos: 結束位置
+            force_mode: 強制使用指定模式
+            
+        Returns:
+            路徑點列表
+        """
+        # 獲取邊線標識
+        edge_key = self._get_edge_key(edge_item)
+        
+        # 檢查是否為用戶修改的邊線
+        if edge_key in self.user_modified_edges and force_mode is None:
+            # 保持用戶指定的形狀，不自動路由
+            current_path = getattr(edge_item, '_user_path', None)
+            if current_path:
+                return current_path
+        
+        # 確定使用的路由模式
+        mode = force_mode if force_mode else self.current_mode
+        
+        if mode == RoutingMode.INTERACTIVE:
+            return self._route_interactive(start_pos, end_pos)
+        else:
+            return self._route_orthogonal(edge_item, start_pos, end_pos)
+    
+    def route_all_edges_for_layout(self, edges_data: List[Tuple]) -> Dict[Tuple[str, str], List[QPointF]]:
+        """
+        佈局時對所有邊線執行正交路由
+        
+        這是「套用佈局」流程的一部分：
+        1. 節點佈局完成
+        2. 全圖正交路由 ← 此功能
+        3. 重繪
+        
+        Args:
+            edges_data: [(edge_item, start_pos, end_pos), ...]
+            
+        Returns:
+            {(src_id, dst_id): [path_points], ...}
+        """
+        print(f"開始全圖正交路由，處理 {len(edges_data)} 條邊線...")
+        start_time = time.time()
+        
+        # 清空用戶修改記錄（新佈局重新開始）
+        self.user_modified_edges.clear()
+        
+        # 暫時切換到佈局模式
+        original_mode = self.current_mode
+        self.set_routing_mode(RoutingMode.LAYOUT)
+        
+        try:
+            result = {}
+            obstacles = self._collect_obstacles()
+            
+            # 檢查超時
+            for i, (edge_item, start_pos, end_pos) in enumerate(edges_data):
+                if time.time() - start_time > self.timeout_ms / 1000:
+                    print(f"路由計算超時，已處理 {i}/{len(edges_data)} 條邊線")
+                    self.routing_stats['timeout_count'] += 1
+                    # 剩餘邊線使用直線
+                    for j in range(i, len(edges_data)):
+                        remaining_edge, remaining_start, remaining_end = edges_data[j]
+                        edge_key = self._get_edge_key(remaining_edge)
+                        result[edge_key] = [remaining_start, remaining_end]
+                    break
+                
+                edge_key = self._get_edge_key(edge_item)
+                path = self._route_orthogonal_safe(edge_item, start_pos, end_pos, obstacles)
+                result[edge_key] = path
+            
+            elapsed = time.time() - start_time
+            self.last_routing_time = elapsed
+            self.routing_stats['layout_count'] += 1
+            
+            print(f"全圖正交路由完成，耗時 {elapsed:.3f}s")
+            return result
+            
+        except Exception as e:
+            print(f"全圖正交路由失敗: {e}")
+            self.routing_stats['fallback_count'] += 1
+            # 全部回退到直線
+            return self._fallback_to_straight_lines(edges_data)
+        finally:
+            # 恢復原模式
+            self.set_routing_mode(original_mode)
+    
+    def mark_edge_as_user_modified(self, edge_item, path: List[QPointF]) -> None:
+        """
+        標記邊線為用戶手動修改
+        
+        當用戶手動調整邊線（拖動控制點、改成直線等）時呼叫
+        
+        Args:
+            edge_item: 邊線圖形項目
+            path: 用戶指定的路徑
+        """
+        edge_key = self._get_edge_key(edge_item)
+        self.user_modified_edges.add(edge_key)
+        
+        # 保存用戶路徑
+        edge_item._user_path = path.copy()
+        
+        print(f"邊線 {edge_key} 已標記為用戶修改")
+    
+    def _route_interactive(self, start_pos: QPointF, end_pos: QPointF) -> List[QPointF]:
+        """
+        日常互動模式：直線或簡單折線
+        
+        Args:
+            start_pos: 起始位置
+            end_pos: 結束位置
+            
+        Returns:
+            路徑點列表
+        """
+        self.routing_stats['interactive_count'] += 1
+        
+        # 對於日常互動，使用最簡單的直線
+        return [start_pos, end_pos]
+    
+    def _route_orthogonal_safe(
+        self, 
+        edge_item, 
+        start_pos: QPointF, 
+        end_pos: QPointF,
+        obstacles: List[QRectF] = None
+    ) -> List[QPointF]:
+        """
+        安全的正交路由，帶有回退機制
+        
+        Args:
+            edge_item: 邊線項目
+            start_pos: 起始位置
+            end_pos: 結束位置
+            obstacles: 障礙物列表
+            
+        Returns:
+            路徑點列表
+        """
+        try:
+            # 嘗試使用高級正交路由
+            path = self._route_orthogonal(edge_item, start_pos, end_pos, obstacles)
+            if path and len(path) >= 2:
+                return path
+        except Exception as e:
+            print(f"正交路由失敗: {e}")
+        
+        # 回退到簡單正交路由（L型或直線）
+        try:
+            return self._route_simple_orthogonal(start_pos, end_pos)
+        except Exception as e:
+            print(f"簡單正交路由失敗: {e}")
+        
+        # 最終回退到直線
+        self.routing_stats['fallback_count'] += 1
+        return [start_pos, end_pos]
+    
+    def _route_orthogonal(
+        self, 
+        edge_item, 
+        start_pos: QPointF, 
+        end_pos: QPointF,
+        obstacles: List[QRectF] = None
+    ) -> List[QPointF]:
+        """
+        正交路由實現（90度折線）
+        
+        Args:
+            edge_item: 邊線項目
+            start_pos: 起始位置
+            end_pos: 結束位置
+            obstacles: 障礙物列表
+            
+        Returns:
+            路徑點列表
+        """
+        # 如果有高級路由器，使用它
+        if self._orthogonal_router:
+            try:
+                return self._orthogonal_router.route_edge(start_pos, end_pos, obstacles)
+            except:
+                pass
+        
+        # 否則使用簡單正交路由
+        return self._route_simple_orthogonal(start_pos, end_pos)
+    
+    def _route_simple_orthogonal(self, start_pos: QPointF, end_pos: QPointF) -> List[QPointF]:
+        """
+        簡單的正交路由：L型或直線
+        
+        Args:
+            start_pos: 起始位置
+            end_pos: 結束位置
+            
+        Returns:
+            路徑點列表
+        """
+        dx = end_pos.x() - start_pos.x()
+        dy = end_pos.y() - start_pos.y()
+        
+        # 如果已經是水平或垂直的，直接連線
+        if abs(dx) < 5 or abs(dy) < 5:
+            return [start_pos, end_pos]
+        
+        # 決定走向：優先水平
+        if abs(dx) > abs(dy):
+            # 先水平後垂直
+            mid_point = QPointF(end_pos.x(), start_pos.y())
+        else:
+            # 先垂直後水平
+            mid_point = QPointF(start_pos.x(), end_pos.y())
+        
+        return [start_pos, mid_point, end_pos]
+    
+    def _collect_obstacles(self) -> List[QRectF]:
+        """
+        收集場景中的障礙物（節點邊界框）
+        
+        Returns:
+            障礙物矩形列表
+        """
+        obstacles = []
+        
+        if not self.scene:
+            return obstacles
+        
+        # 收集所有節點作為障礙物
+        for item in self.scene.items():
+            if hasattr(item, 'boundingRect') and hasattr(item, 'task_id'):
+                # 這是一個任務節點
+                rect = item.boundingRect()
+                scene_rect = item.mapRectToScene(rect)
+                # 稍微擴大邊界以避免邊線貼得太近
+                expanded_rect = scene_rect.adjusted(-10, -10, 10, 10)
+                obstacles.append(expanded_rect)
+        
+        return obstacles
+    
+    def _fallback_to_straight_lines(self, edges_data: List[Tuple]) -> Dict[Tuple[str, str], List[QPointF]]:
+        """
+        回退到直線連接
+        
+        Args:
+            edges_data: [(edge_item, start_pos, end_pos), ...]
+            
+        Returns:
+            {edge_key: [start, end], ...}
+        """
+        result = {}
+        for edge_item, start_pos, end_pos in edges_data:
+            edge_key = self._get_edge_key(edge_item)
+            result[edge_key] = [start_pos, end_pos]
+        return result
+    
+    def _get_edge_key(self, edge_item) -> Tuple[str, str]:
+        """
+        獲取邊線的唯一標識
+        
+        Args:
+            edge_item: 邊線圖形項目
+            
+        Returns:
+            (源節點ID, 目標節點ID)
+        """
+        if hasattr(edge_item, 'source_node') and hasattr(edge_item, 'target_node'):
+            src_id = getattr(edge_item.source_node, 'task_id', 'unknown')
+            dst_id = getattr(edge_item.target_node, 'task_id', 'unknown')
+            return (src_id, dst_id)
+        
+        # 回退方案
+        return (str(id(edge_item)), 'target')
+    
+    def set_orthogonal_router(self, router) -> None:
+        """
+        設置高級正交路由器
+        
+        Args:
+            router: 實現了 route_edge 方法的路由器對象
+        """
+        self._orthogonal_router = router
+        print("已設置高級正交路由器")
+    
+    def get_routing_stats(self) -> Dict:
+        """
+        獲取路由統計信息
+        
+        Returns:
+            統計信息字典
+        """
+        return {
+            **self.routing_stats,
+            'last_routing_time': self.last_routing_time,
+            'current_mode': self.current_mode.value,
+            'user_modified_count': len(self.user_modified_edges)
+        }
+    
+    def reset_user_modifications(self) -> None:
+        """重置所有用戶修改記錄"""
+        self.user_modified_edges.clear()
+        print("已重置用戶邊線修改記錄")
+
+
+# 便利函數
+def create_yed_router_manager(scene, timeout_ms: int = 2000) -> EdgeRouterManager:
+    """
+    創建 yEd 風格的路由管理器
+    
+    Args:
+        scene: DSM 場景
+        timeout_ms: 超時時間
+        
+    Returns:
+        路由管理器實例
+    """
+    manager = EdgeRouterManager(scene, timeout_ms)
+    
+    # 嘗試載入高級路由器
+    try:
+        from .advanced_routing import AdvancedEdgeRouter
+        advanced_router = AdvancedEdgeRouter()
+        manager.set_orthogonal_router(advanced_router)
+    except ImportError:
+        print("高級路由器不可用，使用簡單正交路由")
+    
+    return manager

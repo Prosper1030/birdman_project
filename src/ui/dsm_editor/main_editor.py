@@ -17,6 +17,7 @@ from .view import CanvasView
 from .nodes import TaskNode
 from .edges import EdgeItem
 from .routing import SimpleEdgeRouter
+from .edge_router_manager import EdgeRouterManager, RoutingMode
 from .layouts import layout_hierarchical
 
 
@@ -46,8 +47,8 @@ class DsmEditor(QDialog):
         self.nodes: Dict[str, TaskNode] = {}
         self.edges: Set[tuple[str, str]] = set()
 
-        # 邊線路由器
-        self.edge_router = SimpleEdgeRouter()
+        # yEd 風格邊線路由管理器
+        self.edge_router_manager = None  # 在場景建立後初始化
 
         self.setupUI()
         self.loadWbs(wbsDf)
@@ -97,6 +98,15 @@ class DsmEditor(QDialog):
         forceAction = QAction("力導向佈局(&F)", self)
         forceAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.FORCE_DIRECTED))
         layoutMenu.addAction(forceAction)
+        
+        # 邊線路由選項
+        layoutMenu.addSeparator()
+        
+        self.routingModeAction = QAction("邊線路由：佈局時正交(&R)", self)
+        self.routingModeAction.setCheckable(True)
+        self.routingModeAction.setChecked(True)  # 預設啟用
+        self.routingModeAction.triggered.connect(self.toggleRoutingMode)
+        layoutMenu.addAction(self.routingModeAction)
 
         # 檢視選單
         viewMenu = menuBar.addMenu("檢視(&V)")
@@ -120,6 +130,10 @@ class DsmEditor(QDialog):
         self.scene.setBackgroundBrush(QBrush(QColor(255, 255, 255)))
         self.view = CanvasView(self.scene)
         layout.addWidget(self.view)
+        
+        # 初始化邊線路由管理器
+        from .edge_router_manager import create_yed_router_manager
+        self.edge_router_manager = create_yed_router_manager(self.scene)
 
     def loadWbs(self, wbsDf: pd.DataFrame) -> None:
         """載入 WBS 資料"""
@@ -242,6 +256,9 @@ class DsmEditor(QDialog):
         # 佈局完成後調整場景範圍並確保內容可見
         self._updateSceneRectToFitNodes(padding=300)
         self._ensureContentVisible(margin=80)
+        
+        # 佈局完成後執行正交路由 (yEd 風格)
+        self._apply_orthogonal_routing_after_layout()
 
     def applySimpleHierarchicalLayout(self) -> None:
         """簡單階層式佈局"""
@@ -296,6 +313,9 @@ class DsmEditor(QDialog):
         
         self._updateSceneRectToFitNodes(padding=300)
         self._ensureContentVisible(margin=80)
+        
+        # 佈局完成後執行正交路由 (yEd 風格)
+        self._apply_orthogonal_routing_after_layout()
 
     def applyForceDirectedLayout(self) -> None:
         """
@@ -339,6 +359,76 @@ class DsmEditor(QDialog):
             print(f"力導向佈局失敗: {e}")
             # 回退到正交佈局
             self.applyOrthogonalLayout()
+    
+    def toggleRoutingMode(self) -> None:
+        """切換邊線路由模式"""
+        if not self.edge_router_manager:
+            return
+            
+        enabled = self.routingModeAction.isChecked()
+        if enabled:
+            self.routingModeAction.setText("邊線路由：佈局時正交(&R) ✓")
+            print("邊線路由模式：佈局時正交路由")
+        else:
+            self.routingModeAction.setText("邊線路由：日常直線(&R)")  
+            print("邊線路由模式：日常直線")
+    
+    def _apply_orthogonal_routing_after_layout(self) -> None:
+        """
+        佈局完成後執行正交路由
+        
+        這是「套用佈局」流程的最後步驟：
+        1. 節點佈局 (已完成)
+        2. 全圖正交路由 (此步驟)  
+        3. 重繪 (自動)
+        """
+        if not self.edge_router_manager or not self.routingModeAction.isChecked():
+            return
+            
+        # 收集所有邊線的資料
+        edges_data = []
+        for edge_item in self.scene.items():
+            if hasattr(edge_item, 'source_node') and hasattr(edge_item, 'target_node'):
+                start_pos = edge_item.source_node.pos()
+                end_pos = edge_item.target_node.pos()
+                edges_data.append((edge_item, start_pos, end_pos))
+        
+        if not edges_data:
+            return
+            
+        print(f"執行佈局後正交路由，處理 {len(edges_data)} 條邊線...")
+        
+        # 執行全圖正交路由
+        try:
+            routing_results = self.edge_router_manager.route_all_edges_for_layout(edges_data)
+            
+            # 應用路由結果到邊線
+            for (edge_item, _, _) in edges_data:
+                edge_key = self.edge_router_manager._get_edge_key(edge_item)
+                if edge_key in routing_results:
+                    path_points = routing_results[edge_key]
+                    self._apply_path_to_edge(edge_item, path_points)
+            
+            print("佈局後正交路由完成")
+            
+        except Exception as e:
+            print(f"正交路由執行失敗: {e}")
+    
+    def _apply_path_to_edge(self, edge_item, path_points) -> None:
+        """
+        將路由路徑應用到邊線圖形項目
+        
+        Args:
+            edge_item: 邊線圖形項目
+            path_points: 路徑點列表
+        """
+        if hasattr(edge_item, 'setPath'):
+            # 如果邊線支持設置路徑
+            edge_item.setPath(path_points)
+        elif hasattr(edge_item, 'updatePath'):
+            # 如果邊線有更新路徑的方法
+            edge_item.updatePath(path_points)
+        # 否則讓邊線自己處理 (通過更新端點位置)
 
     def _updateSceneRectToFitNodes(self, padding: int = 200) -> None:
         """將場景範圍擴張至涵蓋所有節點，避免節點被裁切。僅在佈局完成後呼叫。"""
