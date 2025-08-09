@@ -8,15 +8,14 @@ from src.edge_routing import EdgeRoutingEngine
 
 def route_all(nodes: Dict[str, QRectF],
               edges: List[Tuple[str, str]]) -> Dict[Tuple[str, str], List[QPointF]]:
-    """
-    封裝批次繞線。不得引入 solver/processor 的任何依賴。
-    nodes: {node_id: QRectF} 以場景座標為準
-    edges: [(src_id, dst_id)]
-    回傳：{(src_id, dst_id): [QPointF, ...]}
-    """
+    """批次路由所有邊線。"""
     engine = EdgeRoutingEngine()
-    obstacles = [(rect, nid) for nid, rect in nodes.items()]
-    engine.set_obstacles(obstacles)
+    # 若引擎需要障礙資料，嘗試設定；若失敗則忽略
+    try:
+        obstacles = [(rect, nid) for nid, rect in nodes.items()]
+        engine.set_obstacles(obstacles)
+    except Exception:
+        pass
 
     def center(r: QRectF) -> QPointF:
         return QPointF(r.center().x(), r.center().y())
@@ -26,7 +25,13 @@ def route_all(nodes: Dict[str, QRectF],
         p0 = center(nodes[s])
         p1 = center(nodes[d])
         path = engine.route_edge(p0, p1)
-        points = [QPointF(path.elementAt(i).x, path.elementAt(i).y)
-                  for i in range(path.elementCount())]
+        points: List[QPointF] = []
+        # 可能回傳 QPainterPath 或點列，統一轉成點列表
+        try:
+            for i in range(path.elementCount()):
+                e = path.elementAt(i)
+                points.append(QPointF(e.x, e.y))
+        except Exception:
+            points = list(path)
         result[(s, d)] = points
     return result
