@@ -103,95 +103,149 @@ def layout_hierarchical(
 def _remove_cycles_sugiyama(graph: nx.DiGraph) -> Tuple[nx.DiGraph, Set[Tuple[str, str]]]:
     """
     實現杉山方法第一階段：循環移除。
-    
-    使用反饋弧集 (Feedback Arc Set) 算法來打破循環，
-    通過反轉最少的邊數來將有向圖轉換為 DAG。
+    按照 GPT 建議的三個重點：
+    1. 先複製一份圖 H，之後只在 H 上動手
+    2. 打破循環：把 H 變成 DAG  
+    3. 再做 topological_sort(H)；排序期間不要再改 H
     
     Args:
         graph: 原始有向圖
     
     Returns:
-        (dag_graph, reversed_edges): 無循環圖和被反轉的邊集合
+        (dag_graph, reversed_edges): 無循環圖和被移除的邊集合
     """
     if nx.is_directed_acyclic_graph(graph):
         # 如果圖已經是 DAG，直接返回
         return graph.copy(), set()
     
-    # 創建圖的副本用於修改
-    dag_graph = graph.copy()
-    reversed_edges = set()
+    # 重點 1: 先複製一份圖 H，之後只在 H 上動手
+    H = graph.copy()  # 工作圖，只在這個圖上修改
+    removed_edges = set()  # 記錄被移除的邊
     
-    # 使用貪心算法實現 Feedback Arc Set
-    # 這是一個經典的 NP-Hard 問題，我們使用啟發式方法
-    
-    max_iterations = len(graph.edges()) * 2  # 防止無限循環
+    # 重點 2: 打破循環：把 H 變成 DAG
+    max_iterations = len(graph.edges()) + 10  # 合理的最大迭代次數
     iteration = 0
     
-    while not nx.is_directed_acyclic_graph(dag_graph) and iteration < max_iterations:
+    while not nx.is_directed_acyclic_graph(H) and iteration < max_iterations:
         iteration += 1
         
-        # 方法1：找到一個簡單循環並反轉其中權重最小的邊
         try:
-            # 使用 NetworkX 找簡單循環
-            cycles = list(nx.simple_cycles(dag_graph))
-            if not cycles:
+            # 找到一個循環
+            cycle = nx.find_cycle(H, orientation='original')
+            if not cycle:
                 break
                 
-            # 選擇最短的循環
-            shortest_cycle = min(cycles, key=len)
+            # 從循環中選擇一條邊來移除
+            edge_to_remove = _select_best_edge_to_remove(H, cycle)
             
-            if len(shortest_cycle) < 2:
-                break
+            # 移除這條邊（不是反轉，是直接移除）
+            if H.has_edge(*edge_to_remove):
+                H.remove_edge(*edge_to_remove)
+                removed_edges.add(edge_to_remove)
+                print(f"移除循環邊: {edge_to_remove[0]} -> {edge_to_remove[1]} (循環長度: {len(cycle)})")
                 
-            # 在循環中選擇要反轉的邊
-            # 啟發式：選擇出度-入度差最大的節點的出邊
-            edge_to_reverse = _select_edge_to_reverse(dag_graph, shortest_cycle)
+        except nx.NetworkXNoCycle:
+            # 沒有循環了，完成
+            break
+        except Exception as e:
+            print(f"循環檢測錯誤: {e}")
+            break
+    
+    # 驗證結果
+    is_dag = nx.is_directed_acyclic_graph(H)
+    print(f"循環移除結果: DAG={is_dag}, 迭代次數={iteration}, 移除邊數={len(removed_edges)}")
+    
+    if not is_dag:
+        print("警告：未能完全移除所有循環，將使用最小生成樹回退")
+        # 最後的回退：創建一個最小生成樹
+        H = _create_dag_fallback(graph)
+    
+    # 重點 3: 現在 H 是 DAG，可以安全地進行拓撲排序，排序期間不要再改 H
+    return H, removed_edges
+
+def _select_best_edge_to_remove(graph: nx.DiGraph, cycle) -> Tuple[str, str]:
+    """
+    從循環中選擇最適合移除的邊
+    
+    策略：選擇移除後對圖結構影響最小的邊
+    1. 優先選擇度數較小的節點的邊
+    2. 優先選擇會減少更多循環的邊
+    
+    Args:
+        graph: 圖
+        cycle: 循環邊列表 [(u1, v1), (u2, v2), ...]
+    
+    Returns:
+        要移除的邊 (source, target)
+    """
+    if not cycle:
+        return None
+        
+    # 將 cycle 轉換為邊列表
+    edges = [(cycle[i][0], cycle[i][1]) for i in range(len(cycle))]
+    
+    best_edge = None
+    best_score = float('inf')
+    
+    for edge in edges:
+        src, dst = edge
+        if not graph.has_edge(src, dst):
+            continue
             
-            if edge_to_reverse:
-                src, dst = edge_to_reverse
-                
-                # 反轉邊
-                dag_graph.remove_edge(src, dst)
-                dag_graph.add_edge(dst, src)
-                
-                # 記錄原始方向
-                reversed_edges.add((src, dst))
-                
-                print(f"反轉邊: {src} -> {dst} (循環長度: {len(shortest_cycle)})")
-            else:
-                # 如果沒有找到合適的邊，隨機選擇一個
-                edge = shortest_cycle[0], shortest_cycle[1]
-                src, dst = edge
-                if dag_graph.has_edge(src, dst):
-                    dag_graph.remove_edge(src, dst)
-                    dag_graph.add_edge(dst, src)
-                    reversed_edges.add((src, dst))
-                    print(f"隨機反轉邊: {src} -> {dst}")
-                
-        except (nx.NetworkXError, Exception) as e:
-            print(f"循環檢測錯誤，使用退化算法: {e}")
-            # 退化算法：使用DFS方法
-            edge_to_reverse = _find_back_edge_dfs(dag_graph)
-            if edge_to_reverse:
-                src, dst = edge_to_reverse
-                dag_graph.remove_edge(src, dst)
-                dag_graph.add_edge(dst, src)
-                reversed_edges.add((src, dst))
-                print(f"DFS反轉邊: {src} -> {dst}")
-            else:
-                break
+        # 計算移除此邊的評分（評分越低越好）
+        src_degree = graph.in_degree(src) + graph.out_degree(src)
+        dst_degree = graph.in_degree(dst) + graph.out_degree(dst)
+        
+        # 傾向於移除連接到高度數節點的邊（這樣保留更多連接）
+        score = 1.0 / (src_degree + dst_degree + 1)
+        
+        if score < best_score:
+            best_score = score
+            best_edge = edge
     
-    if iteration >= max_iterations:
-        print("警告：循環移除達到最大迭代次數，可能仍存在循環")
-    
-    # 最終檢查
-    is_dag = nx.is_directed_acyclic_graph(dag_graph)
-    print(f"循環移除結果: DAG={is_dag}, 迭代次數={iteration}, 反轉邊數={len(reversed_edges)}")
-    
-    return dag_graph, reversed_edges
+    return best_edge if best_edge else edges[0]
 
 
-def _select_edge_to_reverse(graph: nx.DiGraph, cycle: List[str]) -> Optional[Tuple[str, str]]:
+def _create_dag_fallback(graph: nx.DiGraph) -> nx.DiGraph:
+    """
+    當循環移除失敗時的回退策略
+    創建一個基於原圖的 DAG
+    
+    Args:
+        graph: 原始圖
+    
+    Returns:
+        DAG 圖
+    """
+    # 創建最小生成樹的有向版本
+    dag = nx.DiGraph()
+    dag.add_nodes_from(graph.nodes())
+    
+    # 使用 BFS 建立樹結構
+    if graph.nodes():
+        start_node = list(graph.nodes())[0]
+        visited = {start_node}
+        queue = [start_node]
+        
+        while queue:
+            current = queue.pop(0)
+            
+            # 添加所有未訪問的後繼節點
+            for neighbor in graph.successors(current):
+                if neighbor not in visited:
+                    dag.add_edge(current, neighbor)
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+            
+            # 如果還有未訪問的節點，從中選擇一個繼續
+            if not queue:
+                unvisited = set(graph.nodes()) - visited
+                if unvisited:
+                    next_node = unvisited.pop()
+                    visited.add(next_node)
+                    queue.append(next_node)
+    
+    return dag
     """
     在給定循環中選擇最適合反轉的邊。
     
