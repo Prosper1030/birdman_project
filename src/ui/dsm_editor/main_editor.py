@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Dict, Set, List
 import pandas as pd
-import networkx as nx
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush, QKeySequence
 from PyQt5.QtWidgets import (
@@ -16,9 +15,7 @@ from .scene import DsmScene
 from .view import CanvasView
 from .nodes import TaskNode
 from .edges import EdgeItem
-from .routing import SimpleEdgeRouter
-from .edge_router_manager import EdgeRouterManager, RoutingMode
-from .layouts import layout_hierarchical, layout_hierarchical_with_info
+from .layouts import layout_hierarchical_with_info
 
 
 class DsmEditor(QDialog):
@@ -399,7 +396,8 @@ class DsmEditor(QDialog):
         if isolated_spacing is not None:
             self.isolated_spacing = isolated_spacing
 
-        print(f"佈局參數 - 層間距: {self.layer_spacing}, 節點間距: {self.node_spacing}, 孤立節點間距: {self.isolated_spacing}")
+        print(f"佈局參數 - 層間距: {self.layer_spacing}, "
+              f"節點間距: {self.node_spacing}, 孤立節點間距: {self.isolated_spacing}")
 
     def enableOrthogonalRouting(self, enabled: bool = True) -> None:
         """

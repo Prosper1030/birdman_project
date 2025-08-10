@@ -14,24 +14,24 @@ from .commands import RemoveEdgeCommand
 
 class GlowArrowHead(QGraphicsPathItem):
     """支援發光效果的箭頭"""
-    
+
     def __init__(self, parent_edge):
         super().__init__()
         self.parent_edge = parent_edge
-        
+
     def paint(self, painter, option, widget=None):
         """繪製發光箭頭 - 支援所有狀態"""
         try:
             # 移除預設選取框
             from PyQt5.QtWidgets import QStyle
             option.state &= ~QStyle.State_Selected
-            
+
             if not self.path().isEmpty():
                 # 判斷父邊線的狀態
                 is_selected = getattr(self.parent_edge, '_is_selected', False)
                 is_shift_highlighted = getattr(self.parent_edge, '_is_shift_highlighted', False)
                 is_hovered = getattr(self.parent_edge, '_is_hovered', False)
-                
+
                 # 繪製發光效果（與父邊線同步）
                 if is_shift_highlighted:
                     # Shift + 懸停：最亮的發光效果
@@ -40,13 +40,13 @@ class GlowArrowHead(QGraphicsPathItem):
                     painter.setBrush(glow_brush)
                     painter.setPen(glow_pen)
                     painter.drawPath(self.path())
-                    
+
                     mid_brush = QBrush(QColor(255, 200, 50, 200))
                     mid_pen = QPen(QColor(255, 200, 50, 200), 2)
                     painter.setBrush(mid_brush)
                     painter.setPen(mid_pen)
                     painter.drawPath(self.path())
-                    
+
                 elif is_selected:
                     # 選取狀態：橘色發光效果
                     glow_brush = QBrush(QColor(255, 165, 0, 120))
@@ -54,13 +54,13 @@ class GlowArrowHead(QGraphicsPathItem):
                     painter.setBrush(glow_brush)
                     painter.setPen(glow_pen)
                     painter.drawPath(self.path())
-                    
+
                     mid_brush = QBrush(QColor(255, 165, 0, 180))
                     mid_pen = QPen(QColor(255, 165, 0, 180), 1)
                     painter.setBrush(mid_brush)
                     painter.setPen(mid_pen)
                     painter.drawPath(self.path())
-                    
+
                 elif is_hovered:
                     # 普通懸停：淡淡的發光
                     glow_brush = QBrush(QColor(255, 165, 0, 80))
@@ -68,12 +68,12 @@ class GlowArrowHead(QGraphicsPathItem):
                     painter.setBrush(glow_brush)
                     painter.setPen(glow_pen)
                     painter.drawPath(self.path())
-                
+
                 # 永遠繪製主要黑色箭頭
                 painter.setBrush(QBrush(Qt.black))
                 painter.setPen(QPen(Qt.black, 1))
                 painter.drawPath(self.path())
-                
+
         except Exception as e:
             print(f"GlowArrowHead paint error: {e}")
             super().paint(painter, option, widget)
@@ -81,7 +81,7 @@ class GlowArrowHead(QGraphicsPathItem):
 
 class EdgeItem(QGraphicsPathItem):
     """代表依賴關係的箭頭連線 - 精確連線版本"""
-    
+
     # 精確度常數（從 opus 改進方案）
     PRECISION_TOLERANCE = 0.01
     ARROW_SIZE = 15
@@ -112,7 +112,7 @@ class EdgeItem(QGraphicsPathItem):
         self.arrowHead = GlowArrowHead(self)
         self.arrowHead.setZValue(2)
         self.arrowHead.setParentItem(self)
-        
+
         # 精確連線系統：效能優化快取
         self._cached_src_point = None
         self._cached_dst_point = None
@@ -134,7 +134,7 @@ class EdgeItem(QGraphicsPathItem):
     def updatePath(self, custom_ports=None) -> None:
         """
         更新路徑 - 支援 yEd 式精確端口
-        
+
         Args:
             custom_ports: Optional[(src_x, src_y), (dst_x, dst_y)] 來自佈局引擎的精確端口座標
         """
@@ -145,7 +145,7 @@ class EdgeItem(QGraphicsPathItem):
         if custom_ports and len(custom_ports) == 2:
             srcPoint = QPointF(custom_ports[0][0], custom_ports[0][1])
             dstPoint = QPointF(custom_ports[1][0], custom_ports[1][1])
-            
+
             # 建立路徑（跳過快取檢查）
             self._buildPath(srcPoint, dstPoint)
             print(f"使用精確端口 - 源: {custom_ports[0]}, 目標: {custom_ports[1]}")
@@ -154,25 +154,25 @@ class EdgeItem(QGraphicsPathItem):
         # 獲取節點邊界
         srcRect = self.src.sceneBoundingRect()
         dstRect = self.dst.sceneBoundingRect()
-        
+
         # 檢查快取
-        if (self._cached_src_rect == srcRect and 
+        if (self._cached_src_rect == srcRect and
             self._cached_dst_rect == dstRect and
             self._cached_src_point and self._cached_dst_point):
             return  # 使用快取結果
-        
+
         # 計算連線點（備用方法）
         srcPoint, dstPoint = self._calculateConnectionPoints(srcRect, dstRect)
-        
+
         if not srcPoint or not dstPoint:
             return
-        
+
         # 快取結果
         self._cached_src_rect = QRectF(srcRect)
         self._cached_dst_rect = QRectF(dstRect)
         self._cached_src_point = srcPoint
         self._cached_dst_point = dstPoint
-        
+
         # 建立路徑
         self._buildPath(srcPoint, dstPoint)
 
@@ -180,15 +180,15 @@ class EdgeItem(QGraphicsPathItem):
         """計算源和目標的精確連線點（opus 改進）"""
         srcCenter = srcRect.center()
         dstCenter = dstRect.center()
-        
+
         # 使用中心線計算交點
         centerLine = QLineF(srcCenter, dstCenter)
-        
+
         # 計算源點
         srcPoint = self._getRectLineIntersection(srcRect, centerLine, True)
         if not srcPoint:
             srcPoint = self._getAlternativeConnectionPoint(srcRect, srcCenter, dstCenter, True)
-        
+
         # 基於源點重新計算到目標的線
         if srcPoint:
             adjustedLine = QLineF(srcPoint, dstCenter)
@@ -197,9 +197,9 @@ class EdgeItem(QGraphicsPathItem):
                 dstPoint = self._getAlternativeConnectionPoint(dstRect, dstCenter, srcPoint, False)
         else:
             dstPoint = None
-        
+
         return srcPoint, dstPoint
-    
+
     def _getRectLineIntersection(self, rect: QRectF, line: QLineF, isSource: bool):
         """計算線與矩形的精確交點（opus 改進）"""
         # 定義矩形的四條邊
@@ -209,80 +209,80 @@ class EdgeItem(QGraphicsPathItem):
             QLineF(rect.bottomRight(), rect.bottomLeft()), # 下
             QLineF(rect.bottomLeft(), rect.topLeft())      # 左
         ]
-        
+
         intersections = []
-        
+
         for edge in edges:
             intersectType, intersectPoint = edge.intersects(line)
-            
+
             # 只接受有界交點
             if intersectType == QLineF.BoundedIntersection:
                 # 驗證交點確實在邊上（處理浮點誤差）
                 if self._isPointOnEdge(intersectPoint, edge):
                     intersections.append(intersectPoint)
-        
+
         if not intersections:
             return None
-        
+
         # 選擇最合適的交點
         if len(intersections) == 1:
             return intersections[0]
-        
+
         # 多個交點時，選擇策略
         if isSource:
             # 源節點：選擇離目標最近的點
             targetPoint = line.p2()
-            return min(intersections, 
+            return min(intersections,
                       key=lambda p: QLineF(p, targetPoint).length())
         else:
             # 目標節點：選擇離源最近的點
             sourcePoint = line.p1()
-            return min(intersections, 
+            return min(intersections,
                       key=lambda p: QLineF(sourcePoint, p).length())
-    
+
     def _isPointOnEdge(self, point: QPointF, edge: QLineF) -> bool:
         """檢查點是否真的在邊上（考慮浮點誤差）"""
         # 計算點到線段的距離
         lineVec = edge.p2() - edge.p1()
         pointVec = point - edge.p1()
         lineLength = edge.length()
-        
+
         if lineLength < self.PRECISION_TOLERANCE:
             return False
-        
+
         # 計算投影
         t = QPointF.dotProduct(pointVec, lineVec) / (lineLength * lineLength)
-        
+
         # 檢查t是否在[0,1]範圍內
         if t < -self.PRECISION_TOLERANCE or t > 1 + self.PRECISION_TOLERANCE:
             return False
-        
+
         # 計算投影點
         projection = edge.p1() + t * lineVec
-        
+
         # 計算距離
         distance = QLineF(point, projection).length()
-        
+
         return distance < self.PRECISION_TOLERANCE
-    
-    def _getAlternativeConnectionPoint(self, rect: QRectF, rectCenter: QPointF, 
+
+    def _getAlternativeConnectionPoint(self, rect: QRectF, rectCenter: QPointF,
                                      otherPoint: QPointF, isSource: bool) -> QPointF:
         """備用方法：當標準方法失敗時計算連線點（opus 改進）"""
         # 計算方向
         dx = otherPoint.x() - rectCenter.x()
         dy = otherPoint.y() - rectCenter.y()
-        
+
         if abs(dx) < self.PRECISION_TOLERANCE and abs(dy) < self.PRECISION_TOLERANCE:
             return rectCenter
-        
+
         # 確定主要方向並計算交點
         halfWidth = rect.width() / 2
         halfHeight = rect.height() / 2
-        
+
         # 使用斜率判斷
         if abs(dx) > self.PRECISION_TOLERANCE:
             slope = dy / dx
-            
+
             # 檢查與垂直邊的交點
             if dx > 0:  # 向右
                 y_at_right = rectCenter.y() + slope * halfWidth
@@ -292,11 +292,11 @@ class EdgeItem(QGraphicsPathItem):
                 y_at_left = rectCenter.y() - slope * halfWidth
                 if abs(y_at_left - rectCenter.y()) <= halfHeight:
                     return QPointF(rect.left(), y_at_left)
-        
+
         # 檢查與水平邊的交點
         if abs(dy) > self.PRECISION_TOLERANCE:
             inv_slope = dx / dy
-            
+
             if dy > 0:  # 向下
                 x_at_bottom = rectCenter.x() + inv_slope * halfHeight
                 if abs(x_at_bottom - rectCenter.x()) <= halfWidth:
@@ -305,10 +305,10 @@ class EdgeItem(QGraphicsPathItem):
                 x_at_top = rectCenter.x() - inv_slope * halfHeight
                 if abs(x_at_top - rectCenter.x()) <= halfWidth:
                     return QPointF(x_at_top, rect.top())
-        
+
         # 最後的備用：返回最近的邊中點
         return self._getNearestEdgeMidpoint(rect, otherPoint)
-    
+
     def _getNearestEdgeMidpoint(self, rect: QRectF, point: QPointF) -> QPointF:
         """獲取最近的邊中點作為連線點（opus 改進）"""
         midpoints = [
@@ -317,9 +317,9 @@ class EdgeItem(QGraphicsPathItem):
             QPointF(rect.center().x(), rect.bottom()),   # 下中
             QPointF(rect.left(), rect.center().y())      # 左中
         ]
-        
+
         return min(midpoints, key=lambda p: QLineF(p, point).length())
-    
+
     def _buildPath(self, srcPoint: QPointF, dstPoint: QPointF) -> None:
         """建立連線路徑並更新箭頭（opus 改進）- 支援雙向邊線分離"""
         # 檢查是否有相反方向的邊線
@@ -328,37 +328,37 @@ class EdgeItem(QGraphicsPathItem):
             reverse_key = (self.dst.taskId, self.src.taskId)
             if reverse_key in self.src.editor.edges:
                 reverse_edge_exists = True
-        
+
         # 計算調整後的終點（避免箭頭穿透）
         direction = dstPoint - srcPoint
         length = math.sqrt(direction.x()**2 + direction.y()**2)
-        
+
         if length > self.PRECISION_TOLERANCE:
             direction /= length  # 正規化
             adjustedDst = dstPoint - direction * self.ARROW_BACK_OFFSET
-            
+
             # 如果有相反方向邊線，調整路徑避免重疊
             if reverse_edge_exists:
                 # 計算垂直於連線方向的偏移向量
                 perpendicular = QPointF(-direction.y(), direction.x())
                 offset_distance = 8  # 偏移 8 像素
-                
+
                 # 偏移起點和終點
                 srcPoint = srcPoint + perpendicular * offset_distance
                 adjustedDst = adjustedDst + perpendicular * offset_distance
                 dstPoint = dstPoint + perpendicular * offset_distance
         else:
             adjustedDst = dstPoint
-        
+
         # 建立路徑
         path = QPainterPath()
         path.moveTo(srcPoint)
         path.lineTo(adjustedDst)
         self.setPath(path)
-        
+
         # 更新箭頭
         self._updateArrowHead(srcPoint, dstPoint)
-    
+
     def getConnectionPoint(self, rect, center, dx, dy):
         """保留的相容性方法 - 現在調用更精確的方法"""
         targetPoint = QPointF(center.x() + dx * 1000, center.y() + dy * 1000)
@@ -369,35 +369,35 @@ class EdgeItem(QGraphicsPathItem):
         # 計算方向角度
         dx = dstPos.x() - srcPos.x()
         dy = dstPos.y() - srcPos.y()
-        
+
         if abs(dx) < self.PRECISION_TOLERANCE and abs(dy) < self.PRECISION_TOLERANCE:
             self.arrowHead.setPath(QPainterPath())
             return
-        
+
         angle = math.atan2(dy, dx)
-        
+
         # 計算箭頭三個頂點
         tip = dstPos  # 箭頭尖端精確在節點邊緣
-        
+
         left = QPointF(
             tip.x() - self.ARROW_SIZE * math.cos(angle - self.ARROW_ANGLE),
             tip.y() - self.ARROW_SIZE * math.sin(angle - self.ARROW_ANGLE)
         )
-        
+
         right = QPointF(
             tip.x() - self.ARROW_SIZE * math.cos(angle + self.ARROW_ANGLE),
             tip.y() - self.ARROW_SIZE * math.sin(angle + self.ARROW_ANGLE)
         )
-        
+
         # 建立箭頭路徑
         arrowPath = QPainterPath()
         arrowPath.moveTo(tip)
         arrowPath.lineTo(left)
         arrowPath.lineTo(right)
         arrowPath.closeSubpath()
-        
+
         self.arrowHead.setPath(arrowPath)
-    
+
     def updateArrowHead(self, srcPos, dstPos, adjustedDstPos=None):
         """保留的相容性方法 - 調用新的精確實作"""
         self._updateArrowHead(srcPos, dstPos)
@@ -409,14 +409,14 @@ class EdgeItem(QGraphicsPathItem):
             from PyQt5.QtWidgets import QApplication
             modifiers = QApplication.keyboardModifiers()
             shift_pressed = modifiers & Qt.ShiftModifier
-            
+
             if shift_pressed:
                 # Shift + 懸停：設定發亮狀態
                 self._is_shift_highlighted = True
             else:
                 # 普通懸停
                 self._is_hovered = True
-            
+
             # 觸發重繪
             self.update()
             if hasattr(self, 'arrowHead') and self.arrowHead:
@@ -429,7 +429,7 @@ class EdgeItem(QGraphicsPathItem):
             # 清除懸停狀態
             self._is_hovered = False
             self._is_shift_highlighted = False
-            
+
             # 觸發重繪
             self.update()
             if hasattr(self, 'arrowHead') and self.arrowHead:
@@ -443,18 +443,18 @@ class EdgeItem(QGraphicsPathItem):
             from PyQt5.QtWidgets import QApplication
             modifiers = QApplication.keyboardModifiers()
             shift_pressed = modifiers & Qt.ShiftModifier
-            
+
             current_selected = getattr(self, '_is_selected', False)
-            
+
             if shift_pressed:
                 # Shift 多選模式：切換當前邊線狀態，保持其他選取
                 self._is_selected = not current_selected
-                
+
                 # 觸發重繪（先更新視覺）
                 self.update()
                 if hasattr(self, 'arrowHead') and self.arrowHead:
                     self.arrowHead.update()
-                
+
                 # 確保其他已選中的邊線保持選中狀態和視覺效果
                 scene = self.scene()
                 selected_count = 0
@@ -468,7 +468,7 @@ class EdgeItem(QGraphicsPathItem):
                             item.update()
                             if hasattr(item, 'arrowHead') and item.arrowHead:
                                 item.arrowHead.update()
-                
+
                 print(f"[Shift多選] 邊線 {self.src.taskId} -> {self.dst.taskId} {'選取' if self._is_selected else '取消選取'}")
                 print(f"    當前選取的邊線: {selected_edges} (總共: {selected_count})")
             else:
@@ -482,7 +482,7 @@ class EdgeItem(QGraphicsPathItem):
                                 item.update()
                                 if hasattr(item, 'arrowHead') and item.arrowHead:
                                     item.arrowHead.update()
-                
+
                 # 單選模式：直接選中當前邊線（不切換）
                 if not current_selected:
                     self._is_selected = True
@@ -491,17 +491,17 @@ class EdgeItem(QGraphicsPathItem):
                     # 如果已選中，則取消選取
                     self._is_selected = False
                     print(f"[單選] 邊線 {self.src.taskId} -> {self.dst.taskId} 取消選取")
-            
+
             # 清除懸停狀態（避免視覺衝突）
             self._is_hovered = False
             self._is_shift_highlighted = False
-            
+
             # 如果不是 Shift 模式，需要重繪（Shift 模式已經重繪過了）
             if not shift_pressed:
                 self.update()
                 if hasattr(self, 'arrowHead') and self.arrowHead:
                     self.arrowHead.update()
-            
+
             event.accept()
         else:
             super().mousePressEvent(event)
@@ -537,28 +537,28 @@ class EdgeItem(QGraphicsPathItem):
             if editor:
                 command = RemoveEdgeCommand(editor, self)
                 editor.executeCommand(command)
-    
+
     def itemChange(self, change, value):
         """處理邊線狀態變化 - 真正 yEd 風格：黑線 + 橘色發光"""
         if change == QGraphicsItem.ItemSelectedChange:
             self._is_selected = value
             # 更新重繪，讓 paint() 方法處理視覺效果
             self.update()
-                
+
         return super().itemChange(change, value)
-    
+
     def paint(self, painter, option, widget=None):
         """自訂繪製方法 - 實現 yEd 風格發光效果"""
         try:
             # 移除 Qt 預設選取框
             from PyQt5.QtWidgets import QStyle
             option.state &= ~QStyle.State_Selected
-            
+
             # 判斷當前狀態
             is_selected = getattr(self, '_is_selected', False)
             is_shift_highlighted = getattr(self, '_is_shift_highlighted', False)
             is_hovered = getattr(self, '_is_hovered', False)
-            
+
             # 繪製發光效果
             if is_shift_highlighted:
                 # Shift + 懸停：最亮的發光效果
@@ -567,13 +567,13 @@ class EdgeItem(QGraphicsPathItem):
                 glow_pen.setJoinStyle(Qt.RoundJoin)
                 painter.setPen(glow_pen)
                 painter.drawPath(self.path())
-                
+
                 mid_glow_pen = QPen(QColor(255, 200, 50, 200), 6, Qt.SolidLine)
                 mid_glow_pen.setCapStyle(Qt.RoundCap)
                 mid_glow_pen.setJoinStyle(Qt.RoundJoin)
                 painter.setPen(mid_glow_pen)
                 painter.drawPath(self.path())
-                
+
             elif is_selected:
                 # 選取狀態：橘色發光效果
                 glow_pen = QPen(QColor(255, 165, 0, 120), 8, Qt.SolidLine)  # 半透明橘色
@@ -581,13 +581,13 @@ class EdgeItem(QGraphicsPathItem):
                 glow_pen.setJoinStyle(Qt.RoundJoin)
                 painter.setPen(glow_pen)
                 painter.drawPath(self.path())
-                
+
                 mid_glow_pen = QPen(QColor(255, 165, 0, 180), 5, Qt.SolidLine)
                 mid_glow_pen.setCapStyle(Qt.RoundCap)
                 mid_glow_pen.setJoinStyle(Qt.RoundJoin)
                 painter.setPen(mid_glow_pen)
                 painter.drawPath(self.path())
-                
+
             elif is_hovered:
                 # 普通懸停：淡淡的發光
                 glow_pen = QPen(QColor(255, 165, 0, 80), 4, Qt.SolidLine)  # 很淡的橘色
@@ -595,64 +595,64 @@ class EdgeItem(QGraphicsPathItem):
                 glow_pen.setJoinStyle(Qt.RoundJoin)
                 painter.setPen(glow_pen)
                 painter.drawPath(self.path())
-            
+
             # 永遠繪製主要黑色邊線
             main_pen = QPen(Qt.black, 2, Qt.SolidLine)
             main_pen.setCapStyle(Qt.RoundCap)
             main_pen.setJoinStyle(Qt.RoundJoin)
             painter.setPen(main_pen)
             painter.drawPath(self.path())
-            
+
         except Exception as e:
             print(f"EdgeItem paint error: {e}")
             # 回退到預設繪製
             super().paint(painter, option, widget)
-    
+
     def shape(self):
         """定義擴大的選取區域 - 包含箭頭和粗線條"""
         try:
             path = QPainterPath()
-            
+
             if not self.path().isEmpty():
                 # 創建擴大的線條選取區域
                 stroker = QPainterPathStroker()
                 stroker.setWidth(max(12, self.pen().width() * 2))  # 至少12像素寬的選取區域
                 stroker.setCapStyle(Qt.RoundCap)
                 stroker.setJoinStyle(Qt.RoundJoin)
-                
+
                 # 為主線條創建粗選取路徑
                 thick_path = stroker.createStroke(self.path())
                 path.addPath(thick_path)
-                
+
                 # 添加箭頭的選取區域
                 if hasattr(self, 'arrowHead') and self.arrowHead and not self.arrowHead.path().isEmpty():
                     arrow_path = self.arrowHead.path()
-                    
+
                     # 為箭頭創建擴大的選取區域
                     arrow_stroker = QPainterPathStroker()
                     arrow_stroker.setWidth(10)  # 箭頭周圍10像素選取區域
                     arrow_stroker.setCapStyle(Qt.RoundCap)
                     arrow_stroker.setJoinStyle(Qt.RoundJoin)
-                    
+
                     expanded_arrow = arrow_stroker.createStroke(arrow_path)
                     path.addPath(expanded_arrow)
-                    
+
                     # 也包含箭頭本身的填充區域
                     path.addPath(arrow_path)
-            
+
             return path if not path.isEmpty() else super().shape()
-            
+
         except Exception as e:
             print(f"Edge shape calculation error: {e}")
             # 安全回退到預設行為
             return super().shape()
-    
+
     def boundingRect(self):
         """返回包含擴大選取區域的邊界矩形"""
         try:
             # 使用 shape() 的邊界
             shape_rect = self.shape().boundingRect()
-            
+
             if not shape_rect.isEmpty():
                 # 再稍微擴大邊界以確保完全包含
                 margin = 5
@@ -660,7 +660,7 @@ class EdgeItem(QGraphicsPathItem):
             else:
                 # 回退到預設行為
                 return super().boundingRect()
-                
+
         except Exception as e:
             print(f"Edge boundingRect calculation error: {e}")
             return super().boundingRect()
