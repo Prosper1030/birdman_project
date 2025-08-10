@@ -102,7 +102,7 @@ class EdgeItem(QGraphicsPathItem):
         self.tempPen = QPen(Qt.gray, 2, Qt.DashLine)
 
         self.setPen(self.normalPen)
-        self.setZValue(1)
+        self.setZValue(5)  # 提高邊線的 Z 值，確保在節點下方但高於背景
 
         # 設定旗標
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
@@ -110,7 +110,7 @@ class EdgeItem(QGraphicsPathItem):
 
         # 建立箭頭 - 使用自定義類別支援發光效果
         self.arrowHead = GlowArrowHead(self)
-        self.arrowHead.setZValue(2)
+        self.arrowHead.setZValue(15)  # 確保箭頭在所有節點之上
         self.arrowHead.setParentItem(self)
 
         # 精確連線系統：效能優化快取
@@ -365,7 +365,10 @@ class EdgeItem(QGraphicsPathItem):
         return self._getAlternativeConnectionPoint(rect, center, targetPoint, True)
 
     def _updateArrowHead(self, srcPos: QPointF, dstPos: QPointF) -> None:
-        """更新箭頭形狀，確保精確指向目標（opus 改進）"""
+        """
+        更新箭頭形狀，確保精確指向目標（opus 改進）
+        修正：確保箭頭在節點邊界上而不是端口內部
+        """
         # 計算方向角度
         dx = dstPos.x() - srcPos.x()
         dy = dstPos.y() - srcPos.y()
@@ -376,8 +379,34 @@ class EdgeItem(QGraphicsPathItem):
 
         angle = math.atan2(dy, dx)
 
-        # 計算箭頭三個頂點
-        tip = dstPos  # 箭頭尖端精確在節點邊緣
+        # 確保箭頭 tip 在目標節點的實際邊界上
+        # 如果使用了精確端口，需要調整箭頭位置避免被節點遮擋
+        if hasattr(self, 'dst') and self.dst:
+            dst_rect = self.dst.sceneBoundingRect()
+            dst_center = dst_rect.center()
+
+            # 計算從目標節點中心到端口的方向
+            to_port_dx = dstPos.x() - dst_center.x()
+            to_port_dy = dstPos.y() - dst_center.y()
+
+            # 如果端口在節點內部（距中心很近），將箭頭移到邊界上
+            distance_to_center = math.sqrt(to_port_dx**2 + to_port_dy**2)
+            node_radius = min(dst_rect.width(), dst_rect.height()) / 2
+
+            if distance_to_center < node_radius * 0.8:  # 端口在節點內部
+                # 將箭頭 tip 移動到節點邊界
+                direction = QPointF(dx, dy)
+                length = math.sqrt(dx**2 + dy**2)
+                if length > 0:
+                    direction /= length
+                    # 箭頭 tip 位於節點邊界上
+                    tip = dst_center + direction * (node_radius - 2)
+                else:
+                    tip = dstPos
+            else:
+                tip = dstPos  # 使用端口位置
+        else:
+            tip = dstPos  # 備用：使用目標位置
 
         left = QPointF(
             tip.x() - self.ARROW_SIZE * math.cos(angle - self.ARROW_ANGLE),

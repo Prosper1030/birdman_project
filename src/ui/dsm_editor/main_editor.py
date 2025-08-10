@@ -97,12 +97,6 @@ class DsmEditor(QDialog):
         hierarchicalAction.triggered.connect(self.showHierarchicalLayoutDialog)
         layoutMenu.addAction(hierarchicalAction)
 
-        # 快速階層佈局（使用當前設定）
-        quickHierarchicalAction = QAction("快速階層佈局", self)
-        quickHierarchicalAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.HIERARCHICAL))
-        quickHierarchicalAction.setShortcut("Ctrl+H")
-        layoutMenu.addAction(quickHierarchicalAction)
-
         orthogonalAction = QAction("正交式佈局(&O)", self)
         orthogonalAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.ORTHOGONAL))
         layoutMenu.addAction(orthogonalAction)
@@ -110,22 +104,6 @@ class DsmEditor(QDialog):
         forceAction = QAction("力導向佈局(&F)", self)
         forceAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.FORCE_DIRECTED))
         layoutMenu.addAction(forceAction)
-
-        # 佈局方向選項
-        layoutMenu.addSeparator()
-
-        directionSubmenu = layoutMenu.addMenu("佈局方向(&D)")
-
-        self.tbDirectionAction = QAction("上到下 (TB)(&T)", self)
-        self.tbDirectionAction.setCheckable(True)
-        self.tbDirectionAction.setChecked(True)  # 預設為 TB
-        self.tbDirectionAction.triggered.connect(lambda: self.setLayoutDirection('TB'))
-        directionSubmenu.addAction(self.tbDirectionAction)
-
-        self.lrDirectionAction = QAction("左到右 (LR)(&L)", self)
-        self.lrDirectionAction.setCheckable(True)
-        self.lrDirectionAction.triggered.connect(lambda: self.setLayoutDirection('LR'))
-        directionSubmenu.addAction(self.lrDirectionAction)
 
         # 路由選項
         layoutMenu.addSeparator()
@@ -352,10 +330,11 @@ class DsmEditor(QDialog):
         applied_count = 0
         # 遍歷場景中的所有邊線
         for item in self.scene.items():
-            if hasattr(item, 'src') and hasattr(item, 'dst') and hasattr(item, 'updatePath'):
+            if (hasattr(item, 'src') and hasattr(item, 'dst') and
+                    hasattr(item, 'updatePath')):
                 # 構建邊的標識符
                 edge_key = (item.src.taskId, item.dst.taskId)
-                
+
                 if edge_key in self.current_edge_ports:
                     src_port, dst_port = self.current_edge_ports[edge_key]
                     # 使用精確端口更新邊線路徑
