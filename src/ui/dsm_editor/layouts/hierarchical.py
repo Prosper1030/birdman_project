@@ -1012,21 +1012,21 @@ class SugiyamaLayout:
         i = slot + 1  # 轉換為 1-based
         ratio = i / (total_slots + 1)
 
-        # ports 從邊界再內縮 node_margin，確保與邊界距離 >= min_node_edge
+        # ports 精確放在節點邊界上
         if side == 'top':
             x = xc + (ratio - 0.5) * (w - 2*m)
-            y = yc - h/2 + m  # 內縮 m
+            y = yc - h/2  # 移除內縮
             return (x, y)
         elif side == 'bottom':
             x = xc + (ratio - 0.5) * (w - 2*m)
-            y = yc + h/2 - m  # 內縮 m
+            y = yc + h/2  # 移除內縮
             return (x, y)
         elif side == 'left':
-            x = xc - w/2 + m  # 內縮 m
+            x = xc - w/2  # 移除內縮
             y = yc + (ratio - 0.5) * (h - 2*m)
             return (x, y)
         elif side == 'right':
-            x = xc + w/2 - m  # 內縮 m
+            x = xc + w/2  # 移除內縮
             y = yc + (ratio - 0.5) * (h - 2*m)
             return (x, y)
         else:

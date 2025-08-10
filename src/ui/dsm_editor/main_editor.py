@@ -328,21 +328,30 @@ class DsmEditor(QDialog):
             return
 
         applied_count = 0
-        # 遍歷場景中的所有邊線
-        for item in self.scene.items():
-            if (hasattr(item, 'src') and hasattr(item, 'dst') and
-                    hasattr(item, 'updatePath')):
-                # 構建邊的標識符
-                edge_key = (item.src.taskId, item.dst.taskId)
-
-                if edge_key in self.current_edge_ports:
-                    src_port, dst_port = self.current_edge_ports[edge_key]
-                    # 使用精確端口更新邊線路徑
-                    item.updatePath(custom_ports=(src_port, dst_port))
-                    applied_count += 1
-                else:
-                    # 沒有對應的端口信息，使用預設方法
-                    item.updatePath()
+        processed_edges = set()  # 避免重複處理同一條邊
+        
+        # 遍歷節點的邊線集合而不是場景項目
+        for node in self.nodes.values():
+            if hasattr(node, 'edges'):
+                for edge in node.edges:
+                    edge_id = id(edge)
+                    if edge_id in processed_edges:
+                        continue
+                    processed_edges.add(edge_id)
+                    
+                    # 構建邊的標識符
+                    edge_key = (edge.src.taskId, edge.dst.taskId)
+                    
+                    if edge_key in self.current_edge_ports:
+                        src_port_pos, dst_port_pos = self.current_edge_ports[edge_key]
+                        from PyQt5.QtCore import QPointF
+                        edge.set_path_from_ports(QPointF(*src_port_pos), QPointF(*dst_port_pos))
+                        applied_count += 1
+                        print(f"[DEBUG] 應用 port 到邊 {edge_key}: {src_port_pos} -> {dst_port_pos}")
+                    else:
+                        # 沒有對應的端口信息，使用預設方法
+                        edge.updatePath()
+                        print(f"[DEBUG] 邊 {edge_key} 無 port 信息，使用預設路徑")
 
         print(f"應用 edge_ports 到 {applied_count} 條邊線")
 

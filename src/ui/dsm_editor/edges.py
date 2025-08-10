@@ -102,7 +102,7 @@ class EdgeItem(QGraphicsPathItem):
         self.tempPen = QPen(Qt.gray, 2, Qt.DashLine)
 
         self.setPen(self.normalPen)
-        self.setZValue(5)  # 提高邊線的 Z 值，確保在節點下方但高於背景
+        self.setZValue(15)  # 提高邊線的 Z 值，確保在節點之上
 
         # 設定旗標
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
@@ -319,6 +319,21 @@ class EdgeItem(QGraphicsPathItem):
         ]
 
         return min(midpoints, key=lambda p: QLineF(p, point).length())
+
+    def set_path_from_ports(self, src_port: QPointF, dst_port: QPointF):
+        """
+        根據佈局引擎計算好的 Port 座標來設定路徑，
+        這會繞過預設的動態交點計算。
+        """
+        # 清除快取，強制使用新的 Port 座標
+        self._cached_src_point = None
+        self._cached_dst_point = None
+        self._cached_src_rect = None
+        self._cached_dst_rect = None
+        
+        # 直接使用 Port 座標建立路徑
+        self._buildPath(src_port, dst_port)
+        print(f"[DEBUG] 使用 Port 座標建立路徑: {src_port} -> {dst_port}")
 
     def _buildPath(self, srcPoint: QPointF, dstPoint: QPointF) -> None:
         """建立連線路徑並更新箭頭（opus 改進）- 支援雙向邊線分離"""
