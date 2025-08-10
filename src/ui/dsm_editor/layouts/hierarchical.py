@@ -665,38 +665,59 @@ class SugiyamaLayout:
         return isolated_nodes
 
     def _place_isolated_nodes(self, isolated_nodes: List[str], direction: str, spacing: int):
-        """放置孤立節點 - 相對於第0層定位"""
+        """
+        放置孤立節點 - 相對於第0層定位，確保不重疊
+        
+        修正：
+        1. 考慮節點實際尺寸
+        2. 遵守最小距離約束
+        3. 防止節點重疊
+        """
         if not isolated_nodes:
             return
 
+        # 計算實際需要的間距（考慮節點尺寸和最小距離）
+        if direction == "TB":
+            # TB 方向：孤立節點水平排列，間距需要考慮節點寬度
+            actual_spacing = max(spacing, self.node_width + self.min_node_node)
+        else:  # LR
+            # LR 方向：孤立節點垂直排列，間距需要考慮節點高度
+            actual_spacing = max(spacing, self.node_height + self.min_node_node)
+
         # 計算主要內容的邊界和第0層位置
         if self.coordinates:
-            group_gap = 200  # 群組間距
+            group_gap = max(200, self.min_layer_layer * 3)  # 確保群組間有足夠間距
 
             if direction == "TB":
                 # 找到第0層的 Y 座標和最左節點的 X 座標
                 layer_0_y = 0  # 第0層的 Y
                 min_x = min(coord[0] for coord in self.coordinates.values())
+                
+                # 計算孤立節點的起始位置（確保不與現有節點重疊）
+                start_x = min_x - group_gap - self.node_width // 2
 
                 for i, node in enumerate(isolated_nodes):
-                    isolated_x = min_x - group_gap - i * spacing
+                    isolated_x = start_x - i * actual_spacing
                     self.coordinates[node] = (isolated_x, layer_0_y)
 
             else:  # LR
                 # 找到第0列的 X 座標和最上節點的 Y 座標
                 layer_0_x = 0  # 第0列的 X
                 min_y = min(coord[1] for coord in self.coordinates.values())
+                
+                # 計算孤立節點的起始位置（確保不與現有節點重疊）
+                start_y = min_y - group_gap - self.node_height // 2
 
                 for i, node in enumerate(isolated_nodes):
-                    isolated_y = min_y - group_gap - i * spacing
+                    isolated_y = start_y - i * actual_spacing
                     self.coordinates[node] = (layer_0_x, isolated_y)
         else:
-            # 如果沒有其他節點，簡單排列
+            # 如果沒有其他節點，簡單排列但確保間距正確
             for i, node in enumerate(isolated_nodes):
                 if direction == "TB":
-                    self.coordinates[node] = (i * spacing, 0)
-                else:
-                    self.coordinates[node] = (0, i * spacing)
+                    self.coordinates[node] = (i * actual_spacing, 0)
+                else:  # LR
+                    self.coordinates[node] = (0, i * actual_spacing)
 
     def _optimize_coordinates(self, direction: str, node_spacing: int):
         """優化座標：簡易 compaction - 同層推擠、跨層拉直"""

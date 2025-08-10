@@ -131,9 +131,24 @@ class EdgeItem(QGraphicsPathItem):
             self.setPen(self.normalPen)
             self.arrowHead.setBrush(QBrush(Qt.black))
 
-    def updatePath(self) -> None:
-        """更新路徑 - 精確連線版本（從 opus 改進）"""
+    def updatePath(self, custom_ports=None) -> None:
+        """
+        更新路徑 - 支援 yEd 式精確端口
+        
+        Args:
+            custom_ports: Optional[(src_x, src_y), (dst_x, dst_y)] 來自佈局引擎的精確端口座標
+        """
         if not self.src or not self.dst:
+            return
+
+        # 優先使用佈局引擎提供的精確端口
+        if custom_ports and len(custom_ports) == 2:
+            srcPoint = QPointF(custom_ports[0][0], custom_ports[0][1])
+            dstPoint = QPointF(custom_ports[1][0], custom_ports[1][1])
+            
+            # 建立路徑（跳過快取檢查）
+            self._buildPath(srcPoint, dstPoint)
+            print(f"使用精確端口 - 源: {custom_ports[0]}, 目標: {custom_ports[1]}")
             return
 
         # 獲取節點邊界
@@ -146,7 +161,7 @@ class EdgeItem(QGraphicsPathItem):
             self._cached_src_point and self._cached_dst_point):
             return  # 使用快取結果
         
-        # 計算連線點
+        # 計算連線點（備用方法）
         srcPoint, dstPoint = self._calculateConnectionPoints(srcRect, dstRect)
         
         if not srcPoint or not dstPoint:
