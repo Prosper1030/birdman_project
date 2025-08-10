@@ -79,7 +79,10 @@ class SugiyamaLayout:
         direction: str = "TB",
         layer_spacing: int = 200,
         node_spacing: int = 150,
-        isolated_spacing: int = 100
+        isolated_spacing: int = 100,
+        min_node_node: float = None,
+        min_layer_layer: float = None,
+        min_node_edge: float = None
     ) -> Dict[str, Tuple[float, float]]:
         """
         執行完整的杉山方法佈局
@@ -97,6 +100,14 @@ class SugiyamaLayout:
         """
         # 存儲原始邊集合
         self.original_edges = set(edges or [])
+
+        # 允許外部調整最小距離
+        if min_node_node is not None:
+            self.min_node_node = min_node_node
+        if min_layer_layer is not None:
+            self.min_layer_layer = min_layer_layer
+        if min_node_edge is not None:
+            self.min_node_edge = min_node_edge
 
         # 初始化
         self._initialize_graph(wbs_df, edges)
@@ -854,7 +865,11 @@ class SugiyamaLayout:
 
     def _get_edge_side(self, u: str, v: str, direction: str, is_outgoing: bool) -> Optional[str]:
         """
-        決定邊應該使用哪一側的 port
+        決定邊應該使用哪一側的 port（嚴格遵守同方向進出原則）
+
+        方向規則：
+        - TB: forward 邊 out=Bottom、in=Top；回邊 out=Top、in=Bottom
+        - LR: forward 邊 out=Right、in=Left；回邊 out=Left、in=Right
 
         Args:
             u: 源節點
@@ -872,17 +887,17 @@ class SugiyamaLayout:
 
         if direction == "TB":
             if is_outgoing:
-                # 出邊: forward 用 bottom，back 用 top
+                # TB 出邊: forward 用 bottom（下出），back 用 top（違反規則的上出）
                 return 'top' if is_back else 'bottom'
             else:
-                # 入邊: forward 用 top，back 用 bottom
+                # TB 入邊: forward 用 top（上進），back 用 bottom（違反規則的下進）
                 return 'bottom' if is_back else 'top'
         else:  # LR
             if is_outgoing:
-                # 出邊: forward 用 right，back 用 left
+                # LR 出邊: forward 用 right（右出），back 用 left（違反規則的左出）
                 return 'left' if is_back else 'right'
             else:
-                # 入邊: forward 用 left，back 用 right
+                # LR 入邊: forward 用 left（左進），back 用 right（違反規則的右進）
                 return 'right' if is_back else 'left'
 
     def _is_back_edge(self, u: str, v: str) -> bool:
@@ -902,10 +917,18 @@ class SugiyamaLayout:
 
     def _sort_nodes_by_layer_position(self, nodes: List[str]) -> List[str]:
         """
-        按照節點在層內的位置排序
+        按照節點在相鄰層的位置排序（與第三階段層內排序一致，降低交叉）
         """
         def get_position(node):
-            return self.node_positions.get(node, 0)
+            # 優先使用 node_positions（第三階段交叉減少的結果）
+            if node in self.node_positions:
+                return self.node_positions[node]
+            # fallback：使用層內的排列順序
+            if node in self.layers:
+                layer = self.layers[node]
+                if layer in self.layer_nodes and node in self.layer_nodes[layer]:
+                    return self.layer_nodes[layer].index(node)
+            return 0
 
         return sorted(nodes, key=get_position)
 
@@ -1118,7 +1141,10 @@ def layout_hierarchical(
     direction: str = "TB",
     layer_spacing: int = 200,
     node_spacing: int = 150,
-    isolated_spacing: int = 100
+    isolated_spacing: int = 100,
+    min_node_node: float = None,
+    min_layer_layer: float = None,
+    min_node_edge: float = None
 ) -> Dict[str, Tuple[float, float]]:
     """
     計算完整杉山方法的階層式佈局節點位置
@@ -1149,7 +1175,10 @@ def layout_hierarchical(
         direction=direction,
         layer_spacing=layer_spacing,
         node_spacing=node_spacing,
-        isolated_spacing=isolated_spacing
+        isolated_spacing=isolated_spacing,
+        min_node_node=min_node_node,
+        min_layer_layer=min_layer_layer,
+        min_node_edge=min_node_edge
     )
 
     return coordinates
@@ -1168,7 +1197,10 @@ def layout_hierarchical_with_info(
     direction: str = "TB",
     layer_spacing: int = 200,
     node_spacing: int = 150,
-    isolated_spacing: int = 100
+    isolated_spacing: int = 100,
+    min_node_node: float = None,
+    min_layer_layer: float = None,
+    min_node_edge: float = None
 ) -> Dict[str, Any]:
     """
     計算階層佈局並返回完整訊息（包含反向邊、虛擬節點等）
@@ -1195,7 +1227,10 @@ def layout_hierarchical_with_info(
         direction=direction,
         layer_spacing=layer_spacing,
         node_spacing=node_spacing,
-        isolated_spacing=isolated_spacing
+        isolated_spacing=isolated_spacing,
+        min_node_node=min_node_node,
+        min_layer_layer=min_layer_layer,
+        min_node_edge=min_node_edge
     )
 
     # 返回完整訊息
