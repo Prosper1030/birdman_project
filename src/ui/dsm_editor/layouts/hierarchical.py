@@ -6,7 +6,14 @@ Hierarchical Layout Algorithm - Complete Sugiyama Framework Implementation
 1. 循環移除 (Cycle Removal) - 使用反轉邊策略
 2. 層級分配 (Layer Assignment) - 包含虛擬節點系統
 3. 交叉減少 (Crossing Reduction) - 實現重心法和中位數法
-4. 座標分配 (Coordinate Assignment) - 專業座標計算
+4. 座標分配 (Coordinate Assignment) - 專業座標計算 + yEd 式 ports
+
+TODO - 後續擴充功能:
+- 正交路由器：吃 edge_ports 為起終點，避障於節點 bbox+安全距，回邊優先走外圈導管
+- 平行邊偏移：同一對 (u,v) 多條邊做輕微 offset，防止重疊
+- 節點真實尺寸：從 GUI 注入每個節點 width/height
+- 增量更新：拖曳單節點時，只重算該節點 incident edges 的 ports
+- 自訂 port 鎖定：保留介面允許手動指定某節點的 port 順位或固定某側
 """
 
 from typing import Dict, Tuple, List, Set, Optional, Any
@@ -37,6 +44,7 @@ class SugiyamaLayout:
     """
 
     def __init__(self):
+        # 原有屬性
         self.graph = None
         self.layers = {}  # {node_id: layer_index}
         self.layer_nodes = defaultdict(list)  # {layer_index: [node_ids]}
@@ -44,6 +52,24 @@ class SugiyamaLayout:
         self.virtual_nodes = {}  # {virtual_id: VirtualNode}
         self.reversed_edges = set()  # 被反轉的邊
         self.coordinates = {}  # 最終座標 {node_id: (x, y)}
+
+        # 新增：原始邊集合存儲
+        self.original_edges = set()  # 原始輸入的邊集合
+
+        # 新增：盒模型屬性（給預設值，之後 GUI 會塞真實尺寸）
+        self.node_width: int = 120      # 預設節點寬
+        self.node_height: int = 60      # 預設節點高
+        self.node_margin: int = 8       # port 內縮，避免貼到外框線
+        self.min_gap: int = 16          # 同層節點之間的最小間隙（邊界到邊界）
+
+        # 新增：Minimum Distances 設定（皆為 border↔border）
+        self.min_node_node: float = 30.0   # Node to Node Distance（同層/同行/列的節點之間）
+        self.min_node_edge: float = 15.0   # Node to Edge Distance（節點邊界到任一邊線）
+        self.min_edge_edge: float = 15.0   # Edge to Edge Distance（兩條邊之間）
+        self.min_layer_layer: float = 10.0  # Layer to Layer Distance（相鄰兩層的節點邊界距）
+
+        # 新增：yEd 式 Ports（N+1 等分）
+        self.edge_ports: Dict[Tuple[str, str], Tuple[Tuple[float, float], Tuple[float, float]]] = {}
 
     def layout(
         self,
@@ -69,6 +95,9 @@ class SugiyamaLayout:
         Returns:
             節點座標字典
         """
+        # 存儲原始邊集合
+        self.original_edges = set(edges or [])
+
         # 初始化
         self._initialize_graph(wbs_df, edges)
 
@@ -84,10 +113,13 @@ class SugiyamaLayout:
         # 階段 3: 交叉減少
         self._phase3_crossing_reduction()
 
-        # 階段 4: 座標分配
+        # 階段 4: 座標分配（盒模型打包）
         self._phase4_coordinate_assignment(
             direction, layer_spacing, node_spacing, isolated_spacing
         )
+
+        # 階段 4.5: 分配 yEd 式 ports
+        self._assign_ports(direction)
 
         return self.coordinates
 
@@ -119,9 +151,15 @@ class SugiyamaLayout:
         # 使用 DFS 為基礎的啟發式方法
         self.reversed_edges = self._dfs_based_cycle_removal()
 
-        # 驗證結果
+        # 驗證結果 - 如果還有循環，執行備援拆邊
         if not nx.is_directed_acyclic_graph(self.graph):
             self._greedy_cycle_removal()
+
+        # 最終驗證：禁止 fallback 成任意順序
+        if not nx.is_directed_acyclic_graph(self.graph):
+            raise RuntimeError(
+                "循環移除完全失敗：無法創建 DAG。檢查輸入圖是否有無法解決的強連通分量。"
+            )
 
     def _dfs_based_cycle_removal(self) -> Set[Tuple[str, str]]:
         """基於 DFS 的循環移除演算法"""
@@ -232,16 +270,18 @@ class SugiyamaLayout:
         # 拓撲排序
         try:
             topo_order = list(nx.topological_sort(self.graph))
-        except nx.NetworkXUnfeasible:
-            # 如果檢測到不可行（還有循環），再次執行循環移除
-            print("警告：檢測到殘留循環，執行額外的循環移除")
+        except nx.NetworkXUnfeasible as e:
+            # 精確捕捉 NetworkXUnfeasible，再次執行循環移除
+            print(f"警告：拓撲排序失敗（{e}），執行額外的循環移除")
             self._greedy_cycle_removal()
 
             # 確保 DAG 後重新嘗試拓撲排序
-            if nx.is_directed_acyclic_graph(self.graph):
+            try:
                 topo_order = list(nx.topological_sort(self.graph))
-            else:
-                raise RuntimeError("無法創建有向無環圖，循環移除失敗")
+            except nx.NetworkXUnfeasible:
+                raise RuntimeError(
+                    "無法創建有向無環圖：循環移除後仍存在循環。請檢查輸入數據的正確性。"
+                )
 
         # 初始化層級
         for node in self.graph.nodes():
@@ -465,8 +505,8 @@ class SugiyamaLayout:
         isolated_spacing: int
     ):
         """
-        階段4：座標分配
-        計算每個節點的最終 X/Y 座標
+        階段4：座標分配（盒模型打包）
+        使用盒模型避免節點重疊，考慮節點實際尺寸
         """
         if not self.layer_nodes:
             return
@@ -476,35 +516,123 @@ class SugiyamaLayout:
         # 處理孤立節點
         isolated_nodes = self._handle_isolated_nodes()
 
-        # 計算主要層級的座標
-        for layer in layers:
-            nodes = self.layer_nodes[layer]
-
-            if direction == "TB":  # 上到下
-                y = layer * layer_spacing
-                # 計算層內節點的 X 座標
-                total_width = (len(nodes) - 1) * node_spacing
-                start_x = -total_width / 2
-
-                for i, node in enumerate(nodes):
-                    x = start_x + i * node_spacing
-                    self.coordinates[node] = (x, y)
-
-            else:  # LR: 左到右
-                x = layer * layer_spacing
-                # 計算層內節點的 Y 座標
-                total_height = (len(nodes) - 1) * node_spacing
-                start_y = -total_height / 2
-
-                for i, node in enumerate(nodes):
-                    y = start_y + i * node_spacing
-                    self.coordinates[node] = (x, y)
+        # 使用盒模型計算主要層級的座標
+        self._assign_layer_coordinates_with_box_model(layers, direction, layer_spacing)
 
         # 放置孤立節點
         self._place_isolated_nodes(isolated_nodes, direction, isolated_spacing)
 
         # 優化座標：對齊和拉直
         self._optimize_coordinates(direction, node_spacing)
+
+        # 優化後重新打包，確保距離約束
+        self._repack_after_optimization(direction)
+
+    def _assign_layer_coordinates_with_box_model(self, layers, direction: str, layer_spacing: int):
+        """
+        使用盒模型計算層座標，避免節點重疊
+        現在使用 Minimum Distances 約束
+        """
+        # 計算每層的座標（使用 Layer↔Layer 約束）
+        layer_positions = self._calculate_layer_positions(layers, direction, layer_spacing)
+
+        for i, layer in enumerate(layers):
+            nodes = self.layer_nodes[layer]
+            if not nodes:
+                continue
+
+            if direction == "TB":  # 上到下
+                y = layer_positions[i]
+
+                # 使用 scanline 打包滿足 Node↔Node 距離約束
+                x_positions = self._pack_nodes_in_layer(nodes, direction)
+
+                for j, node in enumerate(nodes):
+                    self.coordinates[node] = (x_positions[j], y)
+
+            else:  # LR: 左到右
+                x = layer_positions[i]
+
+                # 使用 scanline 打包滿足 Node↔Node 距離約束
+                y_positions = self._pack_nodes_in_layer(nodes, direction)
+
+                for j, node in enumerate(nodes):
+                    self.coordinates[node] = (x, y_positions[j])
+
+    def _calculate_layer_positions(self, layers, direction: str, layer_spacing: int) -> List[float]:
+        """
+        計算各層的位置，滿足 Layer↔Layer 最小距離約束
+        """
+        if not layers:
+            return []
+
+        positions = [0.0]  # 第 0 層在原點
+
+        for i in range(1, len(layers)):
+            if direction == "TB":
+                # TB: 相鄰兩層的中心距應至少 node_height + min_layer_layer + 2*edge_clearance
+                edge_clearance = max(self.node_margin, self.min_node_edge)
+                min_center_distance = self.node_height + self.min_layer_layer + 2 * edge_clearance
+                actual_spacing = max(layer_spacing, min_center_distance)
+                positions.append(positions[-1] + actual_spacing)
+            else:  # LR
+                # LR: 相鄰兩列的中心距至少 node_width + min_layer_layer + 2*edge_clearance
+                edge_clearance = max(self.node_margin, self.min_node_edge)
+                min_center_distance = self.node_width + self.min_layer_layer + 2 * edge_clearance
+                actual_spacing = max(layer_spacing, min_center_distance)
+                positions.append(positions[-1] + actual_spacing)
+
+        return positions
+
+    def _pack_nodes_in_layer(self, nodes: List[str], direction: str) -> List[float]:
+        """
+        在層內打包節點，滿足 Node↔Node 最小距離約束
+
+        Returns:
+            節點中心位置列表
+        """
+        if len(nodes) <= 1:
+            return [0.0] * len(nodes)
+
+        positions = []
+        current_pos = 0.0
+
+        for i, node in enumerate(nodes):
+            if i == 0:
+                # 第一個節點
+                if direction == "TB":
+                    positions.append(current_pos)
+                    current_pos += self.node_width / 2
+                else:  # LR
+                    positions.append(current_pos)
+                    current_pos += self.node_height / 2
+            else:
+                # 後續節點：計算滿足 min_node_node 的距離
+                # prev_node = nodes[i-1]  # 未使用變數
+
+                if direction == "TB":
+                    # TB: prev_x + (w_prev/2 + max(min_gap, min_node_node) + w_curr/2)
+                    w_prev = self.node_width  # 簡化：假設所有節點同尺寸
+                    w_curr = self.node_width
+                    min_distance = max(self.min_gap, self.min_node_node)
+                    current_pos += w_prev/2 + min_distance + w_curr/2
+                    positions.append(current_pos)
+                    current_pos += w_curr/2
+                else:  # LR
+                    # LR: prev_y + (h_prev/2 + max(min_gap, min_node_node) + h_curr/2)
+                    h_prev = self.node_height
+                    h_curr = self.node_height
+                    min_distance = max(self.min_gap, self.min_node_node)
+                    current_pos += h_prev/2 + min_distance + h_curr/2
+                    positions.append(current_pos)
+                    current_pos += h_curr/2
+
+        # 整層居中
+        if positions:
+            center_offset = -sum(positions) / len(positions)
+            positions = [pos + center_offset for pos in positions]
+
+        return positions
 
     def _handle_isolated_nodes(self) -> List[str]:
         """處理孤立節點"""
@@ -655,6 +783,290 @@ class SugiyamaLayout:
         new_y = current_y + factor * (neighbor_y_avg - current_y)
         self.coordinates[node] = (x, new_y)
 
+    # ================== yEd 式 Ports 系統 ==================
+
+    def _assign_ports(self, direction: str):
+        """
+        分配 yEd 式 ports（N+1 等分）
+        為每條原始邊計算出入口座標
+        現在滿足 Node↔Edge 最小距離約束
+        """
+        self.edge_ports.clear()
+
+        # 確保 node_margin 滿足 min_node_edge 要求
+        self._ensure_node_margin_compliance()
+
+        # 為每個節點計算各側的邊
+        node_side_edges = self._categorize_edges_by_node_side(direction)
+
+        # 為每條原始邊分配 ports
+        for u, v in self.original_edges:
+            if u in self.coordinates and v in self.coordinates:
+                src_port, dst_port = self._calculate_edge_ports(u, v, direction, node_side_edges)
+                self.edge_ports[(u, v)] = (src_port, dst_port)
+
+    def _ensure_node_margin_compliance(self):
+        """
+        確保 node_margin 滿足 min_node_edge 要求
+        """
+        if self.node_margin < self.min_node_edge:
+            # 自動調整 node_margin 以滿足最小距離
+            old_margin = self.node_margin
+            self.node_margin = self.min_node_edge
+            print(f"警告：node_margin 從 {old_margin} 調整為 {self.node_margin} 以滿足 min_node_edge 要求")
+
+    def _categorize_edges_by_node_side(self, direction: str) -> Dict[str, Dict[str, List[str]]]:
+        """
+        將每個節點的邊按照方向分類到各側
+
+        Returns:
+            {node_id: {side: [connected_nodes], ...}, ...}
+            side 可為 'top', 'bottom', 'left', 'right'
+        """
+        node_sides = {}
+
+        for node in self.coordinates.keys():
+            if self._is_virtual_node(node):
+                continue
+
+            sides = {'top': [], 'bottom': [], 'left': [], 'right': []}
+
+            # 檢查每條原始邊
+            for u, v in self.original_edges:
+                if u == node:
+                    # 出邊
+                    target_side = self._get_edge_side(u, v, direction, is_outgoing=True)
+                    if target_side:
+                        sides[target_side].append(v)
+                elif v == node:
+                    # 入邊
+                    source_side = self._get_edge_side(u, v, direction, is_outgoing=False)
+                    if source_side:
+                        sides[source_side].append(u)
+
+            # 按照相鄰層的索引排序（減少交叉）
+            for side in sides:
+                sides[side] = self._sort_nodes_by_layer_position(sides[side])
+
+            node_sides[node] = sides
+
+        return node_sides
+
+    def _get_edge_side(self, u: str, v: str, direction: str, is_outgoing: bool) -> Optional[str]:
+        """
+        決定邊應該使用哪一側的 port
+
+        Args:
+            u: 源節點
+            v: 目標節點
+            direction: 佈局方向 TB/LR
+            is_outgoing: 是否為出邊（相對於 u 節點）
+
+        Returns:
+            'top', 'bottom', 'left', 'right' 或 None
+        """
+        if not (u in self.layers and v in self.layers):
+            return None
+
+        is_back = self._is_back_edge(u, v)
+
+        if direction == "TB":
+            if is_outgoing:
+                # 出邊: forward 用 bottom，back 用 top
+                return 'top' if is_back else 'bottom'
+            else:
+                # 入邊: forward 用 top，back 用 bottom
+                return 'bottom' if is_back else 'top'
+        else:  # LR
+            if is_outgoing:
+                # 出邊: forward 用 right，back 用 left
+                return 'left' if is_back else 'right'
+            else:
+                # 入邊: forward 用 left，back 用 right
+                return 'right' if is_back else 'left'
+
+    def _is_back_edge(self, u: str, v: str) -> bool:
+        """
+        判斷是否為回邊（以 rank 為準）
+
+        Args:
+            u: 源節點
+            v: 目標節點
+
+        Returns:
+            True 如果是回邊（rank[v] < rank[u]）
+        """
+        if u not in self.layers or v not in self.layers:
+            return False
+        return self.layers[v] < self.layers[u]
+
+    def _sort_nodes_by_layer_position(self, nodes: List[str]) -> List[str]:
+        """
+        按照節點在層內的位置排序
+        """
+        def get_position(node):
+            return self.node_positions.get(node, 0)
+
+        return sorted(nodes, key=get_position)
+
+    def _calculate_edge_ports(
+            self, u: str, v: str, direction: str, node_side_edges: Dict
+    ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+        """
+        計算單條邊的出入口座標
+
+        Returns:
+            ((src_x, src_y), (dst_x, dst_y))
+        """
+        # 源節點 port
+        src_side = self._get_edge_side(u, v, direction, is_outgoing=True)
+        if src_side and u in node_side_edges:
+            src_edges = node_side_edges[u][src_side]
+            src_slot = src_edges.index(v) if v in src_edges else 0
+            src_port = self._calculate_port_coordinate(u, src_side, src_slot, len(src_edges))
+        else:
+            src_port = self.coordinates[u]  # fallback 到中心點
+
+        # 目標節點 port
+        dst_side = self._get_edge_side(u, v, direction, is_outgoing=False)
+        if dst_side and v in node_side_edges:
+            dst_edges = node_side_edges[v][dst_side]
+            dst_slot = dst_edges.index(u) if u in dst_edges else 0
+            dst_port = self._calculate_port_coordinate(v, dst_side, dst_slot, len(dst_edges))
+        else:
+            dst_port = self.coordinates[v]  # fallback 到中心點
+
+        return (src_port, dst_port)
+
+    def _calculate_port_coordinate(self, node: str, side: str, slot: int, total_slots: int) -> Tuple[float, float]:
+        """
+        計算節點某側某槽位的座標
+        現在滿足 Node↔Edge 距離約束（port 內縮）
+
+        Args:
+            node: 節點 ID
+            side: 'top', 'bottom', 'left', 'right'
+            slot: 槽位編號 (0-based)
+            total_slots: 該側總槽數
+
+        Returns:
+            (x, y) 座標
+        """
+        if node not in self.coordinates:
+            return (0.0, 0.0)
+
+        xc, yc = self.coordinates[node]  # 節點中心
+        w, h = self.node_width, self.node_height
+
+        # 使用更新後的 node_margin（已滿足 min_node_edge）
+        m = self.node_margin
+
+        if total_slots == 0:
+            total_slots = 1  # 避免除以零
+
+        # N+1 等分：第 i 槽（1..k）的中心
+        i = slot + 1  # 轉換為 1-based
+        ratio = i / (total_slots + 1)
+
+        # ports 從邊界再內縮 node_margin，確保與邊界距離 >= min_node_edge
+        if side == 'top':
+            x = xc + (ratio - 0.5) * (w - 2*m)
+            y = yc - h/2 + m  # 內縮 m
+            return (x, y)
+        elif side == 'bottom':
+            x = xc + (ratio - 0.5) * (w - 2*m)
+            y = yc + h/2 - m  # 內縮 m
+            return (x, y)
+        elif side == 'left':
+            x = xc - w/2 + m  # 內縮 m
+            y = yc + (ratio - 0.5) * (h - 2*m)
+            return (x, y)
+        elif side == 'right':
+            x = xc + w/2 - m  # 內縮 m
+            y = yc + (ratio - 0.5) * (h - 2*m)
+            return (x, y)
+        else:
+            return (xc, yc)  # fallback
+
+    def _repack_after_optimization(self, direction: str):
+        """
+        優化後重新打包，確保靠齊不會把節點擠破 min_node_node
+        """
+        layers = sorted(self.layer_nodes.keys())
+
+        for layer in layers:
+            nodes = self.layer_nodes[layer]
+            if len(nodes) <= 1:
+                continue
+
+            # 按照現在的位置排序
+            if direction == "TB":
+                # 按 X 座標排序
+                nodes_with_pos = [(self.coordinates[node][0], node) for node in nodes]
+                nodes_with_pos.sort()
+
+                # 重新計算位置以滿足距離約束
+                new_positions = self._repack_nodes_positions([node for _, node in nodes_with_pos], direction)
+
+                # 更新座標
+                for i, (_, node) in enumerate(nodes_with_pos):
+                    old_x, y = self.coordinates[node]
+                    self.coordinates[node] = (new_positions[i], y)
+
+            else:  # LR
+                # 按 Y 座標排序
+                nodes_with_pos = [(self.coordinates[node][1], node) for node in nodes]
+                nodes_with_pos.sort()
+
+                # 重新計算位置以滿足距離約束
+                new_positions = self._repack_nodes_positions([node for _, node in nodes_with_pos], direction)
+
+                # 更新座標
+                for i, (_, node) in enumerate(nodes_with_pos):
+                    x, old_y = self.coordinates[node]
+                    self.coordinates[node] = (x, new_positions[i])
+
+    def _repack_nodes_positions(self, nodes: List[str], direction: str) -> List[float]:
+        """
+        重新打包節點位置，保持順序但確保距離
+        """
+        if len(nodes) <= 1:
+            return [0.0] * len(nodes)
+
+        positions = []
+        current_pos = 0.0
+
+        for i, node in enumerate(nodes):
+            if i == 0:
+                positions.append(current_pos)
+                if direction == "TB":
+                    current_pos += self.node_width / 2
+                else:
+                    current_pos += self.node_height / 2
+            else:
+                # 確保距離約束
+                if direction == "TB":
+                    min_distance = max(self.min_gap, self.min_node_node)
+                    current_pos += self.node_width / 2 + min_distance + self.node_width / 2
+                    positions.append(current_pos)
+                    current_pos += self.node_width / 2
+                else:  # LR
+                    min_distance = max(self.min_gap, self.min_node_node)
+                    current_pos += self.node_height / 2 + min_distance + self.node_height / 2
+                    positions.append(current_pos)
+                    current_pos += self.node_height / 2
+
+        # 居中
+        if positions:
+            center_offset = -sum(positions) / len(positions)
+            positions = [pos + center_offset for pos in positions]
+
+        return positions
+
+    def _is_virtual_node(self, node: str) -> bool:
+        """判斷是否為虛擬節點"""
+        return node in self.virtual_nodes
+
     def get_feedback_edges(self) -> Set[Tuple[str, str]]:
         """
         獲取反向邊集合（被反轉的邊）
@@ -673,7 +1085,7 @@ class SugiyamaLayout:
         獲取完整的佈局訊息
 
         Returns:
-            包含座標、反向邊、虛擬節點等訊息的字典
+            包含座標、反向邊、虛擬節點、edge_ports 等訊息的字典
         """
         return {
             'coordinates': self.coordinates.copy(),
@@ -684,7 +1096,18 @@ class SugiyamaLayout:
                 'original_edge': vnode.original_edge
             } for vid, vnode in self.virtual_nodes.items()},
             'layers': self.layers.copy(),
-            'layer_nodes': dict(self.layer_nodes)
+            'layer_nodes': dict(self.layer_nodes),
+            'edge_ports': self.edge_ports.copy(),  # yEd 式 ports 訊息
+            # 新增：Minimum Distances 參數
+            'min_distances': {
+                'min_node_node': self.min_node_node,
+                'min_node_edge': self.min_node_edge,
+                'min_edge_edge': self.min_edge_edge,
+                'min_layer_layer': self.min_layer_layer,
+                'node_width': self.node_width,
+                'node_height': self.node_height,
+                'node_margin': self.node_margin  # 更新後的 margin
+            }
         }
 
 
