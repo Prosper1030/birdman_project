@@ -47,7 +47,10 @@ class HierarchicalLayoutDialog(QDialog):
 
                 # 高級設定
                 'layout_components_separately': False,
-                'use_drawing_as_sketch': False
+                'use_drawing_as_sketch': False,
+                
+                # 路由設定
+                'routing_style': 'normal'  # 'normal' 或 'orthogonal'
             }
         else:
             return {
@@ -64,7 +67,8 @@ class HierarchicalLayoutDialog(QDialog):
                 'node_margin': 8,
                 'min_gap': 16,
                 'layout_components_separately': False,
-                'use_drawing_as_sketch': False
+                'use_drawing_as_sketch': False,
+                'routing_style': 'normal'
             }
 
     def setupUI(self):
@@ -153,6 +157,17 @@ class HierarchicalLayoutDialog(QDialog):
         layout_layout.addRow("分別佈局元件:", self.components_separately_checkbox)
 
         layout.addWidget(layout_group)
+
+        # 路由樣式群組
+        routing_group = QGroupBox("路由樣式")
+        routing_layout = QFormLayout(routing_group)
+        
+        self.routing_combo = QComboBox()
+        self.routing_combo.addItems(["正設", "正射"])  # 正設=正常預設, 正射=正交
+        self.routing_combo.setCurrentIndex(0)  # 預設選擇正設
+        routing_layout.addRow("", self.routing_combo)
+        
+        layout.addWidget(routing_group)
 
         # 間距設定群組
         spacing_group = QGroupBox("間距設定")
@@ -323,6 +338,12 @@ class HierarchicalLayoutDialog(QDialog):
 
         self.components_separately_checkbox.setChecked(settings['layout_components_separately'])
         self.sketch_checkbox.setChecked(settings['use_drawing_as_sketch'])
+        
+        # 路由設定
+        if settings['routing_style'] == 'normal':
+            self.routing_combo.setCurrentIndex(0)  # 正設
+        else:
+            self.routing_combo.setCurrentIndex(1)  # 正射
 
         # 最小距離設定
         self.node_node_spin.setValue(settings['min_node_node'])
@@ -356,6 +377,7 @@ class HierarchicalLayoutDialog(QDialog):
 
             'layout_components_separately': self.components_separately_checkbox.isChecked(),
             'use_drawing_as_sketch': self.sketch_checkbox.isChecked(),
+            'routing_style': 'normal' if self.routing_combo.currentIndex() == 0 else 'orthogonal',
         }
 
     def reset_to_defaults(self):
@@ -374,7 +396,8 @@ class HierarchicalLayoutDialog(QDialog):
             'node_margin': 8,
             'min_gap': 16,
             'layout_components_separately': False,
-            'use_drawing_as_sketch': False
+            'use_drawing_as_sketch': False,
+            'routing_style': 'normal'
         }
 
         self.current_settings = defaults

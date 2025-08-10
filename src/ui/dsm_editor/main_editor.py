@@ -43,6 +43,7 @@ class DsmEditor(QDialog):
 
         self.nodes: Dict[str, TaskNode] = {}
         self.edges: Set[tuple[str, str]] = set()
+        self.edge_ports: Dict[tuple[str, str], tuple] = {}  # 儲存佈局引擎計算的 Port 座標
 
         # yEd 風格布局設置
         self.layout_direction = 'TB'  # 'TB' (Top-Bottom) 或 'LR' (Left-Right)
@@ -52,6 +53,7 @@ class DsmEditor(QDialog):
 
         # 邊的路由模式（佈局完成後才啟用正交路由）
         self.routing_enabled = False
+        self.routing_style = 'normal'  # 'normal' 或 'orthogonal'
 
         # yEd 風格邊線路由管理器
         self.edge_router_manager = None  # 在場景建立後初始化
@@ -108,11 +110,6 @@ class DsmEditor(QDialog):
         # 路由選項
         layoutMenu.addSeparator()
 
-        self.routingModeAction = QAction("啟用正交路由(&R)", self)
-        self.routingModeAction.setCheckable(True)
-        self.routingModeAction.setChecked(False)  # 預設禁用，佈局後手動啟用
-        self.routingModeAction.triggered.connect(self.toggleRoutingMode)
-        layoutMenu.addAction(self.routingModeAction)
 
         # 檢視選單
         viewMenu = menuBar.addMenu("檢視(&V)")
@@ -264,6 +261,9 @@ class DsmEditor(QDialog):
             self.node_height = settings['node_height']
             self.node_margin = settings['node_margin']
             self.min_gap = settings['min_gap']
+            
+            # 更新路由設定
+            self.routing_style = settings['routing_style']
 
             # 應用佈局
             self.applyHierarchicalLayout()
@@ -301,9 +301,9 @@ class DsmEditor(QDialog):
         )
 
         positions = layout_result['coordinates']
-        self.current_edge_ports = layout_result.get('edge_ports', {})  # 保存 port 信息
+        self.edge_ports = layout_result.get('edge_ports', {})  # 將 port 資訊儲存到新屬性中
 
-        print(f"佈局完成 - 獲得 {len(self.current_edge_ports)} 條邊的 port 信息")
+        print(f"佈局完成 - 獲得 {len(self.edge_ports)} 條邊的 port 信息")
 
         # 套用位置到節點
         for task_id, (x, y) in positions.items():
@@ -323,7 +323,7 @@ class DsmEditor(QDialog):
 
     def _applyEdgePortsToEdges(self):
         """將佈局引擎計算的 edge_ports 應用到場景中的邊線"""
-        if not self.current_edge_ports:
+        if not self.edge_ports:
             print("無 edge_ports 信息，使用預設連接點")
             return
 
@@ -342,8 +342,8 @@ class DsmEditor(QDialog):
                     # 構建邊的標識符
                     edge_key = (edge.src.taskId, edge.dst.taskId)
                     
-                    if edge_key in self.current_edge_ports:
-                        src_port_pos, dst_port_pos = self.current_edge_ports[edge_key]
+                    if edge_key in self.edge_ports:
+                        src_port_pos, dst_port_pos = self.edge_ports[edge_key]
                         from PyQt5.QtCore import QPointF
                         edge.set_path_from_ports(QPointF(*src_port_pos), QPointF(*dst_port_pos))
                         applied_count += 1
@@ -507,18 +507,6 @@ class DsmEditor(QDialog):
             # 回退到正交佈局
             self.applyOrthogonalLayout()
 
-    def toggleRoutingMode(self) -> None:
-        """切換邊線路由模式"""
-        if not self.edge_router_manager:
-            return
-
-        enabled = self.routingModeAction.isChecked()
-        if enabled:
-            self.routingModeAction.setText("邊線路由：佈局時正交(&R) ✓")
-            print("邊線路由模式：佈局時正交路由")
-        else:
-            self.routingModeAction.setText("邊線路由：日常直線(&R)")
-            print("邊線路由模式：日常直線")
 
     def _apply_orthogonal_routing_after_layout(self) -> None:
         """
@@ -529,16 +517,28 @@ class DsmEditor(QDialog):
         2. 全圖正交路由 (此步驟)
         3. 重繪 (自動)
         """
-        if not self.edge_router_manager or not self.routingModeAction.isChecked():
+        # 只有當路由樣式設定為正射(orthogonal)時才執行正交路由
+        if not self.edge_router_manager or self.routing_style != 'orthogonal':
+            return
+        
+        # 【新增】如果沒有 port 資訊，也直接返回
+        if not self.edge_ports:
+            print("警告：缺少 Port 資訊，無法執行正交繞線。")
             return
 
         # 收集所有邊線的資料
         edges_data = []
         for edge_item in self.scene.items():
-            if hasattr(edge_item, 'source_node') and hasattr(edge_item, 'target_node'):
-                start_pos = edge_item.source_node.pos()
-                end_pos = edge_item.target_node.pos()
-                edges_data.append((edge_item, start_pos, end_pos))
+            # 【修改】從 self.edge_ports 獲取精確的起點和終點
+            if hasattr(edge_item, 'src') and hasattr(edge_item, 'dst'):
+                edge_key = (edge_item.src.taskId, edge_item.dst.taskId)
+                if edge_key in self.edge_ports:
+                    src_port_pos, dst_port_pos = self.edge_ports[edge_key]
+                    # 將 tuple 轉換為 QPointF
+                    from PyQt5.QtCore import QPointF
+                    start_pos = QPointF(*src_port_pos)
+                    end_pos = QPointF(*dst_port_pos)
+                    edges_data.append((edge_item, start_pos, end_pos))
 
         if not edges_data:
             return
