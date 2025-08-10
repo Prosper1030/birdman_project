@@ -320,6 +320,29 @@ class EdgeItem(QGraphicsPathItem):
 
         return min(midpoints, key=lambda p: QLineF(p, point).length())
 
+    def set_complex_path(self, path_points: list):
+        """
+        根據一個點列表（例如來自路由器的結果）設定複雜路徑。
+        這個方法會處理 QPainterPath 的轉換並更新箭頭。
+        """
+        if not path_points or len(path_points) < 2:
+            self.setPath(QPainterPath())
+            if hasattr(self, 'arrowHead'):
+                self.arrowHead.setPath(QPainterPath())
+            return
+
+        # 1. 將點列表 (list) 轉換為 QPainterPath
+        painter_path = QPainterPath(path_points[0])
+        for point in path_points[1:]:
+            painter_path.lineTo(point)
+
+        # 2. 設定邊線的路徑
+        self.setPath(painter_path)
+
+        # 3. 根據路徑的最後一段來更新箭頭的位置
+        if hasattr(self, '_updateArrowHead'):
+            self._updateArrowHead(path_points[-2], path_points[-1])
+
     def set_path_from_ports(self, src_port: QPointF, dst_port: QPointF):
         """
         根據佈局引擎計算好的 Port 座標來設定路徑，

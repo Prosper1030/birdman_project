@@ -560,18 +560,17 @@ class DsmEditor(QDialog):
     def _apply_path_to_edge(self, edge_item, path_points) -> None:
         """
         將路由路徑應用到邊線圖形項目
-
-        Args:
-            edge_item: 邊線圖形項目
-            path_points: 路徑點列表
         """
-        if hasattr(edge_item, 'setPath'):
-            # 如果邊線支持設置路徑
-            edge_item.setPath(path_points)
-        elif hasattr(edge_item, 'updatePath'):
-            # 如果邊線有更新路徑的方法
-            edge_item.updatePath(path_points)
-        # 否則讓邊線自己處理 (通過更新端點位置)
+        # 【修改】呼叫 EdgeItem 自己的方法來處理複雜路徑
+        if hasattr(edge_item, 'set_complex_path'):
+            edge_item.set_complex_path(path_points)
+        else:
+            # 保留回退方案
+            from PyQt5.QtGui import QPainterPath
+            path = QPainterPath(path_points[0])
+            for p in path_points[1:]:
+                path.lineTo(p)
+            edge_item.setPath(path)
 
     def _updateSceneRectToFitNodes(self, padding: int = 200) -> None:
         """將場景範圍擴張至涵蓋所有節點，避免節點被裁切。僅在佈局完成後呼叫。"""
