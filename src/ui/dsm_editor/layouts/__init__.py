@@ -10,6 +10,7 @@ Layout Algorithms Package
 
 from .hierarchical import (
     layout_hierarchical,
+    layout_hierarchical_with_info,  # 完整訊息版本
     compute_hierarchical_layout,  # 向後相容別名
     SugiyamaLayout,  # 完整的杉山方法引擎
 )
@@ -26,6 +27,7 @@ from .force_directed import (
 __all__ = [
     # 階層式佈局 - 完整杉山方法
     'layout_hierarchical',
+    'layout_hierarchical_with_info',
     'compute_hierarchical_layout',
     'SugiyamaLayout',
     
