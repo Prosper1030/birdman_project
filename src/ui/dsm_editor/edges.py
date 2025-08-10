@@ -102,7 +102,7 @@ class EdgeItem(QGraphicsPathItem):
         self.tempPen = QPen(Qt.gray, 2, Qt.DashLine)
 
         self.setPen(self.normalPen)
-        self.setZValue(15)  # 提高邊線的 Z 值，確保在節點之上
+        self.setZValue(5)  # 提高邊線的 Z 值，確保在節點下方但高於背景
 
         # 設定旗標
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
