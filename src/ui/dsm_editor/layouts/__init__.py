@@ -10,8 +10,8 @@ Layout Algorithms Package
 
 from .hierarchical import (
     layout_hierarchical,
-    _simple_grid_layout,
-    _simple_hierarchical_fallback
+    compute_hierarchical_layout,  # 向後相容別名
+    SugiyamaLayout,  # 完整的杉山方法引擎
 )
 from .orthogonal import (
     layout_orthogonal,
@@ -24,10 +24,10 @@ from .force_directed import (
 )
 
 __all__ = [
-    # 階層式佈局
+    # 階層式佈局 - 完整杉山方法
     'layout_hierarchical',
-    '_simple_grid_layout',
-    '_simple_hierarchical_fallback',
+    'compute_hierarchical_layout',
+    'SugiyamaLayout',
     
     # 正交式佈局
     'layout_orthogonal',
