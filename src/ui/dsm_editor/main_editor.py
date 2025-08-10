@@ -53,7 +53,6 @@ class DsmEditor(QDialog):
 
         # 邊的路由模式（佈局完成後才啟用正交路由）
         self.routing_enabled = False
-        self.routing_style = 'normal'  # 'normal' 或 'orthogonal'
 
         # yEd 風格邊線路由管理器
         self.edge_router_manager = None  # 在場景建立後初始化
@@ -261,9 +260,6 @@ class DsmEditor(QDialog):
             self.node_height = settings['node_height']
             self.node_margin = settings['node_margin']
             self.min_gap = settings['min_gap']
-            
-            # 更新路由設定
-            self.routing_style = settings['routing_style']
 
             # 應用佈局
             self.applyHierarchicalLayout()
@@ -517,8 +513,8 @@ class DsmEditor(QDialog):
         2. 全圖正交路由 (此步驟)
         3. 重繪 (自動)
         """
-        # 只有當路由樣式設定為正射(orthogonal)時才執行正交路由
-        if not self.edge_router_manager or self.routing_style != 'orthogonal':
+        # 階層佈局後一律執行正交路由
+        if not self.edge_router_manager:
             return
         
         # 【新增】如果沒有 port 資訊，也直接返回
