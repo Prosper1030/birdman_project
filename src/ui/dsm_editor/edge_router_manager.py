@@ -225,7 +225,7 @@ class EdgeRouterManager(QObject):
         obstacles: List[QRectF] = None
     ) -> List[QPointF]:
         """
-        安全的正交路由，帶有 ROI 優化和回退機制
+        yEd 風格安全正交路由：加入 stub、Manhattan 強制和回退機制
         
         Args:
             edge_item: 邊線項目
@@ -234,31 +234,73 @@ class EdgeRouterManager(QObject):
             obstacles: 預先計算的障礙物列表（可選）
             
         Returns:
-            路徑點列表
+            完全正交的路徑點列表（包含 stub）
         """
         try:
-            # 使用 ROI 優化障礙物收集
-            if obstacles is None:
-                roi_rect = self._calculate_roi(start_pos, end_pos, padding=200)
-                obstacles = self._collect_obstacles(edge_item, roi_rect)
+            # 1) 先做 port stub
+            src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
+            dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
             
-            # 嘗試使用高級正交路由
-            path = self._route_orthogonal(edge_item, start_pos, end_pos, obstacles)
-            if path and len(path) >= 2:
-                return path
+            src_side = self._infer_port_side(src, start_pos) if src else 'right'
+            dst_side = self._infer_port_side(dst, end_pos) if dst else 'left'
+            
+            s_out = self._make_stub_point(start_pos, src_side, self.STUB_LEN)
+            t_out = self._make_stub_point(end_pos, dst_side, self.STUB_LEN)
+
+            # 2) ROI 障礙物收集（保持原本的做法）
+            if obstacles is None:
+                roi = self._calculate_roi(s_out, t_out, padding=200)
+                obstacles = self._collect_obstacles(edge_item, roi)
+
+            # 3) 用高級路由算 s_out↔t_out；若失敗或過短，回 L 型
+            pts = None
+            if self._orthogonal_router:
+                try:
+                    pts = self._orthogonal_router.route_edge(s_out, t_out, obstacles)
+                    if pts and len(pts) >= 2:
+                        print(f"[高級路由+stub] 成功獲得 {len(pts)} 點路徑")
+                except Exception as e:
+                    print(f"高級路由失敗: {e}")
+
+            prefer = 'TB'
+            if not pts or len(pts) < 2:
+                pts = self._route_simple_orthogonal(s_out, t_out)
+                print(f"[回退L型+stub] 使用簡單路由，{len(pts)} 點")
+
+            # 4) 強制 Manhattan + 至少一個轉角
+            pts = self._ensure_manhattan(pts, prefer=prefer, always_elbow=True)
+
+            # 5) 組回完整路徑（含 stub）
+            full = [start_pos, s_out] + pts[1:-1] + [t_out, end_pos]
+            final_path = self._ensure_manhattan(full, prefer=prefer, always_elbow=True)
+            
+            print(f"[yEd正交] 最終路徑 {len(final_path)} 點（含stub）")
+            return final_path
+
         except Exception as e:
-            print(f"正交路由失敗: {e}")
-        
-        # 回退到簡單正交路由（L型折線）
-        try:
-            return self._route_simple_orthogonal(start_pos, end_pos)
-        except Exception as e:
-            print(f"簡單正交路由失敗: {e}")
-        
-        # 最終回退到 L 型折線
-        self.routing_stats['fallback_count'] += 1
-        print("使用最終回退：基本 L 型折線")
-        return self._route_simple_orthogonal(start_pos, end_pos)
+            print(f"正交路由失敗，改用 L 型：{e}")
+            self.routing_stats['fallback_count'] += 1
+            
+            # 保底：含 stub 的 L 型
+            prefer = 'TB'
+            try:
+                src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
+                dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
+                
+                src_side = self._infer_port_side(src, start_pos) if src else 'right'
+                dst_side = self._infer_port_side(dst, end_pos) if dst else 'left'
+                
+                s_out = self._make_stub_point(start_pos, src_side, self.STUB_LEN)
+                t_out = self._make_stub_point(end_pos, dst_side, self.STUB_LEN)
+                
+                core = self._route_simple_orthogonal(s_out, t_out)
+                fallback_path = [start_pos, s_out] + core[1:-1] + [t_out, end_pos]
+                
+                print(f"[保底L型+stub] 最終 {len(fallback_path)} 點")
+                return self._ensure_manhattan(fallback_path, prefer=prefer, always_elbow=True)
+            except Exception as fallback_e:
+                print(f"保底路由也失敗: {fallback_e}")
+                return self._route_simple_orthogonal(start_pos, end_pos)
     
     def _route_orthogonal(
         self, 
@@ -354,41 +396,22 @@ class EdgeRouterManager(QObject):
     
     def _route_simple_orthogonal(self, start_pos: QPointF, end_pos: QPointF) -> List[QPointF]:
         """
-        智能的正交路由：L型或直線
+        yEd 風格簡單正交路由：永遠返回3點，強制至少1個轉角
         
         Args:
             start_pos: 起始位置
             end_pos: 結束位置
             
         Returns:
-            路徑點列表
+            固定3點路徑列表（包含1個轉角）
         """
-        dx = end_pos.x() - start_pos.x()
-        dy = end_pos.y() - start_pos.y()
+        # 固定策略：以 TB 方向為預設（先垂直再水平）
+        prefer = 'TB'
         
-        # 如果已經是水平或垂直的，直接連線
-        if abs(dx) < 5 or abs(dy) < 5:
-            return [start_pos, end_pos]
-        
-        # 智能決定走向：考慮佈局方向
-        # 1. 如果是階層布局（TB方向），優先垂直後水平
-        # 2. 如果起點在終點左上方，先水平再垂直
-        # 3. 如果起點在終點右下方，先垂直再水平
-        
-        if dx > 0 and dy > 0:
-            # 起點在終點左上方：先水平後垂直
-            mid_point = QPointF(end_pos.x(), start_pos.y())
-        elif dx < 0 and dy < 0:
-            # 起點在終點右下方：先垂直後水平  
+        if prefer == 'TB':
             mid_point = QPointF(start_pos.x(), end_pos.y())
-        else:
-            # 其他情況：選擇較長的方向優先
-            if abs(dx) > abs(dy):
-                # 先水平後垂直
-                mid_point = QPointF(end_pos.x(), start_pos.y())
-            else:
-                # 先垂直後水平
-                mid_point = QPointF(start_pos.x(), end_pos.y())
+        else:  # 'LR'
+            mid_point = QPointF(end_pos.x(), start_pos.y())
         
         return [start_pos, mid_point, end_pos]
     
@@ -544,6 +567,86 @@ class EdgeRouterManager(QObject):
             'user_modified_count': len(self.user_modified_edges)
         }
     
+    # yEd 風格正交路由工具函式
+    STUB_LEN = 16
+
+    def _infer_port_side(self, node, pos: QPointF) -> str:
+        """推斷端口位於節點的哪一側，回傳 'top'|'right'|'bottom'|'left'"""
+        if not node or not hasattr(node, 'sceneBoundingRect'):
+            return 'right'  # 預設值
+            
+        r = node.sceneBoundingRect()
+        d = {
+            'left': abs(pos.x() - r.left()),
+            'right': abs(pos.x() - r.right()),
+            'top': abs(pos.y() - r.top()),
+            'bottom': abs(pos.y() - r.bottom()),
+        }
+        return min(d, key=d.get)
+
+    def _make_stub_point(self, pos: QPointF, side: str, length: float = None) -> QPointF:
+        """從端口位置向外推出指定長度的 stub 點"""
+        if length is None:
+            length = self.STUB_LEN
+            
+        if side == 'left':
+            return QPointF(pos.x() - length, pos.y())
+        elif side == 'right':
+            return QPointF(pos.x() + length, pos.y())
+        elif side == 'top':
+            return QPointF(pos.x(), pos.y() - length)
+        else:  # bottom
+            return QPointF(pos.x(), pos.y() + length)
+
+    def _ensure_manhattan(self, pts: List[QPointF], prefer: str = 'TB', always_elbow: bool = True) -> List[QPointF]:
+        """
+        將任意點列正規化為完全正交路徑
+        
+        Args:
+            pts: 原始點列
+            prefer: 'TB' → 優先垂直再水平（HV），'LR' → 優先水平再垂直（VH）
+            always_elbow: 若只有兩點，強制插入一個轉角
+            
+        Returns:
+            完全正交的點列
+        """
+        if not pts:
+            return []
+        
+        out = [pts[0]]
+        for a, b in zip(pts, pts[1:]):
+            ax, ay = a.x(), a.y()
+            bx, by = b.x(), b.y()
+            
+            # 如果已經是正交連接（同 x 或同 y），直接加入
+            if abs(ax - bx) < 0.1 or abs(ay - by) < 0.1:
+                out.append(b)
+            else:
+                # 插入中繼點強制正交
+                if prefer == 'TB':
+                    mid = QPointF(ax, by)  # 先垂直再水平
+                else:  # 'LR'
+                    mid = QPointF(bx, ay)  # 先水平再垂直
+                out.append(mid)
+                out.append(b)
+        
+        # always_elbow：若只有兩點，強制插一個轉角
+        if always_elbow and len(out) == 2:
+            a, b = out[0], out[1]
+            if prefer == 'TB':
+                mid = QPointF(a.x(), b.y())
+            else:
+                mid = QPointF(b.x(), a.y())
+            out = [a, mid, b]
+        
+        # 去除重複點
+        dedup = [out[0]]
+        for p in out[1:]:
+            if abs(p.x() - dedup[-1].x()) > 0.1 or abs(p.y() - dedup[-1].y()) > 0.1:
+                dedup.append(p)
+        
+        return dedup
+
     def reset_user_modifications(self) -> None:
         """重置所有用戶修改記錄"""
         self.user_modified_edges.clear()
