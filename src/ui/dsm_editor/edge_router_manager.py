@@ -16,9 +16,7 @@ Edge Router Manager for yEd-style Routing
 import time
 from typing import List, Dict, Tuple, Set, Optional
 from enum import Enum
-from PyQt5.QtCore import QPointF, QRectF, QObject, QTimer
-from PyQt5.QtGui import QPainterPath
-from PyQt5.QtWidgets import QGraphicsItem
+from PyQt5.QtCore import QPointF, QRectF, QObject
 
 
 class RoutingMode(Enum):
@@ -387,8 +385,8 @@ class EdgeRouterManager(QObject):
         # 從場景中找到所有相同配對的邊線
         if hasattr(target_edge, 'scene') and target_edge.scene():
             for item in target_edge.scene().items():
-                if (hasattr(item, 'src') and hasattr(item, 'dst') and 
-                    hasattr(item.src, 'taskId') and hasattr(item.dst, 'taskId')):
+                if (hasattr(item, 'src') and hasattr(item, 'dst') and
+                        hasattr(item.src, 'taskId') and hasattr(item.dst, 'taskId')):
                     if (item.src.taskId == target_src and item.dst.taskId == target_dst):
                         same_edges.append(item)
         
@@ -633,10 +631,22 @@ class EdgeRouterManager(QObject):
         # always_elbow：若只有兩點，強制插一個轉角
         if always_elbow and len(out) == 2:
             a, b = out[0], out[1]
-            if prefer == 'TB':
-                mid = QPointF(a.x(), b.y())
+            ax, ay = a.x(), a.y()
+            bx, by = b.x(), b.y()
+            
+            # 檢查是否已經是正交的（水平或垂直線）
+            if abs(ax - bx) < 0.1:  # 垂直線
+                # 插入水平中點
+                mid = QPointF((ax + bx) / 2 + 20, ay)  # 稍微偏移避免重疊
+            elif abs(ay - by) < 0.1:  # 水平線
+                # 插入垂直中點
+                mid = QPointF(ax, (ay + by) / 2 + 20)  # 稍微偏移避免重疊
             else:
-                mid = QPointF(b.x(), a.y())
+                # 對角線按照 prefer 策略
+                if prefer == 'TB':
+                    mid = QPointF(ax, by)
+                else:
+                    mid = QPointF(bx, ay)
             out = [a, mid, b]
         
         # 去除重複點
