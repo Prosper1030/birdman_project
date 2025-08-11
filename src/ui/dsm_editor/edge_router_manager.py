@@ -144,22 +144,24 @@ class EdgeRouterManager(QObject):
         
         try:
             result = {}
-            obstacles = self._collect_obstacles()
+            # 不預先收集所有障礙物，改用 ROI 個別收集
             
-            # 檢查超時
+            # 檢查超時和逐邊處理
             for i, (edge_item, start_pos, end_pos) in enumerate(edges_data):
                 if time.time() - start_time > self.timeout_ms / 1000:
                     print(f"路由計算超時，已處理 {i}/{len(edges_data)} 條邊線")
                     self.routing_stats['timeout_count'] += 1
-                    # 剩餘邊線使用直線
+                    # 剩餘邊線使用 L 型正交路由
                     for j in range(i, len(edges_data)):
                         remaining_edge, remaining_start, remaining_end = edges_data[j]
                         edge_key = self._get_edge_key(remaining_edge)
-                        result[edge_key] = [remaining_start, remaining_end]
+                        # 超時回退改用 L 型折線而不是直線
+                        result[edge_key] = self._route_simple_orthogonal(remaining_start, remaining_end)
                     break
                 
                 edge_key = self._get_edge_key(edge_item)
-                path = self._route_orthogonal_safe(edge_item, start_pos, end_pos, obstacles)
+                # 使用個別 ROI 優化的路由
+                path = self._route_orthogonal_safe(edge_item, start_pos, end_pos)
                 result[edge_key] = path
             
             elapsed = time.time() - start_time
@@ -172,8 +174,8 @@ class EdgeRouterManager(QObject):
         except Exception as e:
             print(f"全圖正交路由失敗: {e}")
             self.routing_stats['fallback_count'] += 1
-            # 全部回退到直線
-            return self._fallback_to_straight_lines(edges_data)
+            # 全部回退到 L 型正交路由
+            return self._fallback_to_simple_orthogonal(edges_data)
         finally:
             # 恢復原模式
             self.set_routing_mode(original_mode)
@@ -220,18 +222,23 @@ class EdgeRouterManager(QObject):
         obstacles: List[QRectF] = None
     ) -> List[QPointF]:
         """
-        安全的正交路由，帶有回退機制
+        安全的正交路由，帶有 ROI 優化和回退機制
         
         Args:
             edge_item: 邊線項目
             start_pos: 起始位置
             end_pos: 結束位置
-            obstacles: 障礙物列表
+            obstacles: 預先計算的障礙物列表（可選）
             
         Returns:
             路徑點列表
         """
         try:
+            # 使用 ROI 優化障礙物收集
+            if obstacles is None:
+                roi_rect = self._calculate_roi(start_pos, end_pos, padding=200)
+                obstacles = self._collect_obstacles(edge_item, roi_rect)
+            
             # 嘗試使用高級正交路由
             path = self._route_orthogonal(edge_item, start_pos, end_pos, obstacles)
             if path and len(path) >= 2:
@@ -239,15 +246,16 @@ class EdgeRouterManager(QObject):
         except Exception as e:
             print(f"正交路由失敗: {e}")
         
-        # 回退到簡單正交路由（L型或直線）
+        # 回退到簡單正交路由（L型折線）
         try:
             return self._route_simple_orthogonal(start_pos, end_pos)
         except Exception as e:
             print(f"簡單正交路由失敗: {e}")
         
-        # 最終回退到直線
+        # 最終回退到 L 型折線
         self.routing_stats['fallback_count'] += 1
-        return [start_pos, end_pos]
+        print("使用最終回退：基本 L 型折線")
+        return self._route_simple_orthogonal(start_pos, end_pos)
     
     def _route_orthogonal(
         self, 
@@ -319,9 +327,41 @@ class EdgeRouterManager(QObject):
         
         return [start_pos, mid_point, end_pos]
     
-    def _collect_obstacles(self) -> List[QRectF]:
+    def _calculate_roi(self, start_pos: QPointF, end_pos: QPointF, padding: float = 200) -> QRectF:
+        """
+        計算路由搜尋的 ROI (Region of Interest) 區域
+        
+        Args:
+            start_pos: 起始位置
+            end_pos: 結束位置
+            padding: 擴展邊界（像素）
+        
+        Returns:
+            ROI 矩形區域
+        """
+        # 計算起終點的包圍盒
+        min_x = min(start_pos.x(), end_pos.x())
+        max_x = max(start_pos.x(), end_pos.x())
+        min_y = min(start_pos.y(), end_pos.y())
+        max_y = max(start_pos.y(), end_pos.y())
+        
+        # 外擴 padding
+        roi_rect = QRectF(
+            min_x - padding,
+            min_y - padding,
+            (max_x - min_x) + 2 * padding,
+            (max_y - min_y) + 2 * padding
+        )
+        
+        return roi_rect
+    
+    def _collect_obstacles(self, edge_item=None, roi_rect: QRectF = None) -> List[QRectF]:
         """
         收集場景中的障礙物（節點邊界框）
+        
+        Args:
+            edge_item: 當前路由的邊線項目，將排除其起終點節點
+            roi_rect: ROI 區域，只收集此區域內的障礙物
         
         Returns:
             障礙物矩形列表
@@ -331,35 +371,58 @@ class EdgeRouterManager(QObject):
         if not self.scene:
             return obstacles
         
+        # 獲取要排除的節點（起終點）
+        excluded_nodes = set()
+        if edge_item:
+            # 獲取邊線的起終點節點
+            src_node = getattr(edge_item, 'src', None) or getattr(edge_item, 'source_node', None)
+            dst_node = getattr(edge_item, 'dst', None) or getattr(edge_item, 'target_node', None)
+            if src_node:
+                excluded_nodes.add(src_node)
+            if dst_node:
+                excluded_nodes.add(dst_node)
+        
         # 收集所有節點作為障礙物
         for item in self.scene.items():
             # 支援 taskId 和 task_id 兩種命名
             has_task_id = hasattr(item, 'taskId') or hasattr(item, 'task_id')
             if hasattr(item, 'boundingRect') and has_task_id:
+                # 排除起終點節點
+                if item in excluded_nodes:
+                    continue
+                
                 # 這是一個任務節點
                 rect = item.boundingRect()
                 scene_rect = item.mapRectToScene(rect)
+                
+                # ROI 過濾：只保留 ROI 區域內的障礙物
+                if roi_rect and not roi_rect.intersects(scene_rect):
+                    continue
+                
                 # 加入 12px 安全邊界避免邊線貼得太近
                 expanded_rect = scene_rect.adjusted(-12, -12, 12, 12)
                 obstacles.append(expanded_rect)
         
-        print(f"收集到 {len(obstacles)} 個障礙物節點")
+        excluded_count = len(excluded_nodes)
+        roi_info = "，ROI 過濾" if roi_rect else ""
+        print(f"收集到 {len(obstacles)} 個障礙物節點（排除 {excluded_count} 個起終點{roi_info}）")
         return obstacles
     
-    def _fallback_to_straight_lines(self, edges_data: List[Tuple]) -> Dict[Tuple[str, str], List[QPointF]]:
+    def _fallback_to_simple_orthogonal(self, edges_data: List[Tuple]) -> Dict[Tuple[str, str], List[QPointF]]:
         """
-        回退到直線連接
+        回退到簡單正交連接（L型折線）
         
         Args:
             edges_data: [(edge_item, start_pos, end_pos), ...]
             
         Returns:
-            {edge_key: [start, end], ...}
+            {edge_key: [L型路徑點列表], ...}
         """
         result = {}
         for edge_item, start_pos, end_pos in edges_data:
             edge_key = self._get_edge_key(edge_item)
-            result[edge_key] = [start_pos, end_pos]
+            # 使用 L 型正交路由而不是直線
+            result[edge_key] = self._route_simple_orthogonal(start_pos, end_pos)
         return result
     
     def _get_edge_key(self, edge_item) -> Tuple[str, str]:
@@ -423,7 +486,7 @@ class EdgeRouterManager(QObject):
 
 
 # 便利函數
-def create_yed_router_manager(scene, timeout_ms: int = 2000) -> EdgeRouterManager:
+def create_yed_router_manager(scene, timeout_ms: int = 5000) -> EdgeRouterManager:
     """
     創建 yEd 風格的路由管理器
     
