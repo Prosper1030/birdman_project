@@ -320,28 +320,90 @@ class EdgeItem(QGraphicsPathItem):
 
         return min(midpoints, key=lambda p: QLineF(p, point).length())
 
-    def set_complex_path(self, path_points: list):
+    def set_complex_path(self, path_points: list, offset_pixels: float = 0):
         """
-        根據一個點列表（例如來自路由器的結果）設定複雜路徑。
-        這個方法會處理 QPainterPath 的轉換並更新箭頭。
+        根據一個點列表設定複雜正交路徑，支援多線偏移避免重疊
+        
+        Args:
+            path_points: 路徑點列表（QPointF 或 tuple）
+            offset_pixels: 偏移像素（用於多條邊的避重疊）
         """
         if not path_points or len(path_points) < 2:
             self.setPath(QPainterPath())
             if hasattr(self, 'arrowHead'):
                 self.arrowHead.setPath(QPainterPath())
+            print(f"[EdgeItem] 空路徑或點數不足: {len(path_points) if path_points else 0} 點")
             return
 
-        # 1. 將點列表 (list) 轉換為 QPainterPath
-        painter_path = QPainterPath(path_points[0])
-        for point in path_points[1:]:
+        # 處理點格式統一（支援 QPointF 和 tuple）
+        normalized_points = []
+        for point in path_points:
+            if hasattr(point, 'x') and hasattr(point, 'y'):
+                normalized_points.append(QPointF(point.x(), point.y()))
+            else:
+                normalized_points.append(QPointF(float(point[0]), float(point[1])))
+
+        # 套用偏移以避免重疊（對垂直和水平線段分別處理）
+        if abs(offset_pixels) > 0.1:
+            normalized_points = self._apply_path_offset(normalized_points, offset_pixels)
+
+        # 1. 將點列表轉換為 QPainterPath
+        painter_path = QPainterPath(normalized_points[0])
+        for point in normalized_points[1:]:
             painter_path.lineTo(point)
 
         # 2. 設定邊線的路徑
         self.setPath(painter_path)
 
-        # 3. 根據路徑的最後一段來更新箭頭的位置
-        if hasattr(self, '_updateArrowHead'):
-            self._updateArrowHead(path_points[-2], path_points[-1])
+        # 3. 更新箭頭位置
+        if len(normalized_points) >= 2 and hasattr(self, '_updateArrowHead'):
+            # 使用最後兩個點計算箭頭方向
+            self._updateArrowHead(normalized_points[-2], normalized_points[-1])
+
+        # 4. 日誌輸出
+        fallback_info = " [fallback L/Z]" if len(normalized_points) < 3 else ""
+        edge_id = f"{self.src.taskId}->{self.dst.taskId}" if hasattr(self, 'src') and hasattr(self, 'dst') else "unknown"
+        print(f"[EdgeItem] 設定路徑 {edge_id}: {len(normalized_points)} 點{fallback_info}")
+        
+        # 5. 觸發重繪
+        self.update()
+
+    def _apply_path_offset(self, points: list, offset_pixels: float) -> list:
+        """
+        對正交路徑應用偏移，避免多條邊重疊
+        
+        Args:
+            points: 正交路徑點列表
+            offset_pixels: 偏移像素（正數向右/下偏移）
+            
+        Returns:
+            偏移後的點列表
+        """
+        if len(points) < 2:
+            return points
+        
+        offset_points = []
+        
+        for i, point in enumerate(points):
+            if i == 0 or i == len(points) - 1:
+                # 起點和終點不偏移（保持與節點port連接）
+                offset_points.append(point)
+            else:
+                # 中間點根據線段方向偏移
+                prev_point = points[i-1]
+                next_point = points[i+1] if i < len(points)-1 else points[i]
+                
+                # 判斷這個點所在線段的方向
+                if abs(prev_point.x() - point.x()) < 1:
+                    # 垂直線段：水平偏移
+                    offset_point = QPointF(point.x() + offset_pixels, point.y())
+                else:
+                    # 水平線段：垂直偏移  
+                    offset_point = QPointF(point.x(), point.y() + offset_pixels)
+                
+                offset_points.append(offset_point)
+        
+        return offset_points
 
     def set_path_from_ports(self, src_port: QPointF, dst_port: QPointF):
         """
