@@ -541,18 +541,16 @@ class DsmEditor(QDialog):
 
         print(f"執行佈局後正交路由，處理 {len(edges_data)} 條邊線...")
 
-        # 執行全圖正交路由
+        # 執行全圖正交路由（路徑會直接應用到邊線）
         try:
             routing_results = self.edge_router_manager.route_all_edges_for_layout(edges_data)
-
-            # 應用路由結果到邊線
-            for (edge_item, _, _) in edges_data:
-                edge_key = self.edge_router_manager._get_edge_key(edge_item)
-                if edge_key in routing_results:
-                    path_points = routing_results[edge_key]
-                    self._apply_path_to_edge(edge_item, path_points)
-
-            print("佈局後正交路由完成")
+            
+            # 路徑已經在 route_all_edges_for_layout 中直接應用到 EdgeItem
+            # 這裡只需要確保所有邊線都已更新
+            edge_count = len(edges_data)
+            successful_routes = len([r for r in routing_results.values() if r and len(r) >= 2])
+            
+            print(f"佈局後正交路由完成：{successful_routes}/{edge_count} 條邊線成功路由")
 
         except Exception as e:
             print(f"正交路由執行失敗: {e}")

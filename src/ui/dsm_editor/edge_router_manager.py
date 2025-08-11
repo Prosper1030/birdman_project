@@ -163,6 +163,9 @@ class EdgeRouterManager(QObject):
                 # 使用個別 ROI 優化的路由
                 path = self._route_orthogonal_safe(edge_item, start_pos, end_pos)
                 result[edge_key] = path
+                
+                # 立即應用路徑到 EdgeItem，確保路徑真正繪製到畫面
+                self._apply_path_to_edge_immediate(edge_item, path)
             
             elapsed = time.time() - start_time
             self.last_routing_time = elapsed
@@ -265,7 +268,7 @@ class EdgeRouterManager(QObject):
         obstacles: List[QRectF] = None
     ) -> List[QPointF]:
         """
-        正交路由實現（90度折線）
+        正交路由實現（90度折線） - 整合真正的避障路由
         
         Args:
             edge_item: 邊線項目
@@ -276,16 +279,78 @@ class EdgeRouterManager(QObject):
         Returns:
             路徑點列表
         """
-        # 如果有高級路由器，使用它
+        # 如果有高級路由器，使用它進行真正的避障路由
         if self._orthogonal_router:
             try:
-                return self._orthogonal_router.route_edge(start_pos, end_pos, obstacles)
+                path_points = self._orthogonal_router.route_edge(start_pos, end_pos, obstacles)
+                
+                # 驗證路由結果
+                if path_points and len(path_points) >= 2:
+                    edge_id = f"{edge_item.src.taskId}->{edge_item.dst.taskId}" if hasattr(edge_item, 'src') else "unknown"
+                    print(f"[高級路由] {edge_id}: {len(path_points)} 點")
+                    return path_points
+                else:
+                    print(f"[高級路由] 結果無效，回退到簡單路由")
+                    
             except Exception as e:
-                print(f"高級路由器失敗: {e}")
-                pass
+                print(f"高級路由器執行失敗: {e}")
         
-        # 否則使用簡單正交路由
+        # 回退到簡單正交路由
         return self._route_simple_orthogonal(start_pos, end_pos)
+    
+    def _apply_path_to_edge_immediate(self, edge_item, path_points: List[QPointF]) -> None:
+        """
+        立即應用路徑到邊線項目，確保路徑真正繪製到畫面
+        
+        Args:
+            edge_item: 邊線圖形項目
+            path_points: 路徑點列表
+        """
+        try:
+            # 檢查是否為多邊重疊情況，計算偏移
+            offset_pixels = 0
+            if hasattr(edge_item, 'src') and hasattr(edge_item, 'dst'):
+                # 檢查是否有相同源目標的其他邊線
+                same_pair_edges = self._find_same_pair_edges(edge_item)
+                if len(same_pair_edges) > 1:
+                    # 為多邊線計算不同偏移量
+                    edge_index = same_pair_edges.index(edge_item) if edge_item in same_pair_edges else 0
+                    offset_pixels = (edge_index - len(same_pair_edges)/2) * 4  # ±4px 偏移
+            
+            # 使用 EdgeItem 的增強路徑設置方法
+            if hasattr(edge_item, 'set_complex_path'):
+                edge_item.set_complex_path(path_points, offset_pixels)
+            else:
+                # 回退方案：直接設置 QPainterPath
+                from PyQt5.QtGui import QPainterPath
+                if path_points and len(path_points) >= 2:
+                    painter_path = QPainterPath(path_points[0])
+                    for point in path_points[1:]:
+                        painter_path.lineTo(point)
+                    edge_item.setPath(painter_path)
+                    edge_item.update()
+                    
+        except Exception as e:
+            print(f"應用路徑到邊線失敗: {e}")
+    
+    def _find_same_pair_edges(self, target_edge) -> list:
+        """尋找相同源目標對的所有邊線"""
+        same_edges = []
+        if not hasattr(target_edge, 'src') or not hasattr(target_edge, 'dst'):
+            return [target_edge]
+            
+        target_src = target_edge.src.taskId
+        target_dst = target_edge.dst.taskId
+        
+        # 從場景中找到所有相同配對的邊線
+        if hasattr(target_edge, 'scene') and target_edge.scene():
+            for item in target_edge.scene().items():
+                if (hasattr(item, 'src') and hasattr(item, 'dst') and 
+                    hasattr(item.src, 'taskId') and hasattr(item.dst, 'taskId')):
+                    if (item.src.taskId == target_src and item.dst.taskId == target_dst):
+                        same_edges.append(item)
+        
+        return same_edges
     
     def _route_simple_orthogonal(self, start_pos: QPointF, end_pos: QPointF) -> List[QPointF]:
         """
