@@ -343,6 +343,14 @@ class EdgeItem(QGraphicsPathItem):
             else:
                 normalized_points.append(QPointF(float(point[0]), float(point[1])))
 
+        # TB 版面末段垂直保險（確保最後兩點同 x）
+        if len(normalized_points) >= 2:
+            p_prev, p_last = normalized_points[-2], normalized_points[-1]
+            if abs(p_prev.x() - p_last.x()) > 0.1:
+                # 插入垂直收斂點（TB 末段必垂直）
+                insert_p = QPointF(p_last.x(), p_prev.y())
+                normalized_points = normalized_points[:-1] + [insert_p, p_last]
+
         # 套用偏移以避免重疊（對垂直和水平線段分別處理）
         if abs(offset_pixels) > 0.1:
             normalized_points = self._apply_path_offset(normalized_points, offset_pixels)

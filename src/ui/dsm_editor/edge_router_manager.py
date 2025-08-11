@@ -25,15 +25,22 @@ class RoutingMode(Enum):
     LAYOUT = "layout"            # 佈局觸發：正交路由模式
 
 
+# TB 版面規範常數
+GRID = 16
+PORT_STUB = 16
+CLEAR = 12
+
+
 class EdgeRouterManager(QObject):
     """
-    yEd 風格的邊線路由管理器
+    TB 版面規範的邊線路由管理器
     
     核心功能：
-    1. 區分兩種路由狀態
-    2. 管理用戶手動調整的邊線
-    3. 提供安全回退機制
-    4. 與佈局系統整合
+    1. 嚴格 Manhattan 路由（僅水平/垂直）
+    2. 同軸例外（同 x 允許直線）
+    3. Port stub 避免轉角貼邊
+    4. 末段必為垂直（TB 版面）
+    5. 高級路由僅處理中段，保留首尾框架
     """
     
     def __init__(self, scene=None, timeout_ms: int = 2000):
@@ -66,6 +73,98 @@ class EdgeRouterManager(QObject):
             'timeout_count': 0,
             'fallback_count': 0
         }
+    
+    def _snap(self, v: float, g: int = GRID) -> float:
+        """將數值對齊到格點"""
+        return round(v / g) * g
+    
+    def _port_side(self, node, pos: QPointF) -> str:
+        """回傳 'top'|'right'|'bottom'|'left'；以距離邊界最近為準。"""
+        if not node or not hasattr(node, 'sceneBoundingRect'):
+            return 'bottom'
+        
+        r = node.sceneBoundingRect()
+        d = {
+            'left': abs(pos.x() - r.left()),
+            'right': abs(pos.x() - r.right()),
+            'top': abs(pos.y() - r.top()),
+            'bottom': abs(pos.y() - r.bottom())
+        }
+        return min(d, key=d.get)
+    
+    def _stub(self, p: QPointF, side: str, d: float = PORT_STUB) -> QPointF:
+        """產生 port stub 點"""
+        if side == 'top':
+            return QPointF(p.x(), p.y() - d)
+        if side == 'bottom':
+            return QPointF(p.x(), p.y() + d)
+        if side == 'left':
+            return QPointF(p.x() - d, p.y())
+        return QPointF(p.x() + d, p.y())
+    
+    def _dedupe_keep_elbow(self, pts):
+        """去掉連續重複點，但保留至少一個轉角（避免被簡成兩點）。"""
+        if not pts:
+            return []
+        
+        out = [pts[0]]
+        for q in pts[1:]:
+            if abs(q.x() - out[-1].x()) > 0.1 or abs(q.y() - out[-1].y()) > 0.1:
+                out.append(q)
+        
+        if len(out) == 2:
+            a, b = out
+            out = [a, QPointF(a.x(), b.y()), b]  # 保底 L 型
+        
+        return out
+    
+    def _ensure_manhattan(self, pts):
+        """將任意點列強制轉為正交：若一段既非同 x 也非同 y，插入中繼點。"""
+        if not pts:
+            return []
+        
+        out = [pts[0]]
+        for i in range(len(pts) - 1):
+            a, b = pts[i], pts[i + 1]
+            if abs(a.x() - b.x()) < 0.1 or abs(a.y() - b.y()) < 0.1:
+                out.append(b)
+            else:
+                # 拆成 HV（TB 版面）
+                mid = QPointF(a.x(), b.y())
+                out.extend([mid, b])
+        
+        return self._dedupe_keep_elbow(out)
+    
+    def _route_tb_canonical(self, edge_item, ps: QPointF, pt: QPointF):
+        """
+        TB 版面規範化路徑：
+        - 若 x 相同：允許單段垂直直線（同軸例外）
+        - 否則：ps→(stub)→水平層(y_mid)→(x_t, y_mid)→(stub)→pt，末段必垂直
+        """
+        # 同軸例外（允許直線）
+        if abs(ps.x() - pt.x()) < 0.1:
+            return [ps, pt]
+
+        # 端點與邊向
+        src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
+        dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
+        s_side = self._port_side(src, ps) if src else 'bottom'
+        t_side = self._port_side(dst, pt) if dst else 'top'
+
+        # stub：避免轉角貼邊
+        s_out = self._stub(ps, s_side, PORT_STUB)
+        t_in = self._stub(pt, t_side, PORT_STUB)
+
+        # 轉彎高度（中段）
+        y_low = s_out.y() + CLEAR
+        y_high = t_in.y() - CLEAR
+        y_mid = self._snap(max(min((s_out.y() + t_in.y()) * 0.5, y_high), y_low))
+
+        mid1 = QPointF(s_out.x(), y_mid)     # 垂直到層架
+        mid2 = QPointF(t_in.x(), y_mid)      # 水平到目標 x（應為 stub 入口點）
+        path = [ps, s_out, mid1, mid2, t_in, pt]
+
+        return self._ensure_manhattan(path)
     
     def set_routing_mode(self, mode: RoutingMode) -> None:
         """
@@ -223,7 +322,9 @@ class EdgeRouterManager(QObject):
         obstacles: List[QRectF] = None
     ) -> List[QPointF]:
         """
-        yEd 風格安全正交路由：加入 stub、Manhattan 強制和回退機制
+        TB 版面規範安全正交路由：
+        1) TB 規範化（無障礙時的標準路徑）
+        2) 有障礙才用高級路由覆蓋「中段」
         
         Args:
             edge_item: 邊線項目
@@ -232,73 +333,25 @@ class EdgeRouterManager(QObject):
             obstacles: 預先計算的障礙物列表（可選）
             
         Returns:
-            完全正交的路徑點列表（包含 stub）
+            TB 版面規範路徑點列表
         """
-        try:
-            # 1) 先做 port stub
-            src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
-            dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
-            
-            src_side = self._infer_port_side(src, start_pos) if src else 'right'
-            dst_side = self._infer_port_side(dst, end_pos) if dst else 'left'
-            
-            s_out = self._make_stub_point(start_pos, src_side, self.STUB_LEN)
-            t_out = self._make_stub_point(end_pos, dst_side, self.STUB_LEN)
+        # 1) TB 規範化（無障礙時的標準路徑）
+        base = self._route_tb_canonical(edge_item, start_pos, end_pos)
 
-            # 2) ROI 障礙物收集（保持原本的做法）
-            if obstacles is None:
-                roi = self._calculate_roi(s_out, t_out, padding=200)
-                obstacles = self._collect_obstacles(edge_item, roi)
-
-            # 3) 用高級路由算 s_out↔t_out；若失敗或過短，回 L 型
-            pts = None
-            if self._orthogonal_router:
-                try:
-                    pts = self._orthogonal_router.route_edge(s_out, t_out, obstacles)
-                    if pts and len(pts) >= 2:
-                        print(f"[高級路由+stub] 成功獲得 {len(pts)} 點路徑")
-                except Exception as e:
-                    print(f"高級路由失敗: {e}")
-
-            prefer = 'TB'
-            if not pts or len(pts) < 2:
-                pts = self._route_simple_orthogonal(s_out, t_out)
-                print(f"[回退L型+stub] 使用簡單路由，{len(pts)} 點")
-
-            # 4) 強制 Manhattan + 至少一個轉角
-            pts = self._ensure_manhattan(pts, prefer=prefer, always_elbow=True)
-
-            # 5) 組回完整路徑（含 stub）
-            full = [start_pos, s_out] + pts[1:-1] + [t_out, end_pos]
-            final_path = self._ensure_manhattan(full, prefer=prefer, always_elbow=True)
-            
-            print(f"[yEd正交] 最終路徑 {len(final_path)} 點（含stub）")
-            return final_path
-
-        except Exception as e:
-            print(f"正交路由失敗，改用 L 型：{e}")
-            self.routing_stats['fallback_count'] += 1
-            
-            # 保底：含 stub 的 L 型
-            prefer = 'TB'
+        # 2) 有障礙才用高級路由覆蓋「中段」
+        if obstacles and len(obstacles) > 0 and self._orthogonal_router:
             try:
-                src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
-                dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
-                
-                src_side = self._infer_port_side(src, start_pos) if src else 'right'
-                dst_side = self._infer_port_side(dst, end_pos) if dst else 'left'
-                
-                s_out = self._make_stub_point(start_pos, src_side, self.STUB_LEN)
-                t_out = self._make_stub_point(end_pos, dst_side, self.STUB_LEN)
-                
-                core = self._route_simple_orthogonal(s_out, t_out)
-                fallback_path = [start_pos, s_out] + core[1:-1] + [t_out, end_pos]
-                
-                print(f"[保底L型+stub] 最終 {len(fallback_path)} 點")
-                return self._ensure_manhattan(fallback_path, prefer=prefer, always_elbow=True)
-            except Exception as fallback_e:
-                print(f"保底路由也失敗: {fallback_e}")
-                return self._route_simple_orthogonal(start_pos, end_pos)
+                if len(base) >= 4:  # 確保有足夠的點進行中段替換
+                    s_out, t_in = base[1], base[-2]   # 保留 stub 與末段垂直
+                    core = self._orthogonal_router.route_edge(s_out, t_in, obstacles)
+                    if core and len(core) >= 2:
+                        core = self._ensure_manhattan(core)
+                        # 組合：首段 + 高級路由中段 + 末段
+                        return self._dedupe_keep_elbow([base[0], base[1]] + core[1:-1] + [base[-2], base[-1]])
+            except Exception as e:
+                print(f"高級路由失敗：{e}")
+
+        return base
     
     def _route_orthogonal(
         self, 
@@ -564,9 +617,6 @@ class EdgeRouterManager(QObject):
             'current_mode': self.current_mode.value,
             'user_modified_count': len(self.user_modified_edges)
         }
-    
-    # yEd 風格正交路由工具函式
-    STUB_LEN = 16
 
     def _infer_port_side(self, node, pos: QPointF) -> str:
         """推斷端口位於節點的哪一側，回傳 'top'|'right'|'bottom'|'left'"""
