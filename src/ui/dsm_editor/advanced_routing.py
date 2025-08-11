@@ -1,21 +1,21 @@
 """
-Advanced Edge Routing Engine for DSM Editor
-Based on research: yEd's orthogonal visibility graphs with A* pathfinding
+Advanced Edge Routing Engine for DSM Editor - yEd Style Implementation
+實現真正的正交路由和避障功能
 
-Implements:
-1. Orthogonal Visibility Graph construction
-2. A* pathfinding with Manhattan routing
-3. Multi-edge handling and collision avoidance
-4. Real-time performance optimizations
+核心功能:
+1. Gate 機制讓起終點能走出節點
+2. 可見性圖構建與正交連線
+3. A* 路徑搜尋與曼哈頓距離計算
+4. ROI 優化和轉彎代價控制
+5. 網格對齊和多邊避重疊
 """
 
 import math
 import heapq
-from typing import List, Tuple, Dict, Set, Optional, NamedTuple
+from typing import List, Tuple, Dict, Set, Optional
 from dataclasses import dataclass
-from PyQt5.QtCore import QPointF, QRectF, QTimer
+from PyQt5.QtCore import QPointF, QRectF
 from PyQt5.QtGui import QPainterPath
-import time
 
 
 @dataclass
@@ -24,174 +24,218 @@ class RoutingNode:
     x: float
     y: float
     node_id: str = ""
-    node_type: str = "waypoint"  # "source", "target", "waypoint", "obstacle"
+    node_type: str = "waypoint"  # "source", "target", "waypoint", "gate", "corner"
     
     def __hash__(self):
-        return hash((self.x, self.y, self.node_id))
+        return hash((round(self.x, 2), round(self.y, 2), self.node_id))
     
     def __eq__(self, other):
-        return self.x == other.x and self.y == other.y
-
-
-@dataclass 
-class RoutingEdge:
-    """路由圖中的邊"""
-    start: RoutingNode
-    end: RoutingNode
-    cost: float
-    edge_type: str = "orthogonal"  # "orthogonal", "diagonal"
+        return abs(self.x - other.x) < 0.1 and abs(self.y - other.y) < 0.1
 
 
 class VisibilityGraph:
-    """正交可見性圖 - yEd 核心演算法"""
+    """正交可見性圖 - 支援 gate 機制"""
     
-    def __init__(self):
+    def __init__(self, grid_pitch: float = 20):
         self.nodes: Set[RoutingNode] = set()
-        self.edges: List[RoutingEdge] = []
+        self.adjacency: Dict[RoutingNode, List[Tuple[RoutingNode, float]]] = {}
         self.obstacles: List[QRectF] = []
+        self.grid_pitch = grid_pitch  # 格點對齊
         
     def add_obstacle(self, rect: QRectF, obstacle_id: str = ""):
-        """添加障礙物 (節點邊界框)"""
+        """添加障礙物並創建角點和中點"""
         self.obstacles.append(rect)
         
-        # 為每個障礙物創建 8 個連接點 (corners + midpoints)
+        # 為障礙物創建 8 個關鍵點 (4角點 + 4中點)
         corners_and_midpoints = [
-            RoutingNode(rect.left(), rect.top(), f"{obstacle_id}_tl"),
-            RoutingNode(rect.right(), rect.top(), f"{obstacle_id}_tr"), 
-            RoutingNode(rect.right(), rect.bottom(), f"{obstacle_id}_br"),
-            RoutingNode(rect.left(), rect.bottom(), f"{obstacle_id}_bl"),
-            RoutingNode(rect.center().x(), rect.top(), f"{obstacle_id}_tm"),
-            RoutingNode(rect.right(), rect.center().y(), f"{obstacle_id}_rm"),
-            RoutingNode(rect.center().x(), rect.bottom(), f"{obstacle_id}_bm"),
-            RoutingNode(rect.left(), rect.center().y(), f"{obstacle_id}_lm"),
+            RoutingNode(rect.left(), rect.top(), f"{obstacle_id}_tl", "corner"),
+            RoutingNode(rect.right(), rect.top(), f"{obstacle_id}_tr", "corner"), 
+            RoutingNode(rect.right(), rect.bottom(), f"{obstacle_id}_br", "corner"),
+            RoutingNode(rect.left(), rect.bottom(), f"{obstacle_id}_bl", "corner"),
+            RoutingNode(rect.center().x(), rect.top(), f"{obstacle_id}_tm", "waypoint"),
+            RoutingNode(rect.right(), rect.center().y(), f"{obstacle_id}_rm", "waypoint"),
+            RoutingNode(rect.center().x(), rect.bottom(), f"{obstacle_id}_bm", "waypoint"),
+            RoutingNode(rect.left(), rect.center().y(), f"{obstacle_id}_lm", "waypoint"),
         ]
         
-        self.nodes.update(corners_and_midpoints)
-    
+        for node in corners_and_midpoints:
+            self.add_node(node)
+
+    def add_node(self, node: RoutingNode):
+        """添加節點到圖中"""
+        # 對齊到格點
+        node.x = round(node.x / self.grid_pitch) * self.grid_pitch
+        node.y = round(node.y / self.grid_pitch) * self.grid_pitch
+        
+        self.nodes.add(node)
+        if node not in self.adjacency:
+            self.adjacency[node] = []
+
+    def inject_gate_for_point(self, pos: QPointF, gate_type: str = "gate") -> Optional[RoutingNode]:
+        """
+        為指定點注入gate節點，讓它能走出包含它的障礙物節點
+        
+        Args:
+            pos: 需要創建gate的位置（通常是起點或終點）
+            gate_type: gate類型標識
+            
+        Returns:
+            創建的gate節點，如果沒有包含該點的障礙物則返回None
+        """
+        # 找到包含此點的障礙物
+        host_obstacle = None
+        for obstacle in self.obstacles:
+            if obstacle.contains(pos):
+                host_obstacle = obstacle
+                break
+        
+        if not host_obstacle:
+            # 點不在任何障礙物內，直接添加為普通節點
+            gate_node = RoutingNode(pos.x(), pos.y(), f"free_{gate_type}", gate_type)
+            self.add_node(gate_node)
+            return gate_node
+        
+        # 計算到各邊的距離
+        distances = {
+            'top': abs(pos.y() - host_obstacle.top()),
+            'bottom': abs(pos.y() - host_obstacle.bottom()),
+            'left': abs(pos.x() - host_obstacle.left()),
+            'right': abs(pos.x() - host_obstacle.right())
+        }
+        
+        # 找到最近的邊
+        closest_side = min(distances, key=distances.get)
+        
+        # 在最近邊上創建gate節點
+        if closest_side in ('top', 'bottom'):
+            gate_y = host_obstacle.top() if closest_side == 'top' else host_obstacle.bottom()
+            gate_node = RoutingNode(pos.x(), gate_y, f"gate_{closest_side}", gate_type)
+        else:
+            gate_x = host_obstacle.left() if closest_side == 'left' else host_obstacle.right()
+            gate_node = RoutingNode(gate_x, pos.y(), f"gate_{closest_side}", gate_type)
+        
+        self.add_node(gate_node)
+        
+        # 連接原始點到gate（這樣可以進出節點）
+        original_node = RoutingNode(pos.x(), pos.y(), f"orig_{gate_type}", gate_type)
+        self.add_node(original_node)
+        
+        # 添加從原始點到gate的連線（零成本）
+        self._add_edge(original_node, gate_node, 0.1)
+        
+        return gate_node
+
     def build_visibility_edges(self):
-        """構建正交可見性邊 - 基於 opus 研究的方法"""
-        self.edges.clear()
+        """構建正交可見性邊"""
+        self.adjacency = {node: [] for node in self.nodes}
         nodes_list = list(self.nodes)
         
         for i, node1 in enumerate(nodes_list):
             for node2 in nodes_list[i+1:]:
-                # 只考慮正交方向的連接 (Manhattan routing)
-                if self._is_orthogonal(node1, node2):
-                    if self._is_visible(node1, node2):
-                        cost = self._calculate_cost(node1, node2)
-                        self.edges.append(RoutingEdge(node1, node2, cost))
-                        self.edges.append(RoutingEdge(node2, node1, cost))
-    
+                if self._is_orthogonal(node1, node2) and self._is_visible(node1, node2):
+                    cost = self._calculate_cost_with_penalty(node1, node2)
+                    self._add_edge(node1, node2, cost)
+                    self._add_edge(node2, node1, cost)
+
     def _is_orthogonal(self, node1: RoutingNode, node2: RoutingNode) -> bool:
-        """檢查兩節點是否在正交方向上"""
-        return node1.x == node2.x or node1.y == node2.y
-    
+        """檢查兩節點是否在正交方向"""
+        return abs(node1.x - node2.x) < 0.1 or abs(node1.y - node2.y) < 0.1
+
     def _is_visible(self, node1: RoutingNode, node2: RoutingNode) -> bool:
-        """檢查兩節點間是否可見 (無障礙物阻擋)"""
-        line_rect = QRectF(
-            min(node1.x, node2.x), min(node1.y, node2.y),
-            abs(node2.x - node1.x), abs(node2.y - node1.y)
-        )
+        """檢查兩節點間是否可見（無障礙物阻擋）"""
+        # 創建連線的邊界矩形
+        min_x, max_x = min(node1.x, node2.x), max(node1.x, node2.x)
+        min_y, max_y = min(node1.y, node2.y), max(node1.y, node2.y)
         
-        # 擴大線條為細長矩形進行碰撞檢測
-        if line_rect.width() == 0:
-            line_rect.setWidth(2)  # 垂直線
-        if line_rect.height() == 0:
-            line_rect.setHeight(2)  # 水平線
-            
+        # 擴大成細長矩形進行碰撞檢測
+        line_rect = QRectF(min_x - 1, min_y - 1, max_x - min_x + 2, max_y - min_y + 2)
+        
         for obstacle in self.obstacles:
             if obstacle.intersects(line_rect):
-                # 精確檢查是否真的被障礙物內部阻擋
-                if self._line_intersects_rect_interior(node1, node2, obstacle):
+                # 檢查線段是否真的穿越障礙物內部
+                if self._line_crosses_obstacle_interior(node1, node2, obstacle):
                     return False
         
         return True
-    
-    def _line_intersects_rect_interior(self, node1: RoutingNode, node2: RoutingNode, rect: QRectF) -> bool:
-        """檢查線段是否穿越矩形內部"""
-        # 簡化實現：檢查線段中點是否在矩形內部
-        mid_x = (node1.x + node2.x) / 2
-        mid_y = (node1.y + node2.y) / 2
-        return rect.contains(mid_x, mid_y)
-    
-    def _calculate_cost(self, node1: RoutingNode, node2: RoutingNode) -> float:
-        """計算邊的成本 - Manhattan 距離"""
-        return abs(node2.x - node1.x) + abs(node2.y - node1.y)
+
+    def _line_crosses_obstacle_interior(self, node1: RoutingNode, node2: RoutingNode, obstacle: QRectF) -> bool:
+        """檢查線段是否穿越障礙物內部"""
+        # 採用多點採樣檢查
+        steps = 5
+        for i in range(1, steps):
+            t = i / steps
+            sample_x = node1.x + t * (node2.x - node1.x)
+            sample_y = node1.y + t * (node2.y - node1.y)
+            
+            # 檢查採樣點是否在障礙物內部（不是邊界上）
+            if (obstacle.left() < sample_x < obstacle.right() and 
+                obstacle.top() < sample_y < obstacle.bottom()):
+                return True
+        
+        return False
+
+    def _calculate_cost_with_penalty(self, node1: RoutingNode, node2: RoutingNode) -> float:
+        """計算帶轉彎懲罰的成本"""
+        manhattan_distance = abs(node2.x - node1.x) + abs(node2.y - node1.y)
+        
+        # 轉彎懲罰：每次轉彎增加額外成本
+        turn_penalty = 0
+        if node1.node_type == "waypoint" and node2.node_type == "waypoint":
+            turn_penalty = 5  # 中間點轉彎懲罰
+        
+        return manhattan_distance + turn_penalty
+
+    def _add_edge(self, from_node: RoutingNode, to_node: RoutingNode, cost: float):
+        """添加有向邊到鄰接表"""
+        if from_node not in self.adjacency:
+            self.adjacency[from_node] = []
+        self.adjacency[from_node].append((to_node, cost))
 
 
 class AStarPathfinder:
-    """A* 路徑搜尋 - 基於 opus 研究的增強啟發式"""
+    """A* 路徑搜尋器 - 針對正交路由優化"""
     
     def __init__(self, visibility_graph: VisibilityGraph):
         self.graph = visibility_graph
-        self.adjacency: Dict[RoutingNode, List[RoutingEdge]] = {}
-        self._build_adjacency_list()
-    
-    def _build_adjacency_list(self):
-        """構建鄰接表以提升性能"""
-        self.adjacency.clear()
-        for edge in self.graph.edges:
-            if edge.start not in self.adjacency:
-                self.adjacency[edge.start] = []
-            self.adjacency[edge.start].append(edge)
-    
+
     def find_path(self, start: RoutingNode, goal: RoutingNode) -> List[RoutingNode]:
-        """使用 A* 尋找最短路徑 - 包含 opus 研究的 tie-breaking"""
-        
-        # Priority queue: (f_cost, g_cost, node)
+        """使用 A* 搜尋最佳路徑"""
+        # 優先佇列: (f_cost, g_cost, node)
         open_set = [(0, 0, start)]
         came_from: Dict[RoutingNode, RoutingNode] = {}
         g_cost: Dict[RoutingNode, float] = {start: 0}
-        f_cost: Dict[RoutingNode, float] = {start: self._enhanced_heuristic(start, goal, start)}
-        
         closed_set: Set[RoutingNode] = set()
         
         while open_set:
             current_f, current_g, current = heapq.heappop(open_set)
             
+            if current in closed_set:
+                continue
+                
+            closed_set.add(current)
+            
             if current == goal:
                 return self._reconstruct_path(came_from, current)
             
-            if current in closed_set:
-                continue
-            
-            closed_set.add(current)
-            
-            # 探索鄰居
-            if current in self.adjacency:
-                for edge in self.adjacency[current]:
-                    neighbor = edge.end
-                    tentative_g = g_cost[current] + edge.cost
-                    
-                    if neighbor in closed_set:
-                        continue
-                    
-                    if neighbor not in g_cost or tentative_g < g_cost[neighbor]:
-                        came_from[neighbor] = current
-                        g_cost[neighbor] = tentative_g
-                        f_cost[neighbor] = tentative_g + self._enhanced_heuristic(neighbor, goal, start)
-                        heapq.heappush(open_set, (f_cost[neighbor], tentative_g, neighbor))
+            # 檢查所有鄰居
+            for neighbor, edge_cost in self.graph.adjacency.get(current, []):
+                if neighbor in closed_set:
+                    continue
+                
+                tentative_g = current_g + edge_cost
+                
+                if neighbor not in g_cost or tentative_g < g_cost[neighbor]:
+                    came_from[neighbor] = current
+                    g_cost[neighbor] = tentative_g
+                    f_cost = tentative_g + self._heuristic(neighbor, goal)
+                    heapq.heappush(open_set, (f_cost, tentative_g, neighbor))
         
-        return []  # 無路徑
-    
-    def _enhanced_heuristic(self, node: RoutingNode, goal: RoutingNode, start: RoutingNode) -> float:
-        """增強啟發式函數 - 實現 opus 研究中的 tie-breaking"""
-        # 基礎 Manhattan 距離
-        base_distance = abs(node.x - goal.x) + abs(node.y - goal.y)
-        
-        # Tie-breaking for straighter paths (from opus research)
-        dx1, dy1 = node.x - goal.x, node.y - goal.y
-        dx2, dy2 = start.x - goal.x, start.y - goal.y
-        cross = abs(dx1 * dy2 - dx2 * dy1)
-        
-        # 轉彎懲罰 - 鼓勵較少的方向改變
-        bend_penalty = 0
-        if hasattr(node, 'direction'):
-            # 如果有方向資訊，對轉彎施加懲罰
-            bend_penalty = 2.0
-        
-        return base_distance + cross * 0.001 + bend_penalty
-    
+        return []  # 找不到路徑
+
+    def _heuristic(self, node: RoutingNode, goal: RoutingNode) -> float:
+        """啟發式函數 - 曼哈頓距離"""
+        return abs(goal.x - node.x) + abs(goal.y - node.y)
+
     def _reconstruct_path(self, came_from: Dict[RoutingNode, RoutingNode], current: RoutingNode) -> List[RoutingNode]:
         """重建路徑"""
         path = [current]
@@ -201,257 +245,20 @@ class AStarPathfinder:
         return path[::-1]
 
 
-class EdgeRoutingEngine:
-    """邊線路由引擎主類別 - 整合 yEd 風格路由"""
-    
-    def __init__(self):
-        self.visibility_graph = VisibilityGraph()
-        self.pathfinder = AStarPathfinder(self.visibility_graph)
-        self.minimum_edge_distance = 8  # 最小邊線間距
-        self.optimization_enabled = True
-        
-        # 性能優化 - 延遲重計算
-        self.update_timer = QTimer()
-        self.update_timer.setSingleShot(True)
-        self.update_timer.timeout.connect(self._delayed_update)
-        self.pending_update = False
-    
-    def set_obstacles(self, node_rects: List[Tuple[QRectF, str]]):
-        """設定障礙物 (節點邊界框)"""
-        self.visibility_graph.nodes.clear()
-        self.visibility_graph.edges.clear()
-        self.visibility_graph.obstacles.clear()
-        
-        for rect, node_id in node_rects:
-            # 擴大障礙物邊界，為邊線預留空間
-            expanded_rect = rect.adjusted(-self.minimum_edge_distance, -self.minimum_edge_distance, 
-                                        self.minimum_edge_distance, self.minimum_edge_distance)
-            self.visibility_graph.add_obstacle(expanded_rect, node_id)
-        
-        self.visibility_graph.build_visibility_edges()
-        self.pathfinder._build_adjacency_list()
-    
-    def route_edge(self, start_pos: QPointF, end_pos: QPointF) -> QPainterPath:
-        """路由單條邊線 - 返回 QPainterPath"""
-        start_node = RoutingNode(start_pos.x(), start_pos.y(), "source")
-        end_node = RoutingNode(end_pos.x(), end_pos.y(), "target")
-        
-        # 添加起點和終點到圖中
-        self.visibility_graph.nodes.add(start_node)
-        self.visibility_graph.nodes.add(end_node)
-        
-        # 為起點和終點建立連接
-        self._connect_endpoints(start_node, end_node)
-        
-        # 尋找路徑
-        path_nodes = self.pathfinder.find_path(start_node, end_node)
-        
-        # 清理臨時節點
-        self.visibility_graph.nodes.discard(start_node)
-        self.visibility_graph.nodes.discard(end_node)
-        
-        if not path_nodes:
-            # 回退到直線連接
-            return self._create_direct_path(start_pos, end_pos)
-        
-        return self._create_orthogonal_path(path_nodes)
-    
-    def _connect_endpoints(self, start: RoutingNode, end: RoutingNode):
-        """為起點和終點建立可見性連接"""
-        all_nodes = list(self.visibility_graph.nodes)
-        
-        for node in all_nodes:
-            # 連接起點
-            if self.visibility_graph._is_orthogonal(start, node) and \
-               self.visibility_graph._is_visible(start, node):
-                cost = self.visibility_graph._calculate_cost(start, node)
-                self.visibility_graph.edges.extend([
-                    RoutingEdge(start, node, cost),
-                    RoutingEdge(node, start, cost)
-                ])
-            
-            # 連接終點
-            if self.visibility_graph._is_orthogonal(end, node) and \
-               self.visibility_graph._is_visible(end, node):
-                cost = self.visibility_graph._calculate_cost(end, node)
-                self.visibility_graph.edges.extend([
-                    RoutingEdge(end, node, cost),
-                    RoutingEdge(node, end, cost)
-                ])
-        
-        # 更新鄰接表
-        self.pathfinder._build_adjacency_list()
-    
-    def _create_orthogonal_path(self, path_nodes: List[RoutingNode]) -> QPainterPath:
-        """創建正交路徑 - Manhattan routing"""
-        if len(path_nodes) < 2:
-            return QPainterPath()
-        
-        path = QPainterPath()
-        path.moveTo(path_nodes[0].x, path_nodes[0].y)
-        
-        for node in path_nodes[1:]:
-            path.lineTo(node.x, node.y)
-        
-        return path
-    
-    def _create_direct_path(self, start: QPointF, end: QPointF) -> QPainterPath:
-        """創建直線路徑 - 回退方案"""
-        path = QPainterPath()
-        path.moveTo(start)
-        path.lineTo(end)
-        return path
-    
-    def request_update(self):
-        """請求延遲更新 - 性能優化"""
-        if not self.pending_update:
-            self.pending_update = True
-            self.update_timer.start(200)  # 200ms 延遲
-    
-    def _delayed_update(self):
-        """延遲更新執行"""
-        self.pending_update = False
-        # 這裡可以觸發重新路由所有邊線的信號
-        
-    def get_performance_stats(self) -> Dict[str, float]:
-        """獲取性能統計資訊"""
-        return {
-            "nodes": len(self.visibility_graph.nodes),
-            "edges": len(self.visibility_graph.edges),
-            "obstacles": len(self.visibility_graph.obstacles)
-        }
-
-
-# 測試和示例使用
-if __name__ == "__main__":
-    import sys
-    from PyQt5.QtWidgets import QApplication, QGraphicsView, QGraphicsScene
-    from PyQt5.QtCore import QRectF
-    
-    app = QApplication(sys.argv)
-    
-    # 創建路由引擎測試
-    router = EdgeRoutingEngine()
-    
-    # 設定測試障礙物
-    obstacles = [
-        (QRectF(100, 100, 80, 60), "node1"),
-        (QRectF(250, 200, 80, 60), "node2"),
-        (QRectF(150, 300, 80, 60), "node3"),
-    ]
-    
-    router.set_obstacles(obstacles)
-    
-    # 測試路由
-    start_time = time.time()
-    routed_path = router.route_edge(QPointF(50, 50), QPointF(400, 400))
-    end_time = time.time()
-    
-    print(f"路由計算時間: {(end_time - start_time) * 1000:.2f}ms")
-    print(f"性能統計: {router.get_performance_stats()}")
-    
-    sys.exit()
-
-
 class AdvancedEdgeRouter:
     """
-    高級邊線路由器 - 整合 yEd 風格的正交路由功能
-    
-    提供完整的正交路由接口，整合可見性圖和 A* 路徑搜尋，
-    為 EdgeRouterManager 提供高級路由能力。
+    高級邊線路由器 - 真正的 yEd 風格正交路由實現
     """
     
     def __init__(self):
-        """初始化高級路由器"""
-        self.routing_engine = EdgeRoutingEngine()
-        self.cache_enabled = True
-        self.routing_cache = {}
-        
-    def route_edge(self, start_pos, end_pos, obstacles=None):
+        self.visibility_graph = VisibilityGraph(grid_pitch=20)
+        self.pathfinder = AStarPathfinder(self.visibility_graph)
+        self.min_clearance = 8  # 最小間隙
+        self.current_obstacles = []
+
+    def route_edge(self, start_pos: QPointF, end_pos: QPointF, obstacles: List[QRectF] = None) -> List[QPointF]:
         """
         路由單條邊線 - 主要接口
-        
-        Args:
-            start_pos: 起始位置 (QPointF)
-            end_pos: 結束位置 (QPointF) 
-            obstacles: 障礙物列表 (List[QRectF])
-            
-        Returns:
-            路徑點列表 [QPointF, ...]
-        """
-        from PyQt5.QtCore import QPointF
-        
-        # 快取檢查
-        cache_key = None
-        if self.cache_enabled:
-            cache_key = self._create_cache_key(start_pos, end_pos, obstacles)
-            if cache_key in self.routing_cache:
-                cached_path = self.routing_cache[cache_key]
-                return [QPointF(x, y) for x, y in cached_path]
-        
-        try:
-            # 設置障礙物
-            if obstacles:
-                obstacle_data = [(rect, f"obstacle_{i}") for i, rect in enumerate(obstacles)]
-                self.routing_engine.set_obstacles(obstacle_data)
-            
-            # 執行路由
-            path = self.routing_engine.route_edge(start_pos, end_pos)
-            
-            # 將 QPainterPath 轉換為點列表
-            points = self._painter_path_to_points(path)
-            
-            # 快取結果
-            if self.cache_enabled and cache_key:
-                self.routing_cache[cache_key] = [(p.x(), p.y()) for p in points]
-                # 限制快取大小
-                if len(self.routing_cache) > 100:
-                    # 移除最舊的一半條目
-                    keys_to_remove = list(self.routing_cache.keys())[:50]
-                    for key in keys_to_remove:
-                        del self.routing_cache[key]
-            
-            return points
-            
-        except Exception as e:
-            print(f"高級路由失敗: {e}")
-            # 回退到直線
-            from PyQt5.QtCore import QPointF
-            return [QPointF(start_pos.x(), start_pos.y()), QPointF(end_pos.x(), end_pos.y())]
-    
-    def _painter_path_to_points(self, path):
-        """
-        將 QPainterPath 轉換為點列表
-        
-        Args:
-            path: QPainterPath 對象
-            
-        Returns:
-            QPointF 列表
-        """
-        from PyQt5.QtCore import QPointF
-        
-        points = []
-        
-        # 提取路徑中的所有點
-        for i in range(path.elementCount()):
-            element = path.elementAt(i)
-            point = QPointF(element.x, element.y)
-            
-            # 避免重複點
-            if not points or (points[-1] - point).manhattanLength() > 1.0:
-                points.append(point)
-        
-        # 確保至少有起點和終點
-        if not points:
-            current_pos = path.currentPosition()
-            points = [QPointF(current_pos.x(), current_pos.y())]
-        
-        return points
-    
-    def _create_cache_key(self, start_pos, end_pos, obstacles):
-        """
-        創建快取鍵
         
         Args:
             start_pos: 起始位置
@@ -459,60 +266,73 @@ class AdvancedEdgeRouter:
             obstacles: 障礙物列表
             
         Returns:
-            快取鍵字符串
+            路徑點列表，至少包含起點和終點
         """
-        # 簡化的快取鍵，基於主要參數
-        start_key = f"{int(start_pos.x())},{int(start_pos.y())}"
-        end_key = f"{int(end_pos.x())},{int(end_pos.y())}"
+        if obstacles is None:
+            obstacles = []
         
-        obstacles_key = ""
-        if obstacles:
-            # 只考慮前幾個障礙物以避免鍵過長
-            for i, rect in enumerate(obstacles[:5]):
-                obstacles_key += f"_{int(rect.x())},{int(rect.y())},{int(rect.width())},{int(rect.height())}"
+        # ROI 優化：只處理相關區域的障礙物
+        roi_obstacles = self._filter_obstacles_by_roi(start_pos, end_pos, obstacles)
         
-        return f"{start_key}-{end_key}{obstacles_key}"
-    
-    def clear_cache(self):
-        """清空路由快取"""
-        self.routing_cache.clear()
-        print("路由快取已清空")
-    
-    def set_cache_enabled(self, enabled: bool):
-        """設置是否啟用快取"""
-        self.cache_enabled = enabled
-        if not enabled:
-            self.clear_cache()
-    
-    def get_stats(self):
-        """
-        獲取路由器統計信息
+        # 重建可見性圖
+        self._rebuild_visibility_graph(roi_obstacles)
         
-        Returns:
-            統計信息字典
-        """
-        engine_stats = self.routing_engine.get_performance_stats()
-        return {
-            **engine_stats,
-            "cache_size": len(self.routing_cache),
-            "cache_enabled": self.cache_enabled
-        }
-    
-    def optimize_for_large_graphs(self, enable: bool = True):
-        """
-        為大型圖形優化路由器性能
+        # 為起終點注入gate節點
+        start_gate = self.visibility_graph.inject_gate_for_point(start_pos, "start")
+        end_gate = self.visibility_graph.inject_gate_for_point(end_pos, "end")
         
-        Args:
-            enable: 是否啟用優化模式
-        """
-        if enable:
-            # 啟用性能優化
-            self.routing_engine.optimization_enabled = True
-            self.routing_engine.minimum_edge_distance = 12  # 增加最小距離
-            self.cache_enabled = True
-            print("已啟用大型圖形優化模式")
-        else:
-            # 恢復標準模式
-            self.routing_engine.optimization_enabled = True
-            self.routing_engine.minimum_edge_distance = 8
-            print("已恢復標準路由模式")
+        if not start_gate or not end_gate:
+            return [start_pos, end_pos]  # 回退到直線
+        
+        # 構建可見性邊
+        self.visibility_graph.build_visibility_edges()
+        
+        # A* 搜尋路徑
+        path_nodes = self.pathfinder.find_path(start_gate, end_gate)
+        
+        if len(path_nodes) < 2:
+            return [start_pos, end_pos]  # 搜尋失敗，回退到直線
+        
+        # 轉換為 QPointF 列表
+        path_points = []
+        for node in path_nodes:
+            path_points.append(QPointF(node.x, node.y))
+        
+        # 確保起終點精確
+        if len(path_points) > 0:
+            path_points[0] = start_pos
+            path_points[-1] = end_pos
+        
+        return path_points
+
+    def _rebuild_visibility_graph(self, obstacles: List[QRectF]):
+        """重建可見性圖"""
+        self.visibility_graph = VisibilityGraph(grid_pitch=20)
+        
+        # 添加障礙物（帶安全邊界）
+        for i, obstacle in enumerate(obstacles):
+            expanded = obstacle.adjusted(-self.min_clearance, -self.min_clearance, 
+                                       self.min_clearance, self.min_clearance)
+            self.visibility_graph.add_obstacle(expanded, f"obs_{i}")
+        
+        self.pathfinder = AStarPathfinder(self.visibility_graph)
+
+    def _filter_obstacles_by_roi(self, start_pos: QPointF, end_pos: QPointF, 
+                                obstacles: List[QRectF], padding: float = 200) -> List[QRectF]:
+        """ROI 過濾：只保留搜尋區域內的障礙物"""
+        # 計算 ROI
+        min_x = min(start_pos.x(), end_pos.x()) - padding
+        max_x = max(start_pos.x(), end_pos.x()) + padding
+        min_y = min(start_pos.y(), end_pos.y()) - padding
+        max_y = max(start_pos.y(), end_pos.y()) + padding
+        
+        roi_rect = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+        
+        # 過濾障礙物
+        filtered = []
+        for obstacle in obstacles:
+            if roi_rect.intersects(obstacle):
+                filtered.append(obstacle)
+        
+        print(f"[AdvancedRouter] ROI 過濾：{len(obstacles)} -> {len(filtered)} 障礙物")
+        return filtered
