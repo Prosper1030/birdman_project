@@ -131,7 +131,7 @@ class VisibilityGraph:
         nodes_list = list(self.nodes)
         
         for i, node1 in enumerate(nodes_list):
-            for node2 in nodes_list[i+1:]:
+            for node2 in nodes_list[i + 1:]:
                 if self._is_orthogonal(node1, node2) and self._is_visible(node1, node2):
                     cost = self._calculate_cost_with_penalty(node1, node2)
                     self._add_edge(node1, node2, cost)

@@ -290,7 +290,7 @@ class EdgeRouterManager(QObject):
                     print(f"[高級路由] {edge_id}: {len(path_points)} 點")
                     return path_points
                 else:
-                    print(f"[高級路由] 結果無效，回退到簡單路由")
+                    print("[高級路由] 結果無效，回退到簡單路由")
                     
             except Exception as e:
                 print(f"高級路由器執行失敗: {e}")
@@ -315,7 +315,7 @@ class EdgeRouterManager(QObject):
                 if len(same_pair_edges) > 1:
                     # 為多邊線計算不同偏移量
                     edge_index = same_pair_edges.index(edge_item) if edge_item in same_pair_edges else 0
-                    offset_pixels = (edge_index - len(same_pair_edges)/2) * 4  # ±4px 偏移
+                    offset_pixels = (edge_index - len(same_pair_edges) / 2) * 4  # ±4px 偏移
             
             # 使用 EdgeItem 的增強路徑設置方法
             if hasattr(edge_item, 'set_complex_path'):
