@@ -272,7 +272,8 @@ class EdgeRouterManager(QObject):
         if self._orthogonal_router:
             try:
                 return self._orthogonal_router.route_edge(start_pos, end_pos, obstacles)
-            except:
+            except Exception as e:
+                print(f"高級路由器失敗: {e}")
                 pass
         
         # 否則使用簡單正交路由
@@ -280,7 +281,7 @@ class EdgeRouterManager(QObject):
     
     def _route_simple_orthogonal(self, start_pos: QPointF, end_pos: QPointF) -> List[QPointF]:
         """
-        簡單的正交路由：L型或直線
+        智能的正交路由：L型或直線
         
         Args:
             start_pos: 起始位置
@@ -296,13 +297,25 @@ class EdgeRouterManager(QObject):
         if abs(dx) < 5 or abs(dy) < 5:
             return [start_pos, end_pos]
         
-        # 決定走向：優先水平
-        if abs(dx) > abs(dy):
-            # 先水平後垂直
+        # 智能決定走向：考慮佈局方向
+        # 1. 如果是階層布局（TB方向），優先垂直後水平
+        # 2. 如果起點在終點左上方，先水平再垂直
+        # 3. 如果起點在終點右下方，先垂直再水平
+        
+        if dx > 0 and dy > 0:
+            # 起點在終點左上方：先水平後垂直
             mid_point = QPointF(end_pos.x(), start_pos.y())
-        else:
-            # 先垂直後水平
+        elif dx < 0 and dy < 0:
+            # 起點在終點右下方：先垂直後水平  
             mid_point = QPointF(start_pos.x(), end_pos.y())
+        else:
+            # 其他情況：選擇較長的方向優先
+            if abs(dx) > abs(dy):
+                # 先水平後垂直
+                mid_point = QPointF(end_pos.x(), start_pos.y())
+            else:
+                # 先垂直後水平
+                mid_point = QPointF(start_pos.x(), end_pos.y())
         
         return [start_pos, mid_point, end_pos]
     
@@ -320,14 +333,17 @@ class EdgeRouterManager(QObject):
         
         # 收集所有節點作為障礙物
         for item in self.scene.items():
-            if hasattr(item, 'boundingRect') and hasattr(item, 'task_id'):
+            # 支援 taskId 和 task_id 兩種命名
+            has_task_id = hasattr(item, 'taskId') or hasattr(item, 'task_id')
+            if hasattr(item, 'boundingRect') and has_task_id:
                 # 這是一個任務節點
                 rect = item.boundingRect()
                 scene_rect = item.mapRectToScene(rect)
-                # 稍微擴大邊界以避免邊線貼得太近
-                expanded_rect = scene_rect.adjusted(-10, -10, 10, 10)
+                # 加入 12px 安全邊界避免邊線貼得太近
+                expanded_rect = scene_rect.adjusted(-12, -12, 12, 12)
                 obstacles.append(expanded_rect)
         
+        print(f"收集到 {len(obstacles)} 個障礙物節點")
         return obstacles
     
     def _fallback_to_straight_lines(self, edges_data: List[Tuple]) -> Dict[Tuple[str, str], List[QPointF]]:
@@ -356,9 +372,21 @@ class EdgeRouterManager(QObject):
         Returns:
             (源節點ID, 目標節點ID)
         """
-        if hasattr(edge_item, 'source_node') and hasattr(edge_item, 'target_node'):
-            src_id = getattr(edge_item.source_node, 'task_id', 'unknown')
-            dst_id = getattr(edge_item.target_node, 'task_id', 'unknown')
+        # 支援 src/dst 和 source_node/target_node 兩種欄位
+        src_node = None
+        dst_node = None
+        
+        if hasattr(edge_item, 'src') and hasattr(edge_item, 'dst'):
+            src_node = edge_item.src
+            dst_node = edge_item.dst
+        elif hasattr(edge_item, 'source_node') and hasattr(edge_item, 'target_node'):
+            src_node = edge_item.source_node
+            dst_node = edge_item.target_node
+        
+        if src_node and dst_node:
+            # 支援 taskId 和 task_id 兩種節點屬性
+            src_id = getattr(src_node, 'taskId', None) or getattr(src_node, 'task_id', 'unknown')
+            dst_id = getattr(dst_node, 'taskId', None) or getattr(dst_node, 'task_id', 'unknown')
             return (src_id, dst_id)
         
         # 回退方案
@@ -408,12 +436,24 @@ def create_yed_router_manager(scene, timeout_ms: int = 2000) -> EdgeRouterManage
     """
     manager = EdgeRouterManager(scene, timeout_ms)
     
-    # 嘗試載入高級路由器
+    # 嘗試載入高級路由器（多種載入方式）
     try:
         from .advanced_routing import AdvancedEdgeRouter
         advanced_router = AdvancedEdgeRouter()
         manager.set_orthogonal_router(advanced_router)
-    except ImportError:
-        print("高級路由器不可用，使用簡單正交路由")
+        print("成功載入高級正交路由器")
+    except ImportError as e:
+        print(f"高級路由器導入失敗: {e}")
+        try:
+            # 備用載入方式
+            from advanced_routing import AdvancedEdgeRouter
+            advanced_router = AdvancedEdgeRouter()
+            manager.set_orthogonal_router(advanced_router)
+            print("成功載入高級正交路由器（備用方式）")
+        except ImportError:
+            print("高級路由器不可用，使用智能簡單正交路由")
+    except Exception as e:
+        print(f"高級路由器初始化失敗: {e}")
+        print("回退到智能簡單正交路由")
     
     return manager
