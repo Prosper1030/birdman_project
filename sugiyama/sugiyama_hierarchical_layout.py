@@ -527,47 +527,32 @@ class SugiyamaLayout:
         direction: str,
         layer_spacing: int,
         node_spacing: int,
-        isolated_spacing: int
+        isolated_spacing: int,
+        node_sizes: Dict[str, Dict[str, float]] = None
     ):
         """
-        階段4：座標分配 - 專業座標計算
-        包含邊線拉直、節點對齊、間距優化等
+        階段4：尺寸感知座標分配 - 專業座標計算
+        基於真實節點尺寸分配無重疊的座標，並計算精確的邊線端口
         """
-        print("階段4：座標分配開始...")
+        print("階段4：尺寸感知座標分配開始...")
         
         # 識別孤立節點
         isolated_nodes = self._identify_isolated_nodes()
         
-        # 計算每層的寬度
-        layer_widths = self._compute_layer_widths(node_spacing)
-        
-        # 分配座標
+        # 使用尺寸感知算法分配座標
         self.coordinates = {}
-        
-        # 處理正常節點
-        for layer, nodes in self.layer_nodes.items():
-            for i, node in enumerate(nodes):
-                if node in isolated_nodes:
-                    continue
-                
-                # 跳過虛擬節點的最終座標（它們只用於路徑計算）
-                if node in self.virtual_nodes:
-                    continue
-                
-                x, y = self._compute_node_coordinate(
-                    node, layer, i, direction, 
-                    layer_spacing, node_spacing, layer_widths
-                )
-                
-                self.coordinates[node] = (x, y)
+        self._assign_size_aware_coordinates(direction, layer_spacing, node_spacing)
         
         # 處理孤立節點
-        self._assign_isolated_coordinates(
+        self._assign_isolated_coordinates_with_sizes(
             isolated_nodes, direction, isolated_spacing
         )
         
+        # 計算精確的邊線端口
+        self._calculate_edge_ports(direction)
+        
         # 優化座標（拉直邊線、對齊節點）
-        self._optimize_coordinates(direction, node_spacing)
+        self._optimize_coordinates_with_sizes(direction)
         
         print(f"  分配了 {len(self.coordinates)} 個節點座標")
     
@@ -683,6 +668,248 @@ class SugiyamaLayout:
                         current_y = self.coordinates[node][1]
                         new_y = current_y * 0.7 + avg_y * 0.3
                         self.coordinates[node] = (old_x, new_y)
+    
+    # ================== 新增：尺寸感知座標分配 ==================
+    
+    def _assign_size_aware_coordinates(self, direction: str, layer_spacing: int, node_spacing: int):
+        """尺寸感知座標分配 - 基於實際節點尺寸避免重疊"""
+        min_node_gap = 30  # 節點邊界到邊界的最小距離
+        
+        for layer_idx in sorted(self.layer_nodes.keys()):
+            nodes = [n for n in self.layer_nodes[layer_idx] 
+                    if n not in self.virtual_nodes]
+            
+            if not nodes:
+                continue
+                
+            # 計算每個節點在該層的位置
+            if direction == "TB":
+                y = layer_idx * layer_spacing
+                x_positions = self._pack_nodes_in_layer_tb(nodes, min_node_gap)
+                
+                for node, x in zip(nodes, x_positions):
+                    self.coordinates[node] = (x, y)
+            else:  # LR
+                x = layer_idx * layer_spacing
+                y_positions = self._pack_nodes_in_layer_lr(nodes, min_node_gap)
+                
+                for node, y in zip(nodes, y_positions):
+                    self.coordinates[node] = (x, y)
+    
+    def _pack_nodes_in_layer_tb(self, nodes: List[str], min_gap: float) -> List[float]:
+        """TB方向：在一層中打包節點，避免水平重疊"""
+        if not nodes:
+            return []
+        
+        # 按照當前排序順序處理節點
+        positions = []
+        current_x = 0
+        
+        for i, node in enumerate(nodes):
+            node_width = self.node_sizes.get(node, {}).get('width', 120)
+            
+            if i == 0:
+                # 第一個節點居中放置
+                positions.append(0)
+                current_x = node_width / 2
+            else:
+                # 後續節點考慮前一個節點的寬度和間隙
+                prev_node = nodes[i-1]
+                prev_width = self.node_sizes.get(prev_node, {}).get('width', 120)
+                
+                # 計算下一個位置：前一個節點右邊界 + 間隙 + 當前節點半寬
+                next_x = current_x + prev_width/2 + min_gap + node_width/2
+                positions.append(next_x)
+                current_x = next_x
+        
+        # 居中整個層
+        if positions:
+            total_width = positions[-1] - positions[0] if len(positions) > 1 else 0
+            offset = -total_width / 2
+            positions = [pos + offset for pos in positions]
+        
+        return positions
+    
+    def _pack_nodes_in_layer_lr(self, nodes: List[str], min_gap: float) -> List[float]:
+        """LR方向：在一層中打包節點，避免垂直重疊"""
+        if not nodes:
+            return []
+        
+        positions = []
+        current_y = 0
+        
+        for i, node in enumerate(nodes):
+            node_height = self.node_sizes.get(node, {}).get('height', 60)
+            
+            if i == 0:
+                positions.append(0)
+                current_y = node_height / 2
+            else:
+                prev_node = nodes[i-1]
+                prev_height = self.node_sizes.get(prev_node, {}).get('height', 60)
+                
+                next_y = current_y + prev_height/2 + min_gap + node_height/2
+                positions.append(next_y)
+                current_y = next_y
+        
+        # 居中整個層
+        if positions:
+            total_height = positions[-1] - positions[0] if len(positions) > 1 else 0
+            offset = -total_height / 2
+            positions = [pos + offset for pos in positions]
+        
+        return positions
+    
+    def _assign_isolated_coordinates_with_sizes(
+        self, isolated_nodes: Set[str], direction: str, isolated_spacing: int
+    ):
+        """為孤立節點分配尺寸感知座標"""
+        if not isolated_nodes:
+            return
+        
+        # 計算主佈局的邊界
+        if self.coordinates:
+            x_coords = [pos[0] for pos in self.coordinates.values()]
+            y_coords = [pos[1] for pos in self.coordinates.values()]
+            
+            # 考慮節點尺寸計算真實邊界
+            min_x = min(x_coords) - max(self.node_sizes.get(node, {}).get('width', 120)/2 
+                                       for node in self.coordinates.keys())
+            max_x = max(x_coords) + max(self.node_sizes.get(node, {}).get('width', 120)/2 
+                                       for node in self.coordinates.keys())
+            min_y = min(y_coords) - max(self.node_sizes.get(node, {}).get('height', 60)/2 
+                                       for node in self.coordinates.keys())
+            max_y = max(y_coords) + max(self.node_sizes.get(node, {}).get('height', 60)/2 
+                                       for node in self.coordinates.keys())
+        else:
+            min_x = max_x = min_y = max_y = 0
+        
+        # 將孤立節點排列在主佈局外側
+        current_offset = 0
+        for node in sorted(isolated_nodes):
+            node_width = self.node_sizes.get(node, {}).get('width', 120)
+            node_height = self.node_sizes.get(node, {}).get('height', 60)
+            
+            if direction == "TB":
+                # 放在左側
+                x = min_x - 200 - current_offset - node_width/2
+                y = 0
+                current_offset += node_width + isolated_spacing
+            else:  # LR
+                # 放在上方
+                x = 0
+                y = min_y - 200 - current_offset - node_height/2
+                current_offset += node_height + isolated_spacing
+            
+            self.coordinates[node] = (x, y)
+    
+    def _calculate_edge_ports(self, direction: str):
+        """計算精確的邊線端口座標"""
+        self.edge_ports = {}
+        
+        for src, dst in self.graph.edges():
+            # 跳過虛擬節點
+            if src in self.virtual_nodes or dst in self.virtual_nodes:
+                continue
+            
+            if src not in self.coordinates or dst not in self.coordinates:
+                continue
+                
+            src_pos = self.coordinates[src]
+            dst_pos = self.coordinates[dst]
+            
+            src_size = self.node_sizes.get(src, {'width': 120, 'height': 60})
+            dst_size = self.node_sizes.get(dst, {'width': 120, 'height': 60})
+            
+            # 計算最佳端口位置
+            src_port = self._calculate_optimal_port(src_pos, src_size, dst_pos, direction, 'out')
+            dst_port = self._calculate_optimal_port(dst_pos, dst_size, src_pos, direction, 'in')
+            
+            self.edge_ports[(src, dst)] = (src_port, dst_port)
+    
+    def _calculate_optimal_port(
+        self, node_pos: Tuple[float, float], node_size: Dict[str, float],
+        target_pos: Tuple[float, float], direction: str, port_type: str
+    ) -> Tuple[float, float]:
+        """計算節點的最佳端口位置"""
+        x, y = node_pos
+        width = node_size['width']
+        height = node_size['height']
+        
+        # 端口內縮，避免貼到邊框
+        margin = 8
+        
+        if direction == "TB":
+            if port_type == 'out':
+                # 出邊從底部出去
+                return (x, y + height/2 - margin)
+            else:
+                # 入邊從頂部進來
+                return (x, y - height/2 + margin)
+        else:  # LR
+            if port_type == 'out':
+                # 出邊從右側出去
+                return (x + width/2 - margin, y)
+            else:
+                # 入邊從左側進來
+                return (x - width/2 + margin, y)
+    
+    def _optimize_coordinates_with_sizes(self, direction: str):
+        """基於尺寸的座標優化"""
+        # 簡化版優化：確保節點間距合理
+        min_gap = 30
+        
+        for layer_idx in sorted(self.layer_nodes.keys()):
+            nodes = [n for n in self.layer_nodes[layer_idx] 
+                    if n not in self.virtual_nodes and n in self.coordinates]
+            
+            if len(nodes) <= 1:
+                continue
+            
+            # 檢查並調整間距
+            self._ensure_minimum_spacing(nodes, direction, min_gap)
+    
+    def _ensure_minimum_spacing(self, nodes: List[str], direction: str, min_gap: float):
+        """確保節點間的最小間距"""
+        if len(nodes) <= 1:
+            return
+        
+        # 按位置排序節點
+        if direction == "TB":
+            nodes.sort(key=lambda n: self.coordinates[n][0])
+        else:
+            nodes.sort(key=lambda n: self.coordinates[n][1])
+        
+        # 調整間距
+        for i in range(1, len(nodes)):
+            prev_node = nodes[i-1]
+            curr_node = nodes[i]
+            
+            prev_pos = self.coordinates[prev_node]
+            curr_pos = self.coordinates[curr_node]
+            
+            if direction == "TB":
+                prev_width = self.node_sizes.get(prev_node, {}).get('width', 120)
+                curr_width = self.node_sizes.get(curr_node, {}).get('width', 120)
+                
+                required_distance = prev_width/2 + curr_width/2 + min_gap
+                actual_distance = curr_pos[0] - prev_pos[0]
+                
+                if actual_distance < required_distance:
+                    adjustment = required_distance - actual_distance
+                    new_x = curr_pos[0] + adjustment
+                    self.coordinates[curr_node] = (new_x, curr_pos[1])
+            else:  # LR
+                prev_height = self.node_sizes.get(prev_node, {}).get('height', 60)
+                curr_height = self.node_sizes.get(curr_node, {}).get('height', 60)
+                
+                required_distance = prev_height/2 + curr_height/2 + min_gap
+                actual_distance = curr_pos[1] - prev_pos[1]
+                
+                if actual_distance < required_distance:
+                    adjustment = required_distance - actual_distance
+                    new_y = curr_pos[1] + adjustment
+                    self.coordinates[curr_node] = (prev_pos[0], new_y)
 
 
 def layout_hierarchical(
@@ -692,7 +919,8 @@ def layout_hierarchical(
     direction: str = "TB",
     layer_spacing: int = 200,
     node_spacing: int = 150,
-    isolated_spacing: int = 100
+    isolated_spacing: int = 100,
+    node_sizes: Dict[str, Dict[str, float]] = None
 ) -> Dict[str, Tuple[float, float]]:
     """
     計算完整杉山方法的階層式佈局
@@ -704,6 +932,7 @@ def layout_hierarchical(
         layer_spacing: 層間距
         node_spacing: 節點間距
         isolated_spacing: 孤立節點間距
+        node_sizes: 節點尺寸字典 {'node_id': {'width': w, 'height': h}}
         
     Returns:
         節點座標字典
@@ -714,7 +943,8 @@ def layout_hierarchical(
         direction=direction,
         layer_spacing=layer_spacing,
         node_spacing=node_spacing,
-        isolated_spacing=isolated_spacing
+        isolated_spacing=isolated_spacing,
+        node_sizes=node_sizes
     )
 
 
