@@ -54,7 +54,8 @@ class SugiyamaLayout:
         direction: str = "TB",
         layer_spacing: int = 200,
         node_spacing: int = 150,
-        isolated_spacing: int = 100
+        isolated_spacing: int = 100,
+        node_sizes: Dict[str, Dict[str, float]] = None
     ) -> Dict[str, Tuple[float, float]]:
         """
         執行完整的杉山方法佈局
@@ -66,6 +67,7 @@ class SugiyamaLayout:
             layer_spacing: 層間距
             node_spacing: 節點間距
             isolated_spacing: 孤立節點間距
+            node_sizes: 節點尺寸字典 {'node_id': {'width': w, 'height': h}}
             
         Returns:
             節點座標字典
@@ -75,6 +77,9 @@ class SugiyamaLayout:
         
         if not self.graph or len(self.graph.nodes()) == 0:
             return {}
+        
+        # 初始化節點尺寸資訊
+        self._initialize_node_sizes(node_sizes)
         
         # 階段 1: 循環移除
         self._phase1_cycle_removal()
@@ -87,7 +92,7 @@ class SugiyamaLayout:
         
         # 階段 4: 座標分配
         self._phase4_coordinate_assignment(
-            direction, layer_spacing, node_spacing, isolated_spacing
+            direction, layer_spacing, node_spacing, isolated_spacing, node_sizes
         )
         
         return self.coordinates
@@ -106,6 +111,19 @@ class SugiyamaLayout:
             for src, dst in edges:
                 if src in self.graph.nodes() and dst in self.graph.nodes():
                     self.graph.add_edge(src, dst)
+    
+    def _initialize_node_sizes(self, node_sizes: Dict[str, Dict[str, float]] = None):
+        """初始化節點尺寸資訊"""
+        self.node_sizes = {}
+        
+        # 預設尺寸
+        default_size = {'width': 120, 'height': 60}
+        
+        for node_id in self.graph.nodes():
+            if node_sizes and node_id in node_sizes:
+                self.node_sizes[node_id] = node_sizes[node_id].copy()
+            else:
+                self.node_sizes[node_id] = default_size.copy()
     
     # ================== 階段 1: 循環移除 ==================
     
@@ -204,12 +222,15 @@ class SugiyamaLayout:
     def _phase2_layer_assignment(self):
         """
         階段2：層級分配 - 包含虛擬節點插入
-        使用最長路徑法並插入虛擬節點處理跨層邊
+        使用最長路徑法、層級向下壓縮並插入虛擬節點處理跨層邊
         """
         print("階段2：層級分配開始...")
         
         # 計算初始層級（最長路徑法）
         self._compute_longest_path_layers()
+        
+        # 執行層級向下壓縮 (Sinking) 以最大化緊密度
+        self._perform_layer_sinking()
         
         # 插入虛擬節點處理跨層邊
         self._insert_virtual_nodes()
@@ -241,6 +262,39 @@ class SugiyamaLayout:
                 # 在所有前驅的最大層級 + 1
                 self.layers[node] = max(self.layers.get(pred, 0) 
                                       for pred in predecessors) + 1
+    
+    def _perform_layer_sinking(self):
+        """
+        執行層級向下壓縮 (Sinking) 優化
+        倒序遍歷拓撲排序結果，將每個節點向下移動到最低可能層級
+        """
+        print("  執行層級向下壓縮...")
+        
+        try:
+            # 獲取倒序拓撲排序
+            topo_order = list(reversed(list(nx.topological_sort(self.graph))))
+        except nx.NetworkXError:
+            print("    警告：圖中仍有循環，跳過壓縮優化")
+            return
+        
+        sinking_count = 0
+        
+        for node in topo_order:
+            successors = list(self.graph.successors(node))
+            
+            if successors:
+                # 計算可移動到的最低層級：所有子節點的最小層級 - 1
+                min_successor_layer = min(self.layers.get(succ, float('inf')) 
+                                        for succ in successors)
+                target_layer = min_successor_layer - 1
+                
+                # 如果目標層級高於當前層級，則移動節點
+                current_layer = self.layers[node]
+                if target_layer > current_layer:
+                    self.layers[node] = target_layer
+                    sinking_count += 1
+        
+        print(f"    壓縮了 {sinking_count} 個節點到更低層級")
     
     def _insert_virtual_nodes(self):
         """插入虛擬節點處理跨層邊"""
