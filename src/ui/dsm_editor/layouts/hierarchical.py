@@ -267,8 +267,13 @@ class SugiyamaLayout:
         階段2：層級分配與虛擬節點插入
         使用最長路徑法並處理跨層邊
         """
+        print("階段2：層級分配開始...")
+        
         # 使用最長路徑法計算層級
         self._compute_layers_longest_path()
+        
+        # 執行層級向下壓縮 (在插入虛擬節點之前)
+        self._apply_layer_sinking()
 
         # 插入虛擬節點處理跨層邊
         self._insert_virtual_nodes()
@@ -305,6 +310,41 @@ class SugiyamaLayout:
                     self.layers[successor],
                     self.layers[node] + 1
                 )
+
+    def _apply_layer_sinking(self):
+        """
+        執行層級向下壓縮 (Sinking)
+        倒序遍歷拓撲排序結果，將節點向下移動到可能的最低層級
+        """
+        print("  執行層級向下壓縮...")
+        
+        # 獲取拓撲排序結果（倒序）
+        try:
+            topo_order = list(reversed(list(nx.topological_sort(self.graph))))
+        except nx.NetworkXUnfeasible:
+            print("    警告：無法獲取拓撲排序，跳過向下壓縮")
+            return
+        
+        sunk_count = 0
+        
+        # 倒序遍歷每個節點
+        for node in topo_order:
+            current_layer = self.layers[node]
+            
+            # 計算該節點的所有後繼節點的最小層級
+            successors = list(self.graph.successors(node))
+            
+            if successors:
+                # 計算目標層級 = min(所有子節點的層級) - 1
+                min_successor_layer = min(self.layers[succ] for succ in successors)
+                target_layer = min_successor_layer - 1
+                
+                # 如果目標層級大於當前層級，則向下移動
+                if target_layer > current_layer:
+                    self.layers[node] = target_layer
+                    sunk_count += 1
+        
+        print(f"    壓縮了 {sunk_count} 個節點到更低層級")
 
     def _insert_virtual_nodes(self):
         """插入虛擬節點處理跨層邊"""
