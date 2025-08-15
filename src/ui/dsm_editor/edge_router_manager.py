@@ -346,8 +346,8 @@ class EdgeRouterManager(QObject):
         vmap = {}
         for i, path in locked_map.items():
             ps, pt = path[0], path[1]
-            # 單一垂直段佔用
-            br.vmap_add(vmap, ps.x(), ps.y(), pt.y(), grid=1.0)
+            # 單一垂直段佔用（用 snap_x 穩定欄位）
+            br.vmap_add(vmap, br.snap_x(ps.x(), grid=2.0), ps.y(), pt.y(), grid=1.0)
 
         # 準備每條剩餘邊的 stub 上下界（用於 y_mid 計算）
         stubs_y: List[Tuple[float, float]] = []
@@ -414,8 +414,8 @@ class EdgeRouterManager(QObject):
                 edge_key = self._get_edge_key(edge_item)
                 result[edge_key] = path
                 # 登記垂直段
-                br.vmap_add(vmap, ps.x(), ps.y(), y_mid, grid=1.0)
-                br.vmap_add(vmap, pt.x(), y_mid, pt.y(), grid=1.0)
+                br.vmap_add(vmap, br.snap_x(ps.x(), grid=2.0), ps.y(), y_mid, grid=1.0)
+                br.vmap_add(vmap, br.snap_x(pt.x(), grid=2.0), y_mid, pt.y(), grid=1.0)
 
         # 驗證垂直碰撞地圖 & 水平車道不重疊（開發期診斷）
         try:

@@ -234,6 +234,12 @@ def compute_y_mid(
 def _x_bucket(x: float, grid: float = 1.0) -> int:
     return int(round(x / grid))
 
+def snap_x(x: float, grid: float = 2.0) -> float:
+    """Snap x to a coarser grid for vertical-column stability (default 2px)."""
+    from math import floor
+    g = max(1.0, grid)
+    return round(x / g) * g
+
 
 def vmap_can_add(vmap: Dict[int, List[Tuple[float, float]]], x: float, y1: float, y2: float, grid: float = 1.0) -> bool:
     """Check whether we can add a vertical segment [y1,y2] at column x without overlapping.
@@ -242,19 +248,23 @@ def vmap_can_add(vmap: Dict[int, List[Tuple[float, float]]], x: float, y1: float
     if y1 > y2:
         y1, y2 = y2, y1
     b = _x_bucket(x, grid)
-    spans = vmap.get(b, [])
-    for a, bnd in spans:
-        ay, by = a, bnd
-        # overlap if not (y2 <= ay or by <= y1)
-        if not (y2 <= ay or by <= y1):
-            return False
+    # check neighbor buckets to be conservative on rounding borders
+    for bb in (b - 1, b, b + 1):
+        spans = vmap.get(bb, [])
+        for a, bnd in spans:
+            ay, by = a, bnd
+            # overlap if not (y2 <= ay or by <= y1)
+            if not (y2 <= ay or by <= y1):
+                return False
     return True
 
 
 def vmap_add(vmap: Dict[int, List[Tuple[float, float]]], x: float, y1: float, y2: float, grid: float = 1.0) -> None:
     if y1 > y2:
         y1, y2 = y2, y1
-    b = _x_bucket(x, grid)
+    # snap x before bucketing to keep consistency with drawing columns
+    xs = snap_x(x, grid=max(2.0, grid))
+    b = _x_bucket(xs, grid)
     arr = vmap.setdefault(b, [])
     # insert sorted by start
     i = 0
@@ -422,8 +432,10 @@ def assign_band_with_vertical_checks(
             lane = j + 1
             y_mid = compute_y_mid(s_out_y, t_in_y, lane, lane_spacing)
             # vertical segments to check
-            ok1 = vmap_can_add(vertical_map, ps.x(), ps.y(), y_mid, grid=vgrid)
-            ok2 = vmap_can_add(vertical_map, pt.x(), y_mid, pt.y(), grid=vgrid)
+            x1 = snap_x(ps.x(), grid=max(2.0, vgrid))
+            x2 = snap_x(pt.x(), grid=max(2.0, vgrid))
+            ok1 = vmap_can_add(vertical_map, x1, ps.y(), y_mid, grid=vgrid)
+            ok2 = vmap_can_add(vertical_map, x2, y_mid, pt.y(), grid=vgrid)
             if ok1 and ok2:
                 # place
                 if j == len(lane_right):
@@ -431,8 +443,8 @@ def assign_band_with_vertical_checks(
                 else:
                     lane_right[j] = it.xR
                 assignment[it.idx] = lane
-                vmap_add(vertical_map, ps.x(), ps.y(), y_mid, grid=vgrid)
-                vmap_add(vertical_map, pt.x(), y_mid, pt.y(), grid=vgrid)
+                vmap_add(vertical_map, x1, ps.y(), y_mid, grid=vgrid)
+                vmap_add(vertical_map, x2, y_mid, pt.y(), grid=vgrid)
                 placed = True
                 break
         if not placed:
