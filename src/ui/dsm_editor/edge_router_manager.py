@@ -351,6 +351,7 @@ class EdgeRouterManager(QObject):
 
         # 準備每條剩餘邊的 stub 上下界（用於 y_mid 計算）
         stubs_y: List[Tuple[float, float]] = []
+        base_ranges: List[Tuple[float, float]] = []
         for j, (ps, pt) in enumerate(remain_pts):
             edge_item = edges_data[remain_idx[j]][0]
             src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
@@ -360,12 +361,19 @@ class EdgeRouterManager(QObject):
             s_out = self._stub(ps, s_side, PORT_STUB)
             t_in = self._stub(pt, t_side, PORT_STUB)
             stubs_y.append((s_out.y(), t_in.y()))
+            # 基本安全帶 [low, high]
+            y_low = s_out.y() + CLEAR
+            y_high = t_in.y() - CLEAR
+            base_ranges.append((y_low, y_high))
 
         # TODO: 未接上 fragments → profile；先假設空 profile（不提高低限）
         empty_profile = []
         low_lanes = br.mark_low_lane(remain_pts, empty_profile, lane_spacing)
-        assign, failed = br.assign_band_with_vertical_checks(
-            remain_pts, stubs_y, lane_spacing, vmap, vgrid=1.0, low_lanes=low_lanes
+        # 垂直避免撞節點：計算每條邊允許的 y_mid 範圍
+        y_allowed = br.compute_y_allowed_ranges(remain_pts, stubs_y, [obstacles_by_edge[i] for i in remain_idx], base_clear_low_high=base_ranges)
+        assign, failed, ymid_map = br.assign_band_with_vertical_checks(
+            remain_pts, stubs_y, lane_spacing, vmap, vgrid=1.0, low_lanes=low_lanes,
+            y_ranges=y_allowed, obstacles_by_edge=[obstacles_by_edge[i] for i in remain_idx]
         )
 
         # 組裝結果
@@ -390,7 +398,10 @@ class EdgeRouterManager(QObject):
             t_side = self._port_side(dst, pt) if dst else 'top'
             s_out = self._stub(ps, s_side, PORT_STUB)
             t_in = self._stub(pt, t_side, PORT_STUB)
-            y_mid = br.compute_y_mid(s_out.y(), t_in.y(), lane, lane_spacing=lane_spacing, min_clear=CLEAR)
+            # 使用已通過檢查的 y_mid，避免重算造成與障礙/垂直檢查不一致
+            y_mid = ymid_map.get(local_i)
+            if y_mid is None:
+                y_mid = br.compute_y_mid(s_out.y(), t_in.y(), lane, lane_spacing=lane_spacing, min_clear=CLEAR)
             path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
             edge_key = self._get_edge_key(edge_item)
             result[edge_key] = path
@@ -409,7 +420,20 @@ class EdgeRouterManager(QObject):
                 t_side = self._port_side(dst, pt) if dst else 'top'
                 s_out = self._stub(ps, s_side, PORT_STUB)
                 t_in = self._stub(pt, t_side, PORT_STUB)
+                y_low = s_out.y() + CLEAR
+                y_high = t_in.y() - CLEAR
+                # 若有允許範圍，需再夾一層
+                if failed:
+                    idx_local = failed[k]
+                    lo, hi = y_allowed[idx_local]
+                    y_low = max(y_low, lo)
+                    y_high = min(y_high, hi)
                 y_mid = br.compute_y_mid(s_out.y(), t_in.y(), lane, lane_spacing=lane_spacing, min_clear=CLEAR)
+                # 夾到允許範圍
+                if y_mid < y_low:
+                    y_mid = y_low
+                elif y_mid > y_high:
+                    y_mid = y_high
                 path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
                 edge_key = self._get_edge_key(edge_item)
                 result[edge_key] = path

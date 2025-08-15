@@ -57,6 +57,18 @@ def rect_intersects_vertical_segment(rect: QRectF, x: float, y1: float, y2: floa
     return _seg_overlaps(y1, y2, ry1, ry2, closed=not strict_inside)
 
 
+def rect_intersects_horizontal_segment(rect: QRectF, y: float, x1: float, x2: float, strict_inside: bool = True) -> bool:
+    """Return True if a horizontal segment at y from x1..x2 crosses rect interior.
+    If strict_inside=True, ignores touching at edges.
+    """
+    rx1, rx2 = rect.left(), rect.right()
+    ry1, ry2 = rect.top(), rect.bottom()
+    inside_y = (ry1 < y < ry2) if strict_inside else (ry1 <= y <= ry2)
+    if not inside_y:
+        return False
+    return _seg_overlaps(x1, x2, rx1, rx2, closed=not strict_inside)
+
+
 # ---------- Phase 1: Straight-line preprocessing ----------
 
 @dataclass
@@ -401,7 +413,9 @@ def assign_band_with_vertical_checks(
     vertical_map: Dict[int, List[Tuple[float, float]]],
     vgrid: float = 1.0,
     low_lanes: Optional[List[int]] = None,
-) -> Tuple[Dict[int, int], List[int]]:
+    y_ranges: Optional[List[Tuple[float, float]]] = None,
+    obstacles_by_edge: Optional[List[List[QRectF]]] = None,
+) -> Tuple[Dict[int, int], List[int], Dict[int, float]]:
     """Assign lanes with first-fit while checking vertical collisions at both ends.
 
     Args:
@@ -414,6 +428,7 @@ def assign_band_with_vertical_checks(
     """
     items = [IntervalItem(i, min(ps.x(), pt.x()), max(ps.x(), pt.x())) for i, (ps, pt) in enumerate(edges)]
     assignment: Dict[int, int] = {}
+    ymid_by_idx: Dict[int, float] = {}
     lane_right: List[float] = []
     failed: List[int] = []
 
@@ -431,11 +446,26 @@ def assign_band_with_vertical_checks(
                 continue
             lane = j + 1
             y_mid = compute_y_mid(s_out_y, t_in_y, lane, lane_spacing)
+            # clamp to allowed y range if provided
+            if y_ranges is not None:
+                y_lo, y_hi = y_ranges[it.idx]
+                if y_lo > y_hi:  # impossible window
+                    continue
+                if y_mid < y_lo:
+                    y_mid = y_lo
+                elif y_mid > y_hi:
+                    y_mid = y_hi
             # vertical segments to check
             x1 = snap_x(ps.x(), grid=max(2.0, vgrid))
             x2 = snap_x(pt.x(), grid=max(2.0, vgrid))
             ok1 = vmap_can_add(vertical_map, x1, ps.y(), y_mid, grid=vgrid)
             ok2 = vmap_can_add(vertical_map, x2, y_mid, pt.y(), grid=vgrid)
+            # horizontal LOS vs obstacles (avoid crossing nodes on middle H)
+            if ok1 and ok2 and obstacles_by_edge is not None:
+                obs = obstacles_by_edge[it.idx]
+                if obs:
+                    if any(rect_intersects_horizontal_segment(r, y_mid, it.xL, it.xR, strict_inside=True) for r in obs):
+                        ok1 = ok2 = False
             if ok1 and ok2:
                 # place
                 if j == len(lane_right):
@@ -443,13 +473,14 @@ def assign_band_with_vertical_checks(
                 else:
                     lane_right[j] = it.xR
                 assignment[it.idx] = lane
+                ymid_by_idx[it.idx] = y_mid
                 vmap_add(vertical_map, x1, ps.y(), y_mid, grid=vgrid)
                 vmap_add(vertical_map, x2, y_mid, pt.y(), grid=vgrid)
                 placed = True
                 break
         if not placed:
             failed.append(it.idx)
-    return assignment, failed
+    return assignment, failed, ymid_by_idx
 
 
 # ---------- Height profile (sweep-based, compressed steps) ----------
@@ -514,3 +545,102 @@ def mark_low_lane(
         need = range_max(profile, xL, xR)
         lows.append(to_lane(need, lane_spacing))
     return lows
+
+
+# ---------- Vertical clearance helpers (prevent node collisions on V) ----------
+
+def _caps_one_column(
+    obstacles: Iterable[QRectF],
+    x: float,
+    y_start: float,
+    y_end: float,
+) -> Tuple[float, float]:
+    """Compute directional caps for y_mid imposed by obstacles on one x column.
+
+    Returns (y_min_cap, y_max_cap) such that a vertical segment from y_start to y_mid
+    (and y_mid to y_end on the other side) won't cross any obstacle interior on this
+    column alone. Caller should combine caps from source/target columns and also clamp
+    with stub-based [low, high].
+
+    For downwards (y_start < y_end):
+      - source column limits: y_mid <= first obstacle top
+      - target column limits: y_mid >= first obstacle bottom (handled by other column)
+
+    For upwards (y_start > y_end): roles are symmetric.
+    We compute both caps relative to this column so the caller can combine as:
+       low  = max(low, cap_min_src/ tgt)
+       high = min(high, cap_max_src/ tgt)
+    """
+    down = y_start < y_end
+    # initialize to the unconstrained interval [min(y_start,y_end), max(y_start,y_end)]
+    lo = min(y_start, y_end)
+    hi = max(y_start, y_end)
+
+    rx_candidates = []
+    for rect in obstacles:
+        if rect.left() < x < rect.right():
+            rx_candidates.append(rect)
+
+    if down:
+        # source-side: cap max at nearest obstacle top above y_end
+        src_cap = hi
+        for r in rx_candidates:
+            top, bottom = r.top(), r.bottom()
+            if top > y_start and top < hi:
+                if top < src_cap:
+                    src_cap = top
+        # for this column, the min cap (from target perspective) is the nearest obstacle bottom below y_end
+        tgt_cap = lo
+        for r in rx_candidates:
+            top, bottom = r.top(), r.bottom()
+            if bottom < y_end and bottom > lo:
+                if bottom > tgt_cap:
+                    tgt_cap = bottom
+        return tgt_cap, src_cap
+    else:
+        # upwards
+        # source-side now limits y_mid >= nearest obstacle bottom below y_start
+        src_cap = lo
+        for r in rx_candidates:
+            top, bottom = r.top(), r.bottom()
+            if bottom < y_start and bottom > lo:
+                if bottom > src_cap:
+                    src_cap = bottom
+        # target-side now limits y_mid <= nearest obstacle top above y_end
+        tgt_cap = hi
+        for r in rx_candidates:
+            top, bottom = r.top(), r.bottom()
+            if top > y_end and top < hi:
+                if top < tgt_cap:
+                    tgt_cap = top
+        return src_cap, tgt_cap
+
+
+def compute_y_allowed_ranges(
+    edges: List[Tuple[QPointF, QPointF]],
+    stubs_y: List[Tuple[float, float]],
+    obstacles_by_edge: List[List[QRectF]],
+    base_clear_low_high: Optional[List[Tuple[float, float]]] = None,
+) -> List[Tuple[float, float]]:
+    """For each edge, compute an allowed [y_low, y_high] window for y_mid such that
+    vertical segments at source/target columns won't hit obstacles.
+
+    base_clear_low_high: optional pre-clamped [low, high] derived from stub + CLEAR.
+    If not provided, we simply use (min(stub_y), max(stub_y)).
+    """
+    ranges: List[Tuple[float, float]] = []
+    for i, ((ps, pt), (ys, yt), obs) in enumerate(zip(edges, stubs_y, obstacles_by_edge)):
+        # initial window
+        if base_clear_low_high is not None:
+            low0, high0 = base_clear_low_high[i]
+        else:
+            low0, high0 = (min(ys, yt), max(ys, yt))
+
+        # caps from each column
+        lo1, hi1 = _caps_one_column(obs, ps.x(), ys, yt)
+        lo2, hi2 = _caps_one_column(obs, pt.x(), yt, ys)  # note reversed roles for target perspective
+
+        low = max(low0, lo1, lo2)
+        high = min(high0, hi1, hi2)
+        ranges.append((low, high))
+    return ranges
