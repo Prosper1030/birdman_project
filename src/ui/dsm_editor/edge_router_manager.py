@@ -906,4 +906,12 @@ def create_yed_router_manager(scene, timeout_ms: int = 5000) -> EdgeRouterManage
         print(f"高級路由器初始化失敗: {e}")
         print("回退到智能簡單正交路由")
     
+    # 啟用帶狀進階 TB 路由（可用環境變數關閉：BIRDMAN_BAND_ROUTER=0）
+    try:
+        import os
+        flag = os.environ.get("BIRDMAN_BAND_ROUTER", "1")
+        manager.set_band_router_enabled(flag != "0")
+    except Exception:
+        manager.set_band_router_enabled(True)
+
     return manager
