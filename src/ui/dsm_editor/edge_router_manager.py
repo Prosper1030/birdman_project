@@ -361,7 +361,12 @@ class EdgeRouterManager(QObject):
             t_in = self._stub(pt, t_side, PORT_STUB)
             stubs_y.append((s_out.y(), t_in.y()))
 
-        assign, failed = br.assign_band_with_vertical_checks(remain_pts, stubs_y, lane_spacing, vmap, vgrid=1.0)
+        # TODO: 未接上 fragments → profile；先假設空 profile（不提高低限）
+        empty_profile = []
+        low_lanes = br.mark_low_lane(remain_pts, empty_profile, lane_spacing)
+        assign, failed = br.assign_band_with_vertical_checks(
+            remain_pts, stubs_y, lane_spacing, vmap, vgrid=1.0, low_lanes=low_lanes
+        )
 
         # 組裝結果
         result: Dict[Tuple[str, str], List[QPointF]] = {}

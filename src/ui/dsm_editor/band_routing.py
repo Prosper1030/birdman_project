@@ -269,6 +269,7 @@ def assign_band_with_vertical_checks(
     lane_spacing: float,
     vertical_map: Dict[int, List[Tuple[float, float]]],
     vgrid: float = 1.0,
+    low_lanes: Optional[List[int]] = None,
 ) -> Tuple[Dict[int, int], List[int]]:
     """Assign lanes with first-fit while checking vertical collisions at both ends.
 
@@ -290,7 +291,10 @@ def assign_band_with_vertical_checks(
         s_out_y, t_in_y = stubs_y[it.idx]
         placed = False
         # try lanes
-        for j in range(len(lane_right) + 1):
+        start_lane = 1
+        if low_lanes is not None:
+            start_lane = max(1, low_lanes[it.idx])
+        for j in range(start_lane - 1, len(lane_right) + 1):
             # horizontal availability
             if j < len(lane_right) and lane_right[j] > it.xL:
                 continue
@@ -313,3 +317,67 @@ def assign_band_with_vertical_checks(
         if not placed:
             failed.append(it.idx)
     return assignment, failed
+
+
+# ---------- Height profile (sweep-based, compressed steps) ----------
+
+def build_profile(fragments: List[Tuple[float, float, float]]) -> List[Tuple[float, float, float]]:
+    """Build a compressed step profile from [xL,xR,need] fragments by sweep.
+    Adjacent equal values are merged. Assumes need >= 0.
+    """
+    events: List[Tuple[float, float]] = []
+    for xL, xR, need in fragments:
+        if xR <= xL:
+            continue
+        events.append((xL, +need))
+        events.append((xR, -need))
+    events.sort(key=lambda e: e[0])
+
+    prof: List[Tuple[float, float, float]] = []
+    cur = 0.0
+    prev_x: Optional[float] = None
+    for x, delta in events:
+        if prev_x is not None and x > prev_x and cur > 0:
+            if prof and abs(prof[-1][2] - cur) < 1e-6 and abs(prof[-1][1] - prev_x) < 1e-6:
+                # merge
+                prof[-1] = (prof[-1][0], x, cur)
+            else:
+                prof.append((prev_x, x, cur))
+        cur += delta
+        prev_x = x
+    return prof
+
+
+def range_max(profile: List[Tuple[float, float, float]], xL: float, xR: float) -> float:
+    """Return max need across [xL,xR] on the compressed profile (linear scan)."""
+    if xR < xL:
+        xL, xR = xR, xL
+    m = 0.0
+    for a, b, v in profile:
+        if b <= xL or a >= xR:
+            continue
+        if v > m:
+            m = v
+    return m
+
+
+def to_lane(need: float, lane_spacing: float) -> int:
+    if lane_spacing <= 0:
+        return 1
+    from math import ceil
+    return max(1, int(ceil(need / lane_spacing)))
+
+
+def mark_low_lane(
+    edges: List[Tuple[QPointF, QPointF]],
+    profile: List[Tuple[float, float, float]],
+    lane_spacing: float,
+) -> List[int]:
+    """Compute per-edge minimal lane index from profile over its [xL,xR] span."""
+    lows: List[int] = []
+    for ps, pt in edges:
+        xL = min(ps.x(), pt.x())
+        xR = max(ps.x(), pt.x())
+        need = range_max(profile, xL, xR)
+        lows.append(to_lane(need, lane_spacing))
+    return lows
