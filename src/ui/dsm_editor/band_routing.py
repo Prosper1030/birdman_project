@@ -295,6 +295,95 @@ def validate_lane_non_overlap(assignment: Dict[int, int], edges: List[Tuple[QPoi
     return True
 
 
+# ---------- Crowd curve (overlap counting for main rectangle) ----------
+
+def build_crowd_curve(edges: List[Tuple[QPointF, QPointF]]) -> List[Tuple[float, float, int]]:
+    """Build compressed [xL,xR,count] steps by sweeping all intervals."""
+    events: List[Tuple[float, int]] = []
+    for ps, pt in edges:
+        xL = min(ps.x(), pt.x())
+        xR = max(ps.x(), pt.x())
+        if xR <= xL:
+            continue
+        events.append((xL, +1))
+        events.append((xR, -1))
+    events.sort(key=lambda e: (e[0], -e[1]))  # same x: + before -
+    steps: List[Tuple[float, float, int]] = []
+    cur = 0
+    prev_x: Optional[float] = None
+    for x, d in events:
+        if prev_x is not None and x > prev_x and cur > 0:
+            if steps and steps[-1][2] == cur and abs(steps[-1][1] - prev_x) < 1e-6:
+                steps[-1] = (steps[-1][0], x, cur)
+            else:
+                steps.append((prev_x, x, cur))
+        cur += d
+        prev_x = x
+    return steps
+
+
+def crowd_peak(steps: List[Tuple[float, float, int]]) -> int:
+    m = 0
+    for a, b, c in steps:
+        if c > m:
+            m = c
+    return m
+
+
+def crowd_peak_on_interval(steps: List[Tuple[float, float, int]], xL: float, xR: float) -> int:
+    if xR < xL:
+        xL, xR = xR, xL
+    m = 0
+    for a, b, c in steps:
+        if b <= xL or a >= xR:
+            continue
+        if c > m:
+            m = c
+    return m
+
+
+def crowd_remove_interval(steps: List[Tuple[float, float, int]], xL: float, xR: float) -> List[Tuple[float, float, int]]:
+    if xR < xL:
+        xL, xR = xR, xL
+    out: List[Tuple[float, float, int]] = []
+    for a, b, c in steps:
+        if b <= xL or a >= xR:
+            # no overlap
+            if out and out[-1][2] == c and abs(out[-1][1] - a) < 1e-6:
+                out[-1] = (out[-1][0], b, c)
+            else:
+                out.append((a, b, c))
+        else:
+            # overlap; split into up to three pieces
+            if a < xL:
+                if out and out[-1][2] == c and abs(out[-1][1] - a) < 1e-6:
+                    out[-1] = (out[-1][0], xL, c)
+                else:
+                    out.append((a, xL, c))
+                a2 = xL
+            else:
+                a2 = a
+            midL = max(a2, xL)
+            midR = min(b, xR)
+            if midR > midL:
+                c2 = max(0, c - 1)
+                if out and out[-1][2] == c2 and abs(out[-1][1] - midL) < 1e-6:
+                    out[-1] = (out[-1][0], midR, c2)
+                else:
+                    out.append((midL, midR, c2))
+            if b > xR:
+                if out and out[-1][2] == c and abs(out[-1][1] - xR) < 1e-6:
+                    out[-1] = (out[-1][0], b, c)
+                else:
+                    out.append((xR, b, c))
+    return out
+
+
+def order_flex(n: int) -> List[int]:
+    """Stable order [0..n-1]; kept for API symmetry to allow custom sorting later."""
+    return list(range(n))
+
+
 def assign_band_with_vertical_checks(
     edges: List[Tuple[QPointF, QPointF]],
     stubs_y: List[Tuple[float, float]],
