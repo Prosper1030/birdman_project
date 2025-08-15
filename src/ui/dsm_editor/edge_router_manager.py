@@ -417,6 +417,13 @@ class EdgeRouterManager(QObject):
                 br.vmap_add(vmap, ps.x(), ps.y(), y_mid, grid=1.0)
                 br.vmap_add(vmap, pt.x(), y_mid, pt.y(), grid=1.0)
 
+        # 驗證垂直碰撞地圖（開發期診斷）
+        try:
+            if not br.validate_vmap(vmap):
+                print("[band-router] 垂直碰撞地圖檢查未通過：偵測到同列重疊。")
+        except Exception:
+            pass
+
         return result
     
     def mark_edge_as_user_modified(self, edge_item, path: List[QPointF]) -> None:
