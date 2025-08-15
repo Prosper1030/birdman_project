@@ -303,19 +303,28 @@ class EdgeRouterManager(QObject):
         print(f"進階TB帶狀路由: {'ON' if self._band_router_enabled else 'OFF'}")
 
     # --- 進階 TB: 以指定 y_mid 產生 V-H-V 幾何 ---
+    def _tb_port_sides(self, ps: QPointF, pt: QPointF) -> Tuple[str, str]:
+        """依 TB 規範選擇固定的上下端口：
+        - 若目標在下方（pt.y >= ps.y）：源用 bottom，目標用 top
+        - 若目標在上方：源用 top，目標用 bottom
+        此規則確保反向邊（向上）也會使用正確的上下側以符合 N+1 規定。
+        """
+        if pt.y() >= ps.y():
+            return 'bottom', 'top'
+        else:
+            return 'top', 'bottom'
+
     def _route_tb_with_y(self, edge_item, ps: QPointF, pt: QPointF, y_mid: float) -> List[QPointF]:
         """以指定的中段 y 生成 TB 的 V-H-V 路徑，保留 stub 與末段垂直規範。"""
-        src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
-        dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
-        s_side = self._port_side(src, ps) if src else 'bottom'
-        t_side = self._port_side(dst, pt) if dst else 'top'
+        # TB 版面：強制使用上下邊作為端口，避免反向邊 side 判斷錯誤
+        s_side, t_side = self._tb_port_sides(ps, pt)
 
         s_out = self._stub(ps, s_side, PORT_STUB)
         t_in = self._stub(pt, t_side, PORT_STUB)
 
         # 夾在安全帶內
-        y_low = s_out.y() + CLEAR
-        y_high = t_in.y() - CLEAR
+        y_low = min(s_out.y(), t_in.y()) + CLEAR
+        y_high = max(s_out.y(), t_in.y()) - CLEAR
         y_mid = self._snap(max(min(y_mid, y_high), y_low))
 
         mid1 = QPointF(s_out.x(), y_mid)
@@ -354,16 +363,14 @@ class EdgeRouterManager(QObject):
         base_ranges: List[Tuple[float, float]] = []
         for j, (ps, pt) in enumerate(remain_pts):
             edge_item = edges_data[remain_idx[j]][0]
-            src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
-            dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
-            s_side = self._port_side(src, ps) if src else 'bottom'
-            t_side = self._port_side(dst, pt) if dst else 'top'
+            # TB 固定上下端口
+            s_side, t_side = self._tb_port_sides(ps, pt)
             s_out = self._stub(ps, s_side, PORT_STUB)
             t_in = self._stub(pt, t_side, PORT_STUB)
             stubs_y.append((s_out.y(), t_in.y()))
             # 基本安全帶 [low, high]
-            y_low = s_out.y() + CLEAR
-            y_high = t_in.y() - CLEAR
+            y_low = min(s_out.y(), t_in.y()) + CLEAR
+            y_high = max(s_out.y(), t_in.y()) - CLEAR
             base_ranges.append((y_low, y_high))
 
         # TODO: 未接上 fragments → profile；先假設空 profile（不提高低限）
@@ -392,10 +399,7 @@ class EdgeRouterManager(QObject):
             global_index = remain_idx[local_i]
             edge_item = edges_data[global_index][0]
             # 構造 stub 後的上下界求 y_mid
-            src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
-            dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
-            s_side = self._port_side(src, ps) if src else 'bottom'
-            t_side = self._port_side(dst, pt) if dst else 'top'
+            s_side, t_side = self._tb_port_sides(ps, pt)
             s_out = self._stub(ps, s_side, PORT_STUB)
             t_in = self._stub(pt, t_side, PORT_STUB)
             # 使用已通過檢查的 y_mid，避免重算造成與障礙/垂直檢查不一致
@@ -414,14 +418,11 @@ class EdgeRouterManager(QObject):
                 ps, pt = fallback_pts[k]
                 global_index = remain_idx[failed[k]]
                 edge_item = edges_data[global_index][0]
-                src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
-                dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
-                s_side = self._port_side(src, ps) if src else 'bottom'
-                t_side = self._port_side(dst, pt) if dst else 'top'
+                s_side, t_side = self._tb_port_sides(ps, pt)
                 s_out = self._stub(ps, s_side, PORT_STUB)
                 t_in = self._stub(pt, t_side, PORT_STUB)
-                y_low = s_out.y() + CLEAR
-                y_high = t_in.y() - CLEAR
+                y_low = min(s_out.y(), t_in.y()) + CLEAR
+                y_high = max(s_out.y(), t_in.y()) - CLEAR
                 # 若有允許範圍，需再夾一層
                 if failed:
                     idx_local = failed[k]
