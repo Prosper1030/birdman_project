@@ -344,8 +344,67 @@ class EdgeRouterManager(QObject):
             roi = self._calculate_roi(ps, pt, padding=200)
             obstacles_by_edge.append(self._collect_obstacles(edge_item, roi))
 
-        # Phase 1: 直線（垂直）預處理
-        locked_map, remain_idx = br.preprocess_straight_edges(pts, obstacles_by_edge, tol=1.0)
+        # 先嘗試：同對雙向且同列的垂直邊 → 直接輸出「雙柱」兩條直線（左右各一條）
+        # 檢查方式：以 edge_key 無向化分組，且 ps.x≈pt.x、LOS 無阻擋
+        key_map: Dict[Tuple[str, str], List[int]] = {}
+        for i, (edge_item, ps, pt) in enumerate(edges_data):
+            a, b = self._get_edge_key(edge_item)
+            key = (a, b) if a <= b else (b, a)
+            key_map.setdefault(key, []).append(i)
+
+        locked_map: Dict[int, List[QPointF]] = {}
+        locked_indices: Set[int] = set()
+        pair_result: Dict[Tuple[str, str], List[QPointF]] = {}
+        tolx = 1.0
+        for key, arr in key_map.items():
+            if len(arr) == 2:
+                i1, i2 = arr
+                ps1, pt1 = pts[i1]
+                ps2, pt2 = pts[i2]
+                # 兩條都需為同列垂直候選
+                def _is_vert(p, q):
+                    return abs(p.x() - q.x()) <= tolx
+                if _is_vert(ps1, pt1) and _is_vert(ps2, pt2):
+                    # LOS 無阻擋（以嚴格內部判定）
+                    x = 0.5 * (ps1.x() + pt1.x())
+                    y1a, y1b = sorted([ps1.y(), pt1.y()])
+                    y2a, y2b = sorted([ps2.y(), pt2.y()])
+                    def _los_ok(i, x_, ya, yb):
+                        return all(not br.rect_intersects_vertical_segment(r, x_, ya, yb, strict_inside=True)
+                                   for r in obstacles_by_edge[i])
+                    if _los_ok(i1, x, y1a, y1b) and _los_ok(i2, x, y2a, y2b):
+                        # 構造左右偏移 Δ 的兩條直線（各只在頂/底做短水平移出）
+                        def _tb_stub(ps: QPointF, pt: QPointF) -> Tuple[QPointF, QPointF]:
+                            s_side, t_side = self._tb_port_sides(ps, pt)
+                            return self._stub(ps, s_side, PORT_STUB), self._stub(pt, t_side, PORT_STUB)
+                        s1, t1 = _tb_stub(ps1, pt1)
+                        s2, t2 = _tb_stub(ps2, pt2)
+                        base_x = round(0.5 * (s1.x() + t1.x()))
+                        delta = max(GRID * 2, 32)
+                        xL = base_x - delta
+                        xR = base_x + delta
+                        # 產生路徑：ps → s_out → (x_off, s_out.y) → (x_off, t_in.y) → t_in → pt
+                        def _build(ps, s_out, t_in, pt, x_off):
+                            top_shift = QPointF(x_off, s_out.y())
+                            bot_shift = QPointF(x_off, t_in.y())
+                            path = [ps, s_out, top_shift, bot_shift, t_in, pt]
+                            return self._ensure_manhattan(path)
+                        p1 = _build(ps1, s1, t1, pt1, xL)
+                        p2 = _build(ps2, s2, t2, pt2, xR)
+                        k1 = self._get_edge_key(edges_data[i1][0])
+                        k2 = self._get_edge_key(edges_data[i2][0])
+                        pair_result[k1] = p1
+                        pair_result[k2] = p2
+                        locked_indices.update([i1, i2])
+
+        # Phase 1: 直線（垂直）預處理（處理剩餘者）
+        remain_idx_all = [i for i in range(len(pts)) if i not in locked_indices]
+        locked_map2, remain_idx2 = br.preprocess_straight_edges([pts[i] for i in remain_idx_all], [obstacles_by_edge[i] for i in remain_idx_all], tol=1.0)
+        # 轉回全域索引
+        for local_i, path in locked_map2.items():
+            global_i = remain_idx_all[local_i]
+            locked_map[global_i] = path
+        remain_idx = [remain_idx_all[i] for i in remain_idx2]
 
         # Phase 2: 帶狀分配（帶垂直碰撞檢查）
         remain_pts = [pts[i] for i in remain_idx]
@@ -353,10 +412,17 @@ class EdgeRouterManager(QObject):
 
         # 先建立垂直碰撞地圖，將已鎖直線登記
         vmap = {}
+        seen_cols: Set[Tuple[int, int, int]] = set()  # (bucket, y_top*10, y_bot*10)
         for i, path in locked_map.items():
             ps, pt = path[0], path[1]
-            # 單一垂直段佔用（用 snap_x 穩定欄位）
-            br.vmap_add(vmap, br.snap_x(ps.x(), grid=2.0), ps.y(), pt.y(), grid=1.0)
+            y_top, y_bot = (ps.y(), pt.y()) if ps.y() <= pt.y() else (pt.y(), ps.y())
+            xs = br.snap_x(ps.x(), grid=2.0)
+            b = int(round(xs / max(1.0, 1.0)))
+            key = (b, int(round(y_top * 10)), int(round(y_bot * 10)))
+            if key in seen_cols:
+                continue  # 避免 duplicated 登記造成診斷噪音
+            seen_cols.add(key)
+            br.vmap_add(vmap, xs, ps.y(), pt.y(), grid=1.0)
 
         # 準備每條剩餘邊的 stub 上下界（用於 y_mid 計算）
         stubs_y: List[Tuple[float, float]] = []
@@ -383,6 +449,27 @@ class EdgeRouterManager(QObject):
             y_ranges=y_allowed, obstacles_by_edge=[obstacles_by_edge[i] for i in remain_idx]
         )
 
+        # 構建群組：對同 [xL,xR] 的邊分配水平偏移列，避免 x 相同導致 H=0
+        def _gkey(ps: QPointF, pt: QPointF) -> Tuple[int, int]:
+            xL = min(ps.x(), pt.x())
+            xR = max(ps.x(), pt.x())
+            return (int(round(xL * 10)), int(round(xR * 10)))
+
+        groups: Dict[Tuple[int, int], List[int]] = {}
+        for li, (ps, pt) in enumerate(remain_pts):
+            groups.setdefault(_gkey(ps, pt), []).append(li)
+        # 為每個群產生對稱偏移序列：[-1, +1, -2, +2, ...] * GRID
+        def _offset_for_rank(rank: int, step: float = None) -> float:
+            if step is None:
+                step = max(GRID * 2, 32)
+            k = (rank - 1) // 2 + 1
+            sign = -1 if rank % 2 == 1 else +1
+            return sign * k * step
+        group_rank: Dict[int, int] = {}
+        for gk, arr in groups.items():
+            for idx, li in enumerate(arr, start=1):
+                group_rank[li] = idx
+
         # 組裝結果
         result: Dict[Tuple[str, str], List[QPointF]] = {}
         # 先放已鎖定直線
@@ -406,7 +493,38 @@ class EdgeRouterManager(QObject):
             y_mid = ymid_map.get(local_i)
             if y_mid is None:
                 y_mid = br.compute_y_mid(s_out.y(), t_in.y(), lane, lane_spacing=lane_spacing, min_clear=CLEAR)
-            path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
+            # 若兩側 x 相同，插入一個水平偏移列，讓 H 有寬度
+            path = None
+            if abs(s_out.x() - t_in.x()) < 0.5:
+                rank = group_rank.get(local_i, 1)
+                # 先試左/右對稱序列（rank 已交錯左右）
+                candidate_dx = _offset_for_rank(rank)
+                def _blocked(dx: float) -> bool:
+                    # 僅檢查頂/底兩段短水平（避免碰節點）
+                    x_from, x_to = s_out.x(), s_out.x() + dx
+                    obs = obstacles_by_edge[global_index]
+                    top_hit = any(br.rect_intersects_horizontal_segment(r, s_out.y(), x_from, x_to, strict_inside=True) for r in obs)
+                    bot_hit = any(br.rect_intersects_horizontal_segment(r, t_in.y(), x_to, t_in.x(), strict_inside=True) for r in obs)
+                    return top_hit or bot_hit
+                # 如果被擋，嘗試反向與加倍
+                attempt = 0
+                dx = candidate_dx
+                while attempt < 4 and _blocked(dx):
+                    attempt += 1
+                    if attempt == 1:
+                        dx = -candidate_dx
+                    elif attempt == 2:
+                        dx = 2 * candidate_dx
+                    elif attempt == 3:
+                        dx = -2 * candidate_dx
+                x_mid = s_out.x() + dx
+                # 兩端短水平 + 主體直立於偏移列
+                top_shift = QPointF(x_mid, s_out.y())
+                bot_shift = QPointF(x_mid, t_in.y())
+                path = [ps, s_out, top_shift, bot_shift, t_in, pt]
+                path = self._ensure_manhattan(path)
+            else:
+                path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
             edge_key = self._get_edge_key(edge_item)
             result[edge_key] = path
 
@@ -435,7 +553,33 @@ class EdgeRouterManager(QObject):
                     y_mid = y_low
                 elif y_mid > y_high:
                     y_mid = y_high
-                path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
+                # 同列情形同樣插入水平偏移列
+                if abs(s_out.x() - t_in.x()) < 0.5:
+                    rank = group_rank.get(failed[k], 1)
+                    candidate_dx = _offset_for_rank(rank)
+                    def _blocked(dx: float) -> bool:
+                        x_from, x_to = s_out.x(), s_out.x() + dx
+                        obs = obstacles_by_edge[global_index]
+                        top_hit = any(br.rect_intersects_horizontal_segment(r, s_out.y(), x_from, x_to, strict_inside=True) for r in obs)
+                        bot_hit = any(br.rect_intersects_horizontal_segment(r, t_in.y(), x_to, t_in.x(), strict_inside=True) for r in obs)
+                        return top_hit or bot_hit
+                    attempt = 0
+                    dx = candidate_dx
+                    while attempt < 4 and _blocked(dx):
+                        attempt += 1
+                        if attempt == 1:
+                            dx = -candidate_dx
+                        elif attempt == 2:
+                            dx = 2 * candidate_dx
+                        elif attempt == 3:
+                            dx = -2 * candidate_dx
+                    x_mid = s_out.x() + dx
+                    top_shift = QPointF(x_mid, s_out.y())
+                    bot_shift = QPointF(x_mid, t_in.y())
+                    path = [ps, s_out, top_shift, bot_shift, t_in, pt]
+                    path = self._ensure_manhattan(path)
+                else:
+                    path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
                 edge_key = self._get_edge_key(edge_item)
                 result[edge_key] = path
                 # 登記垂直段
@@ -594,15 +738,50 @@ class EdgeRouterManager(QObject):
                     edge_index = same_pair_edges.index(edge_item) if edge_item in same_pair_edges else 0
                     offset_pixels = (edge_index - len(same_pair_edges) / 2) * 4  # ±4px 偏移
             
+            # 若路徑退化為單列垂直，於此加入保險的水平偏移列，避免視覺上重疊
+            def _is_single_column(pts: List[QPointF], tol: float = 0.5) -> bool:
+                if not pts:
+                    return False
+                x0 = pts[0].x()
+                return all(abs(p.x() - x0) <= tol for p in pts)
+
+            adjusted = path_points
+            if path_points and _is_single_column(path_points):
+                ps, pt = path_points[0], path_points[-1]
+                # 依 TB 規範取上下 stub
+                s_side, t_side = self._tb_port_sides(ps, pt)
+                s_out = self._stub(ps, s_side, PORT_STUB)
+                t_in = self._stub(pt, t_side, PORT_STUB)
+                y_low = min(s_out.y(), t_in.y()) + CLEAR
+                y_high = max(s_out.y(), t_in.y()) - CLEAR
+                y_mid = self._snap(0.5 * (y_low + y_high))
+                # 依同對邊索引決定左右偏移列
+                same_pair_edges = self._find_same_pair_edges(edge_item)
+                edge_index = same_pair_edges.index(edge_item) if edge_item in same_pair_edges else 0
+                n = len(same_pair_edges)
+                # 產生對稱序列：[-1,+1,-2,+2,...] * GRID
+                def _rank_to_dx(rank: int, step: float = GRID) -> float:
+                    k = (rank - 1) // 2 + 1
+                    sign = -1 if rank % 2 == 1 else +1
+                    return sign * max(step, 16)
+                rank = edge_index + 1
+                dx = _rank_to_dx(rank)
+                x_mid = s_out.x() + dx
+                mid1 = QPointF(s_out.x(), y_mid)
+                midc = QPointF(x_mid, y_mid)
+                mid2 = QPointF(t_in.x(), y_mid)
+                adjusted = [ps, s_out, mid1, midc, mid2, t_in, pt]
+                adjusted = self._ensure_manhattan(adjusted)
+
             # 使用 EdgeItem 的增強路徑設置方法
             if hasattr(edge_item, 'set_complex_path'):
-                edge_item.set_complex_path(path_points, offset_pixels)
+                edge_item.set_complex_path(adjusted, offset_pixels)
             else:
                 # 回退方案：直接設置 QPainterPath
                 from PyQt5.QtGui import QPainterPath
-                if path_points and len(path_points) >= 2:
-                    painter_path = QPainterPath(path_points[0])
-                    for point in path_points[1:]:
+                if adjusted and len(adjusted) >= 2:
+                    painter_path = QPainterPath(adjusted[0])
+                    for point in adjusted[1:]:
                         painter_path.lineTo(point)
                     edge_item.setPath(painter_path)
                     edge_item.update()
