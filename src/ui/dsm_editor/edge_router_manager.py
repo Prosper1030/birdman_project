@@ -73,6 +73,8 @@ class EdgeRouterManager(QObject):
             'timeout_count': 0,
             'fallback_count': 0
         }
+        # 進階 TB 帶狀路由開關（預設關閉以維持舊行為）
+        self._band_router_enabled = False
     
     def _snap(self, v: float, g: int = GRID) -> float:
         """將數值對齊到格點"""
@@ -242,7 +244,22 @@ class EdgeRouterManager(QObject):
         try:
             result = {}
             # 不預先收集所有障礙物，改用 ROI 個別收集
-            
+            # 若啟用帶狀進階路由，改走一次性批次管線
+            if getattr(self, "_band_router_enabled", False):
+                try:
+                    result = self._route_advanced_tb_with_bands(edges_data)
+                    # 立即應用（以 edge_key 對應避免順序問題）
+                    for edge_item, _, _ in edges_data:
+                        edge_key = self._get_edge_key(edge_item)
+                        if edge_key in result:
+                            self._apply_path_to_edge_immediate(edge_item, result[edge_key])
+                    elapsed = time.time() - start_time
+                    self.last_routing_time = elapsed
+                    self.routing_stats['layout_count'] += 1
+                    print(f"全圖進階TB帶狀路由完成，耗時 {elapsed:.3f}s")
+                    return result
+                except Exception as e:
+                    print(f"帶狀路由失敗，回退到逐邊路由：{e}")
             # 檢查超時和逐邊處理
             for i, (edge_item, start_pos, end_pos) in enumerate(edges_data):
                 if time.time() - start_time > self.timeout_ms / 1000:
@@ -279,6 +296,120 @@ class EdgeRouterManager(QObject):
         finally:
             # 恢復原模式
             self.set_routing_mode(original_mode)
+
+    def set_band_router_enabled(self, enabled: bool) -> None:
+        """啟用/停用進階 TB 帶狀路由（預設關閉）。"""
+        self._band_router_enabled = bool(enabled)
+        print(f"進階TB帶狀路由: {'ON' if self._band_router_enabled else 'OFF'}")
+
+    # --- 進階 TB: 以指定 y_mid 產生 V-H-V 幾何 ---
+    def _route_tb_with_y(self, edge_item, ps: QPointF, pt: QPointF, y_mid: float) -> List[QPointF]:
+        """以指定的中段 y 生成 TB 的 V-H-V 路徑，保留 stub 與末段垂直規範。"""
+        src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
+        dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
+        s_side = self._port_side(src, ps) if src else 'bottom'
+        t_side = self._port_side(dst, pt) if dst else 'top'
+
+        s_out = self._stub(ps, s_side, PORT_STUB)
+        t_in = self._stub(pt, t_side, PORT_STUB)
+
+        # 夾在安全帶內
+        y_low = s_out.y() + CLEAR
+        y_high = t_in.y() - CLEAR
+        y_mid = self._snap(max(min(y_mid, y_high), y_low))
+
+        mid1 = QPointF(s_out.x(), y_mid)
+        mid2 = QPointF(t_in.x(), y_mid)
+        path = [ps, s_out, mid1, mid2, t_in, pt]
+        return self._ensure_manhattan(path)
+
+    def _route_advanced_tb_with_bands(self, edges_data: List[Tuple]) -> Dict[Tuple[str, str], List[QPointF]]:
+        """批次帶狀分配 + 直線預處理 的 V-H-V 管線（最小可用骨架）。"""
+        from . import band_routing as br
+
+        # 收集 (ps, pt) 及每條邊的 ROI 障礙物
+        pts: List[Tuple[QPointF, QPointF]] = []
+        obstacles_by_edge: List[List[QRectF]] = []
+        for edge_item, ps, pt in edges_data:
+            pts.append((ps, pt))
+            roi = self._calculate_roi(ps, pt, padding=200)
+            obstacles_by_edge.append(self._collect_obstacles(edge_item, roi))
+
+        # Phase 1: 直線（垂直）預處理
+        locked_map, remain_idx = br.preprocess_straight_edges(pts, obstacles_by_edge, tol=1.0)
+
+        # Phase 2: 帶狀分配（帶垂直碰撞檢查）
+        remain_pts = [pts[i] for i in remain_idx]
+        lane_spacing = GRID
+
+        # 先建立垂直碰撞地圖，將已鎖直線登記
+        vmap = {}
+        for i, path in locked_map.items():
+            ps, pt = path[0], path[1]
+            # 單一垂直段佔用
+            br.vmap_add(vmap, ps.x(), ps.y(), pt.y(), grid=1.0)
+
+        # 準備每條剩餘邊的 stub 上下界（用於 y_mid 計算）
+        stubs_y: List[Tuple[float, float]] = []
+        for j, (ps, pt) in enumerate(remain_pts):
+            edge_item = edges_data[remain_idx[j]][0]
+            src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
+            dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
+            s_side = self._port_side(src, ps) if src else 'bottom'
+            t_side = self._port_side(dst, pt) if dst else 'top'
+            s_out = self._stub(ps, s_side, PORT_STUB)
+            t_in = self._stub(pt, t_side, PORT_STUB)
+            stubs_y.append((s_out.y(), t_in.y()))
+
+        assign, failed = br.assign_band_with_vertical_checks(remain_pts, stubs_y, lane_spacing, vmap, vgrid=1.0)
+
+        # 組裝結果
+        result: Dict[Tuple[str, str], List[QPointF]] = {}
+        # 先放已鎖定直線
+        for i, path in locked_map.items():
+            edge_item, ps, pt = edges_data[i]
+            edge_key = self._get_edge_key(edge_item)
+            result[edge_key] = path
+
+        # 為剩餘的依 lane 產生 y_mid 幾何
+        for local_i, (ps, pt) in enumerate(remain_pts):
+            lane = assign.get(local_i)
+            if lane is None:
+                continue  # 留待後備處理
+            global_index = remain_idx[local_i]
+            edge_item = edges_data[global_index][0]
+            # 構造 stub 後的上下界求 y_mid
+            src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
+            dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
+            s_side = self._port_side(src, ps) if src else 'bottom'
+            t_side = self._port_side(dst, pt) if dst else 'top'
+            s_out = self._stub(ps, s_side, PORT_STUB)
+            t_in = self._stub(pt, t_side, PORT_STUB)
+            y_mid = br.compute_y_mid(s_out.y(), t_in.y(), lane, lane_spacing=lane_spacing, min_clear=CLEAR)
+            path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
+            edge_key = self._get_edge_key(edge_item)
+            result[edge_key] = path
+
+        # Phase 3: 對未能放入帶狀的邊（failed）做簡單主矩形回退（先用 first-fit 不帶檢查）
+        if failed:
+            fallback_pts = [remain_pts[i] for i in failed]
+            fb_assign = br.assign_main_rectangle(fallback_pts)
+            for k, lane in fb_assign.items():
+                ps, pt = fallback_pts[k]
+                global_index = remain_idx[failed[k]]
+                edge_item = edges_data[global_index][0]
+                src = getattr(edge_item, 'src', getattr(edge_item, 'source_node', None))
+                dst = getattr(edge_item, 'dst', getattr(edge_item, 'target_node', None))
+                s_side = self._port_side(src, ps) if src else 'bottom'
+                t_side = self._port_side(dst, pt) if dst else 'top'
+                s_out = self._stub(ps, s_side, PORT_STUB)
+                t_in = self._stub(pt, t_side, PORT_STUB)
+                y_mid = br.compute_y_mid(s_out.y(), t_in.y(), lane, lane_spacing=lane_spacing, min_clear=CLEAR)
+                path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
+                edge_key = self._get_edge_key(edge_item)
+                result[edge_key] = path
+
+        return result
     
     def mark_edge_as_user_modified(self, edge_item, path: List[QPointF]) -> None:
         """
