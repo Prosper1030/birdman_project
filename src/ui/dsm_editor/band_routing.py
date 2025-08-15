@@ -274,6 +274,27 @@ def validate_vmap(vmap: Dict[int, List[Tuple[float, float]]]) -> bool:
     return True
 
 
+def validate_lane_non_overlap(assignment: Dict[int, int], edges: List[Tuple[QPointF, QPointF]]) -> bool:
+    """Ensure no horizontal overlap within each lane for provided assignment."""
+    by_lane: Dict[int, List[Tuple[float, float]]] = {}
+    for idx, lane in assignment.items():
+        ps, pt = edges[idx]
+        xL = min(ps.x(), pt.x())
+        xR = max(ps.x(), pt.x())
+        if xR <= xL:
+            continue
+        by_lane.setdefault(lane, []).append((xL, xR))
+    # check lane by lane
+    for lane, arr in by_lane.items():
+        arr.sort(key=lambda t: (t[0], t[1]))
+        last_r = -1e18
+        for xL, xR in arr:
+            if xL < last_r:  # overlap detected
+                return False
+            last_r = xR
+    return True
+
+
 def assign_band_with_vertical_checks(
     edges: List[Tuple[QPointF, QPointF]],
     stubs_y: List[Tuple[float, float]],

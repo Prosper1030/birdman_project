@@ -417,10 +417,23 @@ class EdgeRouterManager(QObject):
                 br.vmap_add(vmap, ps.x(), ps.y(), y_mid, grid=1.0)
                 br.vmap_add(vmap, pt.x(), y_mid, pt.y(), grid=1.0)
 
-        # 驗證垂直碰撞地圖（開發期診斷）
+        # 驗證垂直碰撞地圖 & 水平車道不重疊（開發期診斷）
         try:
             if not br.validate_vmap(vmap):
                 print("[band-router] 垂直碰撞地圖檢查未通過：偵測到同列重疊。")
+            # 將 assignment 與 fallback 合併後驗證（簡化：僅驗證 remain_pts 部分）
+            combined_assign = {**assign}
+            if failed:
+                fb_map = br.assign_main_rectangle([remain_pts[i] for i in failed])
+                # 將 fallback lanes 平移避免與 assign 衝突
+                if combined_assign:
+                    max_lane = max(combined_assign.values())
+                else:
+                    max_lane = 0
+                for k, lane in fb_map.items():
+                    combined_assign[failed[k]] = max_lane + lane
+            if not br.validate_lane_non_overlap(combined_assign, remain_pts):
+                print("[band-router] 車道水平重疊檢查未通過：偵測到同 lane 區間重疊。")
         except Exception:
             pass
 
