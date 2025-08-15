@@ -263,6 +263,17 @@ def vmap_add(vmap: Dict[int, List[Tuple[float, float]]], x: float, y1: float, y2
     arr.insert(i, (y1, y2))
 
 
+def validate_vmap(vmap: Dict[int, List[Tuple[float, float]]]) -> bool:
+    """Ensure no overlaps within each x bucket; assumes arr sorted by start."""
+    for b, arr in vmap.items():
+        for i in range(1, len(arr)):
+            prev = arr[i - 1]
+            cur = arr[i]
+            if not (prev[1] <= cur[0]):  # allow touch only
+                return False
+    return True
+
+
 def assign_band_with_vertical_checks(
     edges: List[Tuple[QPointF, QPointF]],
     stubs_y: List[Tuple[float, float]],

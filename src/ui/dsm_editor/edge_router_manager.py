@@ -413,6 +413,9 @@ class EdgeRouterManager(QObject):
                 path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
                 edge_key = self._get_edge_key(edge_item)
                 result[edge_key] = path
+                # 登記垂直段
+                br.vmap_add(vmap, ps.x(), ps.y(), y_mid, grid=1.0)
+                br.vmap_add(vmap, pt.x(), y_mid, pt.y(), grid=1.0)
 
         return result
     
