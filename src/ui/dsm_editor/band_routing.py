@@ -101,6 +101,33 @@ def filter_vertical_candidates(
     return out
 
 
+def _suppress_multi_vertical_pairs(cands: List[VerticalCandidate], tol_y: float = 1.0) -> List[VerticalCandidate]:
+    """Drop vertical candidates that are duplicated (antiparallel pair) on the
+    same x column with nearly identical [y_top,y_bot]. These should not be locked
+    as straight lines; leave them to the band assignment to split at 1/3, 2/3 ...
+    """
+    from collections import defaultdict
+    buckets: Dict[int, List[VerticalCandidate]] = defaultdict(list)
+    for c in cands:
+        key = int(round(c.x * 10))  # 0.1 px bucket
+        buckets[key].append(c)
+
+    keep: List[VerticalCandidate] = []
+    for key, arr in buckets.items():
+        # cluster by rounded y_top,y_bot
+        clusters: Dict[Tuple[int, int], List[VerticalCandidate]] = defaultdict(list)
+        for c in arr:
+            yt = int(round(c.y_top / max(0.1, tol_y)))
+            yb = int(round(c.y_bot / max(0.1, tol_y)))
+            clusters[(yt, yb)].append(c)
+        for k, grp in clusters.items():
+            if len(grp) >= 2:
+                # suppress all in this cluster
+                continue
+            keep.extend(grp)
+    return keep
+
+
 def los_ok_vertical(
     cand: VerticalCandidate,
     obstacles: Iterable[QRectF],
@@ -152,6 +179,8 @@ def preprocess_straight_edges(
         (locked_paths_by_index, remaining_indices)
     """
     vcands = filter_vertical_candidates(edges, tol)
+    # 避免雙向同段被鎖成直線，交由帶狀分配（1/3, 2/3）
+    vcands = _suppress_multi_vertical_pairs(vcands, tol_y=tol)
     # Keep only line-of-sight OK
     vcands = [c for c in vcands if los_ok_vertical(c, obstacles_by_edge[c.edge_index])]
     # Resolve overlaps among themselves
@@ -432,6 +461,16 @@ def assign_band_with_vertical_checks(
     lane_right: List[float] = []
     failed: List[int] = []
 
+    # 依 [xL,xR] 歸組，讓同群的邊等分 y 視窗（j/(K+1)）
+    def _gkey(xL: float, xR: float) -> Tuple[int, int]:
+        return (int(round(xL * 10)), int(round(xR * 10)))
+
+    groups: Dict[Tuple[int, int], List[int]] = {}
+    for it in items:
+        groups.setdefault(_gkey(it.xL, it.xR), []).append(it.idx)
+    group_size: Dict[Tuple[int, int], int] = {k: len(v) for k, v in groups.items()}
+    group_assigned_count: Dict[Tuple[int, int], int] = {k: 0 for k in groups.keys()}
+
     for it in stable_order(items):
         ps, pt = edges[it.idx]
         s_out_y, t_in_y = stubs_y[it.idx]
@@ -445,7 +484,19 @@ def assign_band_with_vertical_checks(
             if j < len(lane_right) and lane_right[j] > it.xL:
                 continue
             lane = j + 1
-            y_mid = compute_y_mid(s_out_y, t_in_y, lane, lane_spacing)
+            # 先嘗試「等分 y 視窗」策略：對同 [xL,xR] 群組用 j/(K+1)
+            y_mid: Optional[float] = None
+            gk = _gkey(it.xL, it.xR)
+            K = group_size.get(gk, 1)
+            rank = group_assigned_count.get(gk, 0) + 1  # 1-based
+            if y_ranges is not None and 0 < rank <= K:
+                y_lo, y_hi = y_ranges[it.idx]
+                if y_lo <= y_hi:
+                    frac = rank / (K + 1)
+                    y_mid = y_lo + frac * (y_hi - y_lo)
+            # 若沒有 y_ranges 或視窗無效，回退到 lane-based 計算
+            if y_mid is None:
+                y_mid = compute_y_mid(s_out_y, t_in_y, lane, lane_spacing)
             # clamp to allowed y range if provided
             if y_ranges is not None:
                 y_lo, y_hi = y_ranges[it.idx]
@@ -476,6 +527,8 @@ def assign_band_with_vertical_checks(
                 ymid_by_idx[it.idx] = y_mid
                 vmap_add(vertical_map, x1, ps.y(), y_mid, grid=vgrid)
                 vmap_add(vertical_map, x2, y_mid, pt.y(), grid=vgrid)
+                # 記錄該群已分配數，確保後續 rank 正確
+                group_assigned_count[gk] = group_assigned_count.get(gk, 0) + 1
                 placed = True
                 break
         if not placed:
