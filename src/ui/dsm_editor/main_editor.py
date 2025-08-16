@@ -325,7 +325,7 @@ class DsmEditor(QDialog):
 
         applied_count = 0
         processed_edges = set()  # 避免重複處理同一條邊
-        
+
         # 遍歷節點的邊線集合而不是場景項目
         for node in self.nodes.values():
             if hasattr(node, 'edges'):
@@ -334,22 +334,23 @@ class DsmEditor(QDialog):
                     if edge_id in processed_edges:
                         continue
                     processed_edges.add(edge_id)
-                    
+
                     # 構建邊的標識符
                     edge_key = (edge.src.taskId, edge.dst.taskId)
-                    
+
                     if edge_key in self.edge_ports:
                         src_port_pos, dst_port_pos = self.edge_ports[edge_key]
                         from PyQt5.QtCore import QPointF
-                        edge.set_path_from_ports(QPointF(*src_port_pos), QPointF(*dst_port_pos))
+                        # 直接使用 set_complex_path，確保嚴格按照 port 座標繪製（兩點直線）
+                        edge.set_complex_path([QPointF(*src_port_pos), QPointF(*dst_port_pos)], offset_pixels=0)
                         applied_count += 1
-                        print(f"[DEBUG] 應用 port 到邊 {edge_key}: {src_port_pos} -> {dst_port_pos}")
+                        print(f"[DEBUG] 應用 port 到邊 {edge_key}（set_complex_path）: {src_port_pos} -> {dst_port_pos}")
                     else:
                         # 沒有對應的端口信息，使用預設方法
                         edge.updatePath()
                         print(f"[DEBUG] 邊 {edge_key} 無 port 信息，使用預設路徑")
 
-        print(f"應用 edge_ports 到 {applied_count} 條邊線")
+        print(f"應用 edge_ports 到 {applied_count} 條邊線（已直接用 port 兩點設路徑）")
 
     def setLayoutDirection(self, direction: str) -> None:
         """

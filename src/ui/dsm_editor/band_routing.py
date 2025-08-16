@@ -20,9 +20,31 @@ necessary to keep type hints friendly to the caller.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Iterable, Optional
+from typing import List, Tuple, Dict, Iterable, Optional, Hashable
 
-from PyQt5.QtCore import QPointF, QRectF
+try:
+    from PyQt5.QtCore import QPointF, QRectF  # type: ignore
+except Exception:
+    # Fallback stubs for static analysis or environments without PyQt5
+    class QPointF:  # type: ignore
+        def __init__(self, x: float = 0.0, y: float = 0.0):
+            self._x = float(x)
+            self._y = float(y)
+        def x(self) -> float:
+            return self._x
+        def y(self) -> float:
+            return self._y
+    class QRectF:  # type: ignore
+        def __init__(self, x: float = 0.0, y: float = 0.0, w: float = 0.0, h: float = 0.0):
+            self._x, self._y, self._w, self._h = float(x), float(y), float(w), float(h)
+        def left(self) -> float:
+            return self._x
+        def right(self) -> float:
+            return self._x + self._w
+        def top(self) -> float:
+            return self._y
+        def bottom(self) -> float:
+            return self._y + self._h
 
 
 # ---------- Utilities ----------
@@ -179,8 +201,8 @@ def preprocess_straight_edges(
         (locked_paths_by_index, remaining_indices)
     """
     vcands = filter_vertical_candidates(edges, tol)
-    # 避免雙向同段被鎖成直線，交由帶狀分配（1/3, 2/3）
-    vcands = _suppress_multi_vertical_pairs(vcands, tol_y=tol)
+    # 依新規則：不再對『反向/重疊的同段垂直候選』做去重或抑制；
+    # 讓每條邊（獨立 DrawEdge）各自評估 LOS 與衝突處理。
     # Keep only line-of-sight OK
     vcands = [c for c in vcands if los_ok_vertical(c, obstacles_by_edge[c.edge_index])]
     # Resolve overlaps among themselves
@@ -248,6 +270,89 @@ def assign_band_lanes_for_tb_vhv(
     # Suggest a neutral base ratio for y_mid (0.5 between ends)
     # Caller should snap/clamp.
     return assignment, lane_spacing
+
+
+# ---------- Straight-column lane assignment (yEd-style, general) ----------
+
+def assign_vertical_columns_by_pairs(
+        edges: List[Tuple[QPointF, QPointF]],
+        *,
+        # 每條邊可用的水平直線區間（上節點底邊與下節點頂邊的水平重疊 [L,R]；拿不到可傳 None）
+        x_windows: Optional[List[Optional[Tuple[float, float]]]] = None,
+        # 同一對節點（忽略方向）的 key，用 tuple(sorted([src_id, dst_id])) 最穩
+        pair_keys: Optional[List[Hashable]] = None,
+        tol_x: float = 1.0,
+        default_halfspan: float = 12.0,
+) -> Dict[int, float]:
+    """
+    只對『已經是垂直的邊』（以 port x 判斷：|ps.x-pt.x|<=tol_x）做直線欄位分配。
+        - 不強迫非垂直邊變成直線。
+        - 不以方向（上/下行）作左右特例；僅用穩定順序等分 j/(K+1)。
+        - 若提供 pair_keys，僅在『同一節點對』的多條垂直邊之間分配欄位；
+            若未提供，退回以 x 欄位（取 0.5*(ps.x+pt.x) 的四捨五入）分組。
+        - 若沒有提供 [L,R] 或交集為空，退化為以中心 x0 的對稱小視窗 [x0-Δ, x0+Δ]。
+    回傳：idx -> x_col（直線應使用的 x）
+    """
+    if x_windows is None:
+        x_windows = [None] * len(edges)
+
+    # 僅納入『垂直候選』（以 port x 判斷）
+    vertical_idx: List[int] = [i for i, (ps, pt) in enumerate(edges) if near(ps.x(), pt.x(), tol_x)]
+
+    if pair_keys:
+        # 以節點對分組，但僅保留垂直者
+        by_pair: Dict[Hashable, List[int]] = {}
+        for i in vertical_idx:
+            by_pair.setdefault(pair_keys[i], []).append(i)
+        final_groups = [sorted(g) for g in by_pair.values() if len(g) > 1]
+    else:
+        # 無 pair_keys：以 x 欄位分組（只針對垂直者）
+        by_col: Dict[int, List[int]] = {}
+        for i in vertical_idx:
+            ps, pt = edges[i]
+            key = int(round(0.5 * (ps.x() + pt.x())))
+            by_col.setdefault(key, []).append(i)
+        final_groups = [sorted(g) for g in by_col.values() if len(g) > 1]
+
+    xcol_by_idx: Dict[int, float] = {}
+
+    for grp in final_groups:
+        K = len(grp)
+        if K <= 1:
+            continue  # 單條邊不需要分配，讓它走正常路由
+
+        # 先彙總可用水平區間的交集；同時蒐集中心 x0 以便退化使用
+        L: Optional[float] = None
+        R: Optional[float] = None
+        x0s: List[float] = []
+        for i in grp:
+            ps, pt = edges[i]
+            x0 = 0.5 * (ps.x() + pt.x())
+            x0s.append(x0)
+            win = x_windows[i]
+            if win is None:
+                continue
+            l, r = (win if win[0] <= win[1] else (win[1], win[0]))
+            L = l if L is None else max(L, l)
+            R = r if R is None else min(R, r)
+
+        if L is None or R is None or R <= L:
+            # 沒提供（或交集為空）→ 用中心退化視窗
+            cx = sum(x0s) / len(x0s) if x0s else 0.0
+            L = cx - abs(default_halfspan)
+            R = cx + abs(default_halfspan)
+
+        # 槽位 1..K：不考慮方向，使用穩定順序（索引遞增）等分 j/(K+1)
+        ordered = sorted(grp)
+        for rank, i in enumerate(ordered, start=1):
+            xcol = L + (rank / (K + 1.0)) * (R - L)
+            # 對齊到 0.5px，避免浮點噪音造成細微橫移
+            try:
+                xcol_by_idx[i] = snap_x(xcol, grid=0.5)
+            except Exception:
+                xcol_by_idx[i] = xcol
+
+    return xcol_by_idx
 
 
 # Convenience to compute a y_mid per edge given an assigned lane and bounds

@@ -868,13 +868,13 @@ class SugiyamaLayout:
         # 確保 node_margin 滿足 min_node_edge 要求
         self._ensure_node_margin_compliance()
 
-        # 為每個節點計算各側的邊
-        node_side_edges = self._categorize_edges_by_node_side(direction)
+        # 為每個節點的每個側邊，收集『邊 tuple』列表（含重複），並依相鄰節點位置排序
+        side_edge_groups = self._categorize_edges_by_node_side_edges(direction)
 
-        # 為每條原始邊分配 ports
+        # 為每條原始邊分配 ports（保證每條邊在其側邊獲得唯一槽位）
         for u, v in self.original_edges:
             if u in self.coordinates and v in self.coordinates:
-                src_port, dst_port = self._calculate_edge_ports(u, v, direction, node_side_edges)
+                src_port, dst_port = self._calculate_edge_ports(u, v, direction, side_edge_groups)
                 self.edge_ports[(u, v)] = (src_port, dst_port)
 
     def _ensure_node_margin_compliance(self):
@@ -923,6 +923,55 @@ class SugiyamaLayout:
             node_sides[node] = sides
 
         return node_sides
+
+    def _node_position_index(self, node: str) -> int:
+        """取得節點在其層中的穩定位置索引，用於排序槽位。"""
+        if hasattr(self, 'node_positions') and node in self.node_positions:
+            return self.node_positions[node]
+        if node in self.layers:
+            layer = self.layers[node]
+            if layer in self.layer_nodes and node in self.layer_nodes[layer]:
+                return self.layer_nodes[layer].index(node)
+        return 0
+
+    def _neighbor_position_for_side(self, host: str, side: str, edge: Tuple[str, str]) -> int:
+        """對於 host 節點某側的一條邊，回傳該邊鄰居節點的排序索引。"""
+        u, v = edge
+        # 若 host 是源，鄰居為目標；反之為源
+        neighbor = v if host == u else u
+        return self._node_position_index(neighbor)
+
+    def _categorize_edges_by_node_side_edges(self, direction: str) -> Dict[str, Dict[str, List[Tuple[str, str]]]]:
+        """
+        將每個節點的每個側邊對應到『邊 tuple 列表』，保留重複（平行邊/雙向同側）並排序。
+
+        Returns:
+            {node_id: {side: [(u,v), (u,v), ...], ...}, ...}
+        """
+        groups: Dict[str, Dict[str, List[Tuple[str, str]]]] = {}
+        # 初始化
+        for node in self.coordinates.keys():
+            if self._is_virtual_node(node):
+                continue
+            groups[node] = {'top': [], 'bottom': [], 'left': [], 'right': []}
+
+        # 蒐集：對每條原始邊，在源與目標兩端各自的側邊加入一次
+        for (u, v) in self.original_edges:
+            if u not in self.coordinates or v not in self.coordinates:
+                continue
+            src_side = self._get_edge_side(u, v, direction, is_outgoing=True)
+            dst_side = self._get_edge_side(u, v, direction, is_outgoing=False)
+            if src_side and u in groups:
+                groups[u][src_side].append((u, v))
+            if dst_side and v in groups:
+                groups[v][dst_side].append((u, v))
+
+        # 排序：依鄰居位置穩定排序，避免交叉
+        for node, sides in groups.items():
+            for side, lst in sides.items():
+                lst.sort(key=lambda e: self._neighbor_position_for_side(node, side, e))
+
+        return groups
 
     def _get_edge_side(self, u: str, v: str, direction: str, is_outgoing: bool) -> Optional[str]:
         """
@@ -994,7 +1043,7 @@ class SugiyamaLayout:
         return sorted(nodes, key=get_position)
 
     def _calculate_edge_ports(
-            self, u: str, v: str, direction: str, node_side_edges: Dict
+            self, u: str, v: str, direction: str, side_edge_groups: Dict[str, Dict[str, List[Tuple[str, str]]]]
     ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
         """
         計算單條邊的出入口座標
@@ -1002,23 +1051,30 @@ class SugiyamaLayout:
         Returns:
             ((src_x, src_y), (dst_x, dst_y))
         """
-        # 源節點 port
+        # 源節點 port（以邊 tuple 在該側列表中的索引做槽位）
         src_side = self._get_edge_side(u, v, direction, is_outgoing=True)
-        if src_side and u in node_side_edges:
-            src_edges = node_side_edges[u][src_side]
-            src_slot = src_edges.index(v) if v in src_edges else 0
-            src_port = self._calculate_port_coordinate(u, src_side, src_slot, len(src_edges))
+        if src_side and u in side_edge_groups:
+            src_list = side_edge_groups[u][src_side]
+            # 尋找本邊在該側列表中的序（允許重複，index 取第一個匹配後再移除也可，但此處使用 index of first occurrence + Edge 唯一）
+            try:
+                src_slot = src_list.index((u, v))
+            except ValueError:
+                src_slot = 0
+            src_port = self._calculate_port_coordinate(u, src_side, src_slot, len(src_list))
         else:
-            src_port = self.coordinates[u]  # fallback 到中心點
+            src_port = self.coordinates[u]
 
         # 目標節點 port
         dst_side = self._get_edge_side(u, v, direction, is_outgoing=False)
-        if dst_side and v in node_side_edges:
-            dst_edges = node_side_edges[v][dst_side]
-            dst_slot = dst_edges.index(u) if u in dst_edges else 0
-            dst_port = self._calculate_port_coordinate(v, dst_side, dst_slot, len(dst_edges))
+        if dst_side and v in side_edge_groups:
+            dst_list = side_edge_groups[v][dst_side]
+            try:
+                dst_slot = dst_list.index((u, v))
+            except ValueError:
+                dst_slot = 0
+            dst_port = self._calculate_port_coordinate(v, dst_side, dst_slot, len(dst_list))
         else:
-            dst_port = self.coordinates[v]  # fallback 到中心點
+            dst_port = self.coordinates[v]
 
         return (src_port, dst_port)
 
@@ -1052,25 +1108,31 @@ class SugiyamaLayout:
         i = slot + 1  # 轉換為 1-based
         ratio = i / (total_slots + 1)
 
+        # 小工具：對齊到 0.5px，避免 14.9999999999 之類的浮點噪音
+        def _snap(val: float, step: float = 0.5) -> float:
+            if step <= 0:
+                return val
+            return round(val / step) * step
+
         # ports 精確放在節點邊界上
         if side == 'top':
             x = xc + (ratio - 0.5) * (w - 2*m)
             y = yc - h/2  # 移除內縮
-            return (x, y)
+            return (_snap(x), _snap(y))
         elif side == 'bottom':
             x = xc + (ratio - 0.5) * (w - 2*m)
             y = yc + h/2  # 移除內縮
-            return (x, y)
+            return (_snap(x), _snap(y))
         elif side == 'left':
             x = xc - w/2  # 移除內縮
             y = yc + (ratio - 0.5) * (h - 2*m)
-            return (x, y)
+            return (_snap(x), _snap(y))
         elif side == 'right':
             x = xc + w/2  # 移除內縮
             y = yc + (ratio - 0.5) * (h - 2*m)
-            return (x, y)
+            return (_snap(x), _snap(y))
         else:
-            return (xc, yc)  # fallback
+            return (_snap(xc), _snap(yc))  # fallback
 
     def _repack_after_optimization(self, direction: str):
         """

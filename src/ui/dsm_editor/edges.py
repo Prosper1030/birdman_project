@@ -343,13 +343,65 @@ class EdgeItem(QGraphicsPathItem):
             else:
                 normalized_points.append(QPointF(float(point[0]), float(point[1])))
 
-        # TB 版面末段垂直保險（確保最後兩點同 x）
+        # 末段收斂保險：
+        # - 若目標 port 在上下邊(top/bottom)，末段必垂直（同 x）
+        # - 若目標 port 在左右邊(left/right)，末段必水平（同 y）
         if len(normalized_points) >= 2:
             p_prev, p_last = normalized_points[-2], normalized_points[-1]
-            if abs(p_prev.x() - p_last.x()) > 0.1:
-                # 插入垂直收斂點（TB 末段必垂直）
-                insert_p = QPointF(p_last.x(), p_prev.y())
-                normalized_points = normalized_points[:-1] + [insert_p, p_last]
+
+            def _infer_side(node, pos: QPointF) -> str:
+                try:
+                    r = node.sceneBoundingRect() if node else None
+                except Exception:
+                    r = None
+                if not r:
+                    return 'bottom'
+                d_left = abs(pos.x() - r.left())
+                d_right = abs(pos.x() - r.right())
+                d_top = abs(pos.y() - r.top())
+                d_bottom = abs(pos.y() - r.bottom())
+                m = min(d_left, d_right, d_top, d_bottom)
+                if m == d_top:
+                    return 'top'
+                if m == d_bottom:
+                    return 'bottom'
+                if m == d_left:
+                    return 'left'
+                return 'right'
+
+            t_side = _infer_side(getattr(self, 'dst', None), p_last)
+            if t_side in ('top', 'bottom'):
+                # 末段垂直：x 對齊
+                if abs(p_prev.x() - p_last.x()) > 0.1:
+                    insert_p = QPointF(p_last.x(), p_prev.y())
+                    normalized_points = normalized_points[:-1] + [insert_p, p_last]
+            else:
+                # 末段水平：y 對齊
+                if abs(p_prev.y() - p_last.y()) > 0.1:
+                    insert_p = QPointF(p_prev.x(), p_last.y())
+                    normalized_points = normalized_points[:-1] + [insert_p, p_last]
+
+        # 去除連續重複點與共線冗餘點（保持轉角）
+        def _dedupe_colinear(pts: list[QPointF]) -> list[QPointF]:
+            if not pts:
+                return []
+            out = [pts[0]]
+            for q in pts[1:]:
+                if abs(q.x() - out[-1].x()) > 0.1 or abs(q.y() - out[-1].y()) > 0.1:
+                    out.append(q)
+            # 壓縮共線點
+            i = 1
+            while i + 1 < len(out):
+                a, b, c = out[i - 1], out[i], out[i + 1]
+                if (abs(a.x() - b.x()) < 0.1 and abs(b.x() - c.x()) < 0.1) or \
+                   (abs(a.y() - b.y()) < 0.1 and abs(b.y() - c.y()) < 0.1):
+                    # b 在直線上，可移除
+                    out.pop(i)
+                else:
+                    i += 1
+            return out
+
+        normalized_points = _dedupe_colinear(normalized_points)
 
         # 套用偏移以避免重疊（對垂直和水平線段分別處理）
         if abs(offset_pixels) > 0.1:
@@ -369,9 +421,12 @@ class EdgeItem(QGraphicsPathItem):
             self._updateArrowHead(normalized_points[-2], normalized_points[-1])
 
         # 4. 日誌輸出
-        fallback_info = " [fallback L/Z]" if len(normalized_points) < 3 else ""
+        path_type = ""
+        if len(normalized_points) == 2:
+            # 對於2點路徑，標記為直線或band routing
+            path_type = " [直線]"
         edge_id = f"{self.src.taskId}->{self.dst.taskId}" if hasattr(self, 'src') and hasattr(self, 'dst') else "unknown"
-        print(f"[EdgeItem] 設定路徑 {edge_id}: {len(normalized_points)} 點{fallback_info}")
+        print(f"[EdgeItem] 設定路徑 {edge_id}: {len(normalized_points)} 點{path_type}")
         
         # 5. 觸發重繪
         self.update()

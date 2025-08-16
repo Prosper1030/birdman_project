@@ -16,7 +16,43 @@ Edge Router Manager for yEd-style Routing
 import time
 from typing import List, Dict, Tuple, Set, Optional
 from enum import Enum
-from PyQt5.QtCore import QPointF, QRectF, QObject
+try:
+    from PyQt5.QtCore import QPointF, QRectF, QObject  # type: ignore
+except Exception:
+    # 提供最小替身，僅供靜態分析/無 PyQt5 環境下使用
+    class QObject:  # type: ignore
+        pass
+    class QPointF:  # type: ignore
+        def __init__(self, x=0.0, y=0.0):
+            self._x = float(x)
+            self._y = float(y)
+        def x(self) -> float:
+            return self._x
+        def y(self) -> float:
+            return self._y
+    class QRectF:  # type: ignore
+        def __init__(self, x=0.0, y=0.0, w=0.0, h=0.0):
+            self._x, self._y, self._w, self._h = float(x), float(y), float(w), float(h)
+        def left(self) -> float:
+            return self._x
+        def right(self) -> float:
+            return self._x + self._w
+        def top(self) -> float:
+            return self._y
+        def bottom(self) -> float:
+            return self._y + self._h
+        def intersects(self, other: 'QRectF') -> bool:
+            return not (
+                self.right() < other.left() or other.right() < self.left() or
+                self.bottom() < other.top() or other.bottom() < self.top()
+            )
+        def adjusted(self, dx1: float, dy1: float, dx2: float, dy2: float) -> 'QRectF':
+            return QRectF(
+                self._x + dx1,
+                self._y + dy1,
+                self._w + (dx2 - dx1),
+                self._h + (dy2 - dy1),
+            )
 
 
 class RoutingMode(Enum):
@@ -120,23 +156,27 @@ class EdgeRouterManager(QObject):
         
         return out
     
+    # 兼容舊測試 API
+    def _infer_port_side(self, node, pos: QPointF) -> str:
+        return self._port_side(node, pos)
+
+    def _make_stub_point(self, pos: QPointF, side: str, length: float = None) -> QPointF:
+        return self._stub(pos, side, PORT_STUB if length is None else length)
+    
     def _ensure_manhattan(self, pts):
         """將任意點列強制轉為正交：若一段既非同 x 也非同 y，插入中繼點。"""
         if not pts:
             return []
-        
         out = [pts[0]]
         for i in range(len(pts) - 1):
             a, b = pts[i], pts[i + 1]
             if abs(a.x() - b.x()) < 0.1 or abs(a.y() - b.y()) < 0.1:
                 out.append(b)
             else:
-                # 拆成 HV（TB 版面）
-                mid = QPointF(a.x(), b.y())
+                mid = QPointF(a.x(), b.y())  # HV（TB 方向）
                 out.extend([mid, b])
-        
         return self._dedupe_keep_elbow(out)
-    
+
     def _route_tb_canonical(self, edge_item, ps: QPointF, pt: QPointF):
         """
         TB 版面規範化路徑：
@@ -167,444 +207,114 @@ class EdgeRouterManager(QObject):
         path = [ps, s_out, mid1, mid2, t_in, pt]
 
         return self._ensure_manhattan(path)
-    
-    def set_routing_mode(self, mode: RoutingMode) -> None:
-        """
-        設置路由模式
-        
-        Args:
-            mode: 新的路由模式
-        """
-        if mode != self.current_mode:
-            self.current_mode = mode
-            print(f"路由模式切換為: {mode.value}")
-    
-    def route_single_edge(
-        self, 
-        edge_item, 
-        start_pos: QPointF, 
-        end_pos: QPointF,
-        force_mode: Optional[RoutingMode] = None
-    ) -> List[QPointF]:
-        """
-        路由單條邊線
-        
-        Args:
-            edge_item: 邊線圖形項目
-            start_pos: 起始位置
-            end_pos: 結束位置
-            force_mode: 強制使用指定模式
-            
-        Returns:
-            路徑點列表
-        """
-        # 獲取邊線標識
-        edge_key = self._get_edge_key(edge_item)
-        
-        # 檢查是否為用戶修改的邊線
-        if edge_key in self.user_modified_edges and force_mode is None:
-            # 保持用戶指定的形狀，不自動路由
-            current_path = getattr(edge_item, '_user_path', None)
-            if current_path:
-                return current_path
-        
-        # 確定使用的路由模式
-        mode = force_mode if force_mode else self.current_mode
-        
-        if mode == RoutingMode.INTERACTIVE:
-            return self._route_interactive(start_pos, end_pos)
-        else:
-            return self._route_orthogonal(edge_item, start_pos, end_pos)
-    
-    def route_all_edges_for_layout(self, edges_data: List[Tuple]) -> Dict[Tuple[str, str], List[QPointF]]:
-        """
-        佈局時對所有邊線執行正交路由
-        
-        這是「套用佈局」流程的一部分：
-        1. 節點佈局完成
-        2. 全圖正交路由 ← 此功能
-        3. 重繪
-        
-        Args:
-            edges_data: [(edge_item, start_pos, end_pos), ...]
-            
-        Returns:
-            {(src_id, dst_id): [path_points], ...}
-        """
-        print(f"開始全圖正交路由，處理 {len(edges_data)} 條邊線...")
-        start_time = time.time()
-        
-        # 清空用戶修改記錄（新佈局重新開始）
-        self.user_modified_edges.clear()
-        
-        # 暫時切換到佈局模式
-        original_mode = self.current_mode
-        self.set_routing_mode(RoutingMode.LAYOUT)
-        
-        try:
-            result = {}
-            # 不預先收集所有障礙物，改用 ROI 個別收集
-            # 若啟用帶狀進階路由，改走一次性批次管線
-            if getattr(self, "_band_router_enabled", False):
-                try:
-                    result = self._route_advanced_tb_with_bands(edges_data)
-                    # 立即應用（以 edge_key 對應避免順序問題）
-                    for edge_item, _, _ in edges_data:
-                        edge_key = self._get_edge_key(edge_item)
-                        if edge_key in result:
-                            self._apply_path_to_edge_immediate(edge_item, result[edge_key])
-                    elapsed = time.time() - start_time
-                    self.last_routing_time = elapsed
-                    self.routing_stats['layout_count'] += 1
-                    print(f"全圖進階TB帶狀路由完成，耗時 {elapsed:.3f}s")
-                    return result
-                except Exception as e:
-                    print(f"帶狀路由失敗，回退到逐邊路由：{e}")
-            # 檢查超時和逐邊處理
-            for i, (edge_item, start_pos, end_pos) in enumerate(edges_data):
-                if time.time() - start_time > self.timeout_ms / 1000:
-                    print(f"路由計算超時，已處理 {i}/{len(edges_data)} 條邊線")
-                    self.routing_stats['timeout_count'] += 1
-                    # 剩餘邊線使用 L 型正交路由
-                    for j in range(i, len(edges_data)):
-                        remaining_edge, remaining_start, remaining_end = edges_data[j]
-                        edge_key = self._get_edge_key(remaining_edge)
-                        # 超時回退改用 L 型折線而不是直線
-                        result[edge_key] = self._route_simple_orthogonal(remaining_start, remaining_end)
-                    break
-                
-                edge_key = self._get_edge_key(edge_item)
-                # 使用個別 ROI 優化的路由
-                path = self._route_orthogonal_safe(edge_item, start_pos, end_pos)
-                result[edge_key] = path
-                
-                # 立即應用路徑到 EdgeItem，確保路徑真正繪製到畫面
-                self._apply_path_to_edge_immediate(edge_item, path)
-            
-            elapsed = time.time() - start_time
-            self.last_routing_time = elapsed
-            self.routing_stats['layout_count'] += 1
-            
-            print(f"全圖正交路由完成，耗時 {elapsed:.3f}s")
-            return result
-            
-        except Exception as e:
-            print(f"全圖正交路由失敗: {e}")
-            self.routing_stats['fallback_count'] += 1
-            # 全部回退到 L 型正交路由
-            return self._fallback_to_simple_orthogonal(edges_data)
-        finally:
-            # 恢復原模式
-            self.set_routing_mode(original_mode)
 
-    def set_band_router_enabled(self, enabled: bool) -> None:
-        """啟用/停用進階 TB 帶狀路由（預設關閉）。"""
-        self._band_router_enabled = bool(enabled)
-        print(f"進階TB帶狀路由: {'ON' if self._band_router_enabled else 'OFF'}")
+    def _compute_nodes_overlap_x(self, node_a, node_b) -> Tuple[float, float]:
+        """計算兩個節點在場景座標中的水平重疊 [L,R]；
+        若任一節點不存在或無法取得邊界，回傳 (0, 0)。
+        """
+        def _scene_rect(n) -> Optional['QRectF']:
+            if not n:
+                return None
+            try:
+                if hasattr(n, 'sceneBoundingRect'):
+                    return n.sceneBoundingRect()
+                if hasattr(n, 'boundingRect') and hasattr(n, 'mapRectToScene'):
+                    return n.mapRectToScene(n.boundingRect())
+            except Exception:
+                return None
+            return None
 
-    # --- 進階 TB: 以指定 y_mid 產生 V-H-V 幾何 ---
+        ra = _scene_rect(node_a)
+        rb = _scene_rect(node_b)
+        if not ra or not rb:
+            return (0.0, 0.0)
+        L = max(ra.left(), rb.left())
+        R = min(ra.right(), rb.right())
+        if R < L:
+            return (0.0, 0.0)
+        return (float(L), float(R))
+    
     def _tb_port_sides(self, ps: QPointF, pt: QPointF) -> Tuple[str, str]:
-        """依 TB 規範選擇固定的上下端口：
-        - 若目標在下方（pt.y >= ps.y）：源用 bottom，目標用 top
-        - 若目標在上方：源用 top，目標用 bottom
-        此規則確保反向邊（向上）也會使用正確的上下側以符合 N+1 規定。
+        """依 TB 規則選擇來源/目標 port 側邊（N+1 規則）：
+        - 從上到下：src 用 bottom，dst 用 top
+        - 從下到上：src 用 top，dst 用 bottom
         """
-        if pt.y() >= ps.y():
+        if ps.y() <= pt.y():
             return 'bottom', 'top'
         else:
             return 'top', 'bottom'
 
     def _route_tb_with_y(self, edge_item, ps: QPointF, pt: QPointF, y_mid: float) -> List[QPointF]:
-        """以指定的中段 y 生成 TB 的 V-H-V 路徑，保留 stub 與末段垂直規範。"""
-        # TB 版面：強制使用上下邊作為端口，避免反向邊 side 判斷錯誤
+        """在指定 y_mid 的 TB 路徑（保留首尾垂直結構）。"""
         s_side, t_side = self._tb_port_sides(ps, pt)
-
         s_out = self._stub(ps, s_side, PORT_STUB)
         t_in = self._stub(pt, t_side, PORT_STUB)
-
-        # 夾在安全帶內
-        y_low = min(s_out.y(), t_in.y()) + CLEAR
-        y_high = max(s_out.y(), t_in.y()) - CLEAR
-        y_mid = self._snap(max(min(y_mid, y_high), y_low))
-
-        mid1 = QPointF(s_out.x(), y_mid)
-        mid2 = QPointF(t_in.x(), y_mid)
-        path = [ps, s_out, mid1, mid2, t_in, pt]
+        y_mid = self._snap(y_mid)
+        path = [
+            ps,
+            s_out,
+            QPointF(s_out.x(), y_mid),
+            QPointF(t_in.x(), y_mid),
+            t_in,
+            pt,
+        ]
         return self._ensure_manhattan(path)
 
     def _route_advanced_tb_with_bands(self, edges_data: List[Tuple]) -> Dict[Tuple[str, str], List[QPointF]]:
-        """批次帶狀分配 + 直線預處理 的 V-H-V 管線（最小可用骨架）。"""
-        from . import band_routing as br
+        """
+        進階 TB 路由（簡化版）：
+        - 單邊策略：若以 port x 判斷為垂直（start.x == end.x，容差約 0.5px），直接畫純直線 [ps, pt]
+        - 否則使用標準 V-H-V（或後續可插入高級核心）
+        - 不再以『雙向/同節點對』作任何特例或強制分欄
+        """
+        # 先處理『垂直候選』的直線欄位分配（yEd 風格）：
+        # - 僅針對原本就垂直（以 port x 檢查）的邊
+        # - 分組鍵採用『同一對節點（忽略方向）』，確保雙向也能被當成多條線分欄
+        from .band_routing import assign_vertical_columns_by_pairs, near
 
-        # 收集 (ps, pt) 及每條邊的 ROI 障礙物
-        pts: List[Tuple[QPointF, QPointF]] = []
-        obstacles_by_edge: List[List[QRectF]] = []
-        for edge_item, ps, pt in edges_data:
-            pts.append((ps, pt))
-            roi = self._calculate_roi(ps, pt, padding=200)
-            obstacles_by_edge.append(self._collect_obstacles(edge_item, roi))
+        n = len(edges_data)
+        edges_xy: List[Tuple[QPointF, QPointF]] = []
+        pair_keys: List[Tuple[str, str]] = []
+        x_windows: List[Tuple[float, float]] = []
+        for (edge_item, ps, pt) in edges_data:
+            edges_xy.append((ps, pt))
+            # 節點對（忽略方向）
+            a = str(getattr(getattr(edge_item, 'src', None), 'taskId', ''))
+            b = str(getattr(getattr(edge_item, 'dst', None), 'taskId', ''))
+            pair_keys.append(tuple(sorted((a, b))))
+            # 可用直線 [L,R] 視窗：採兩節點水平重疊
+            L, R = self._compute_nodes_overlap_x(getattr(edge_item, 'src', None), getattr(edge_item, 'dst', None))
+            x_windows.append((L, R) if R > L else (0.0, 0.0))
 
-        # 先嘗試：同對雙向且同列的垂直邊 → 直接輸出「雙柱」兩條直線（左右各一條）
-        # 檢查方式：以 edge_key 無向化分組，且 ps.x≈pt.x、LOS 無阻擋
-        key_map: Dict[Tuple[str, str], List[int]] = {}
-        for i, (edge_item, ps, pt) in enumerate(edges_data):
-            a, b = self._get_edge_key(edge_item)
-            key = (a, b) if a <= b else (b, a)
-            key_map.setdefault(key, []).append(i)
-
-        locked_map: Dict[int, List[QPointF]] = {}
-        locked_indices: Set[int] = set()
-        pair_result: Dict[Tuple[str, str], List[QPointF]] = {}
-        tolx = 1.0
-        for key, arr in key_map.items():
-            if len(arr) == 2:
-                i1, i2 = arr
-                ps1, pt1 = pts[i1]
-                ps2, pt2 = pts[i2]
-                # 兩條都需為同列垂直候選
-                def _is_vert(p, q):
-                    return abs(p.x() - q.x()) <= tolx
-                if _is_vert(ps1, pt1) and _is_vert(ps2, pt2):
-                    # LOS 無阻擋（以嚴格內部判定）
-                    x = 0.5 * (ps1.x() + pt1.x())
-                    y1a, y1b = sorted([ps1.y(), pt1.y()])
-                    y2a, y2b = sorted([ps2.y(), pt2.y()])
-                    def _los_ok(i, x_, ya, yb):
-                        return all(not br.rect_intersects_vertical_segment(r, x_, ya, yb, strict_inside=True)
-                                   for r in obstacles_by_edge[i])
-                    if _los_ok(i1, x, y1a, y1b) and _los_ok(i2, x, y2a, y2b):
-                        # 構造左右偏移 Δ 的兩條直線（各只在頂/底做短水平移出）
-                        def _tb_stub(ps: QPointF, pt: QPointF) -> Tuple[QPointF, QPointF]:
-                            s_side, t_side = self._tb_port_sides(ps, pt)
-                            return self._stub(ps, s_side, PORT_STUB), self._stub(pt, t_side, PORT_STUB)
-                        s1, t1 = _tb_stub(ps1, pt1)
-                        s2, t2 = _tb_stub(ps2, pt2)
-                        base_x = round(0.5 * (s1.x() + t1.x()))
-                        delta = max(GRID * 2, 32)
-                        xL = base_x - delta
-                        xR = base_x + delta
-                        # 產生路徑：ps → s_out → (x_off, s_out.y) → (x_off, t_in.y) → t_in → pt
-                        def _build(ps, s_out, t_in, pt, x_off):
-                            top_shift = QPointF(x_off, s_out.y())
-                            bot_shift = QPointF(x_off, t_in.y())
-                            path = [ps, s_out, top_shift, bot_shift, t_in, pt]
-                            return self._ensure_manhattan(path)
-                        p1 = _build(ps1, s1, t1, pt1, xL)
-                        p2 = _build(ps2, s2, t2, pt2, xR)
-                        k1 = self._get_edge_key(edges_data[i1][0])
-                        k2 = self._get_edge_key(edges_data[i2][0])
-                        pair_result[k1] = p1
-                        pair_result[k2] = p2
-                        locked_indices.update([i1, i2])
-
-        # Phase 1: 直線（垂直）預處理（處理剩餘者）
-        remain_idx_all = [i for i in range(len(pts)) if i not in locked_indices]
-        locked_map2, remain_idx2 = br.preprocess_straight_edges([pts[i] for i in remain_idx_all], [obstacles_by_edge[i] for i in remain_idx_all], tol=1.0)
-        # 轉回全域索引
-        for local_i, path in locked_map2.items():
-            global_i = remain_idx_all[local_i]
-            locked_map[global_i] = path
-        remain_idx = [remain_idx_all[i] for i in remain_idx2]
-
-        # Phase 2: 帶狀分配（帶垂直碰撞檢查）
-        remain_pts = [pts[i] for i in remain_idx]
-        lane_spacing = GRID
-
-        # 先建立垂直碰撞地圖，將已鎖直線登記
-        vmap = {}
-        seen_cols: Set[Tuple[int, int, int]] = set()  # (bucket, y_top*10, y_bot*10)
-        for i, path in locked_map.items():
-            ps, pt = path[0], path[1]
-            y_top, y_bot = (ps.y(), pt.y()) if ps.y() <= pt.y() else (pt.y(), ps.y())
-            xs = br.snap_x(ps.x(), grid=2.0)
-            b = int(round(xs / max(1.0, 1.0)))
-            key = (b, int(round(y_top * 10)), int(round(y_bot * 10)))
-            if key in seen_cols:
-                continue  # 避免 duplicated 登記造成診斷噪音
-            seen_cols.add(key)
-            br.vmap_add(vmap, xs, ps.y(), pt.y(), grid=1.0)
-
-        # 準備每條剩餘邊的 stub 上下界（用於 y_mid 計算）
-        stubs_y: List[Tuple[float, float]] = []
-        base_ranges: List[Tuple[float, float]] = []
-        for j, (ps, pt) in enumerate(remain_pts):
-            edge_item = edges_data[remain_idx[j]][0]
-            # TB 固定上下端口
-            s_side, t_side = self._tb_port_sides(ps, pt)
-            s_out = self._stub(ps, s_side, PORT_STUB)
-            t_in = self._stub(pt, t_side, PORT_STUB)
-            stubs_y.append((s_out.y(), t_in.y()))
-            # 基本安全帶 [low, high]
-            y_low = min(s_out.y(), t_in.y()) + CLEAR
-            y_high = max(s_out.y(), t_in.y()) - CLEAR
-            base_ranges.append((y_low, y_high))
-
-        # TODO: 未接上 fragments → profile；先假設空 profile（不提高低限）
-        empty_profile = []
-        low_lanes = br.mark_low_lane(remain_pts, empty_profile, lane_spacing)
-        # 垂直避免撞節點：計算每條邊允許的 y_mid 範圍
-        y_allowed = br.compute_y_allowed_ranges(remain_pts, stubs_y, [obstacles_by_edge[i] for i in remain_idx], base_clear_low_high=base_ranges)
-        assign, failed, ymid_map = br.assign_band_with_vertical_checks(
-            remain_pts, stubs_y, lane_spacing, vmap, vgrid=1.0, low_lanes=low_lanes,
-            y_ranges=y_allowed, obstacles_by_edge=[obstacles_by_edge[i] for i in remain_idx]
+        xcol_assign: Dict[int, float] = assign_vertical_columns_by_pairs(
+            edges_xy,
+            x_windows=x_windows,
+            pair_keys=pair_keys,
+            tol_x=1.0,
+            default_halfspan=12.0,
         )
 
-        # 構建群組：對同 [xL,xR] 的邊分配水平偏移列，避免 x 相同導致 H=0
-        def _gkey(ps: QPointF, pt: QPointF) -> Tuple[int, int]:
-            xL = min(ps.x(), pt.x())
-            xR = max(ps.x(), pt.x())
-            return (int(round(xL * 10)), int(round(xR * 10)))
-
-        groups: Dict[Tuple[int, int], List[int]] = {}
-        for li, (ps, pt) in enumerate(remain_pts):
-            groups.setdefault(_gkey(ps, pt), []).append(li)
-        # 為每個群產生對稱偏移序列：[-1, +1, -2, +2, ...] * GRID
-        def _offset_for_rank(rank: int, step: float = None) -> float:
-            if step is None:
-                step = max(GRID * 2, 32)
-            k = (rank - 1) // 2 + 1
-            sign = -1 if rank % 2 == 1 else +1
-            return sign * k * step
-        group_rank: Dict[int, int] = {}
-        for gk, arr in groups.items():
-            for idx, li in enumerate(arr, start=1):
-                group_rank[li] = idx
-
-        # 組裝結果
         result: Dict[Tuple[str, str], List[QPointF]] = {}
-        # 先放已鎖定直線
-        for i, path in locked_map.items():
-            edge_item, ps, pt = edges_data[i]
+        for idx, (edge_item, ps, pt) in enumerate(edges_data):
             edge_key = self._get_edge_key(edge_item)
-            result[edge_key] = path
-
-        # 為剩餘的依 lane 產生 y_mid 幾何
-        for local_i, (ps, pt) in enumerate(remain_pts):
-            lane = assign.get(local_i)
-            if lane is None:
-                continue  # 留待後備處理
-            global_index = remain_idx[local_i]
-            edge_item = edges_data[global_index][0]
-            # 構造 stub 後的上下界求 y_mid
-            s_side, t_side = self._tb_port_sides(ps, pt)
-            s_out = self._stub(ps, s_side, PORT_STUB)
-            t_in = self._stub(pt, t_side, PORT_STUB)
-            # 使用已通過檢查的 y_mid，避免重算造成與障礙/垂直檢查不一致
-            y_mid = ymid_map.get(local_i)
-            if y_mid is None:
-                y_mid = br.compute_y_mid(s_out.y(), t_in.y(), lane, lane_spacing=lane_spacing, min_clear=CLEAR)
-            # 若兩側 x 相同，插入一個水平偏移列，讓 H 有寬度
-            path = None
-            if abs(s_out.x() - t_in.x()) < 0.5:
-                rank = group_rank.get(local_i, 1)
-                # 先試左/右對稱序列（rank 已交錯左右）
-                candidate_dx = _offset_for_rank(rank)
-                def _blocked(dx: float) -> bool:
-                    # 僅檢查頂/底兩段短水平（避免碰節點）
-                    x_from, x_to = s_out.x(), s_out.x() + dx
-                    obs = obstacles_by_edge[global_index]
-                    top_hit = any(br.rect_intersects_horizontal_segment(r, s_out.y(), x_from, x_to, strict_inside=True) for r in obs)
-                    bot_hit = any(br.rect_intersects_horizontal_segment(r, t_in.y(), x_to, t_in.x(), strict_inside=True) for r in obs)
-                    return top_hit or bot_hit
-                # 如果被擋，嘗試反向與加倍
-                attempt = 0
-                dx = candidate_dx
-                while attempt < 4 and _blocked(dx):
-                    attempt += 1
-                    if attempt == 1:
-                        dx = -candidate_dx
-                    elif attempt == 2:
-                        dx = 2 * candidate_dx
-                    elif attempt == 3:
-                        dx = -2 * candidate_dx
-                x_mid = s_out.x() + dx
-                # 兩端短水平 + 主體直立於偏移列
-                top_shift = QPointF(x_mid, s_out.y())
-                bot_shift = QPointF(x_mid, t_in.y())
-                path = [ps, s_out, top_shift, bot_shift, t_in, pt]
-                path = self._ensure_manhattan(path)
+            if abs(ps.x() - pt.x()) < 1.0 and idx in xcol_assign:
+                # 多條垂直線：使用分配到的 x 欄位，保留原始 y 值
+                xcol = xcol_assign[idx]
+                # snap 0.5 px，避免 14.999999 之類的浮點殘值
+                try:
+                    from .band_routing import snap_x
+                    xcol = snap_x(xcol, grid=0.5)
+                except Exception:
+                    pass
+                p1 = QPointF(xcol, ps.y())
+                p2 = QPointF(xcol, pt.y())
+                result[edge_key] = [p1, p2]
+            elif abs(ps.x() - pt.x()) < 0.5:
+                # 單條垂直線：直接兩點
+                result[edge_key] = [ps, pt]
             else:
-                path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
-            edge_key = self._get_edge_key(edge_item)
-            result[edge_key] = path
-
-        # Phase 3: 對未能放入帶狀的邊（failed）做簡單主矩形回退（先用 first-fit 不帶檢查）
-        if failed:
-            fallback_pts = [remain_pts[i] for i in failed]
-            fb_assign = br.assign_main_rectangle(fallback_pts)
-            for k, lane in fb_assign.items():
-                ps, pt = fallback_pts[k]
-                global_index = remain_idx[failed[k]]
-                edge_item = edges_data[global_index][0]
-                s_side, t_side = self._tb_port_sides(ps, pt)
-                s_out = self._stub(ps, s_side, PORT_STUB)
-                t_in = self._stub(pt, t_side, PORT_STUB)
-                y_low = min(s_out.y(), t_in.y()) + CLEAR
-                y_high = max(s_out.y(), t_in.y()) - CLEAR
-                # 若有允許範圍，需再夾一層
-                if failed:
-                    idx_local = failed[k]
-                    lo, hi = y_allowed[idx_local]
-                    y_low = max(y_low, lo)
-                    y_high = min(y_high, hi)
-                y_mid = br.compute_y_mid(s_out.y(), t_in.y(), lane, lane_spacing=lane_spacing, min_clear=CLEAR)
-                # 夾到允許範圍
-                if y_mid < y_low:
-                    y_mid = y_low
-                elif y_mid > y_high:
-                    y_mid = y_high
-                # 同列情形同樣插入水平偏移列
-                if abs(s_out.x() - t_in.x()) < 0.5:
-                    rank = group_rank.get(failed[k], 1)
-                    candidate_dx = _offset_for_rank(rank)
-                    def _blocked(dx: float) -> bool:
-                        x_from, x_to = s_out.x(), s_out.x() + dx
-                        obs = obstacles_by_edge[global_index]
-                        top_hit = any(br.rect_intersects_horizontal_segment(r, s_out.y(), x_from, x_to, strict_inside=True) for r in obs)
-                        bot_hit = any(br.rect_intersects_horizontal_segment(r, t_in.y(), x_to, t_in.x(), strict_inside=True) for r in obs)
-                        return top_hit or bot_hit
-                    attempt = 0
-                    dx = candidate_dx
-                    while attempt < 4 and _blocked(dx):
-                        attempt += 1
-                        if attempt == 1:
-                            dx = -candidate_dx
-                        elif attempt == 2:
-                            dx = 2 * candidate_dx
-                        elif attempt == 3:
-                            dx = -2 * candidate_dx
-                    x_mid = s_out.x() + dx
-                    top_shift = QPointF(x_mid, s_out.y())
-                    bot_shift = QPointF(x_mid, t_in.y())
-                    path = [ps, s_out, top_shift, bot_shift, t_in, pt]
-                    path = self._ensure_manhattan(path)
-                else:
-                    path = self._route_tb_with_y(edge_item, ps, pt, y_mid)
-                edge_key = self._get_edge_key(edge_item)
-                result[edge_key] = path
-                # 登記垂直段
-                br.vmap_add(vmap, br.snap_x(ps.x(), grid=2.0), ps.y(), y_mid, grid=1.0)
-                br.vmap_add(vmap, br.snap_x(pt.x(), grid=2.0), y_mid, pt.y(), grid=1.0)
-
-        # 驗證垂直碰撞地圖 & 水平車道不重疊（開發期診斷）
-        try:
-            if not br.validate_vmap(vmap):
-                print("[band-router] 垂直碰撞地圖檢查未通過：偵測到同列重疊。")
-            # 將 assignment 與 fallback 合併後驗證（簡化：僅驗證 remain_pts 部分）
-            combined_assign = {**assign}
-            if failed:
-                fb_map = br.assign_main_rectangle([remain_pts[i] for i in failed])
-                # 將 fallback lanes 平移避免與 assign 衝突
-                if combined_assign:
-                    max_lane = max(combined_assign.values())
-                else:
-                    max_lane = 0
-                for k, lane in fb_map.items():
-                    combined_assign[failed[k]] = max_lane + lane
-            if not br.validate_lane_non_overlap(combined_assign, remain_pts):
-                print("[band-router] 車道水平重疊檢查未通過：偵測到同 lane 區間重疊。")
-        except Exception:
-            pass
+                # 非垂直：標準 TB V-H-V
+                result[edge_key] = self._route_tb_canonical(edge_item, ps, pt)
 
         return result
     
@@ -681,6 +391,44 @@ class EdgeRouterManager(QObject):
 
         return base
     
+    def route_all_edges_for_layout(self, edges_data: List[Tuple]) -> Dict[Tuple[str, str], List[QPointF]]:
+        """佈局後全圖正交路由：輸入 (edge_item, ps, pt) 清單，回傳並套用路徑字典。
+        - 所有處理皆以 DrawEdge（獨立 stroke）為單位，禁止任何合併。
+        - 若啟用 band router，使用 _route_advanced_tb_with_bands（逐邊規則）；
+        - 否則逐條使用 _route_tb_canonical。
+        - 路徑會即時套用到 EdgeItem（若提供 set_complex_path）。
+        """
+        t0 = time.time()
+        results: Dict[Tuple[str, str], List[QPointF]] = {}
+        if not edges_data:
+            return results
+        try:
+            # 展開為 DrawEdge（目前 UI 已單向，這步主要生成穩定 draw_id）
+            from .draw_edges import expand_to_draw_edges
+            draw_edges = expand_to_draw_edges(edges_data)
+
+            if self._band_router_enabled:
+                # 轉回與既有邏輯相容的輸入（仍逐邊，無合併）
+                ed = [(de.item, de.ps, de.pt) for de in draw_edges]
+                batch = self._route_advanced_tb_with_bands(ed)
+            else:
+                batch = {}
+                for edge_item, ps, pt in ((de.item, de.ps, de.pt) for de in draw_edges):
+                    edge_key = self._get_edge_key(edge_item)
+                    batch[edge_key] = self._route_tb_canonical(edge_item, ps, pt)
+
+            # 套用到 GUI
+            for de in draw_edges:
+                edge_item, ps, pt = de.item, de.ps, de.pt
+                edge_key = self._get_edge_key(edge_item)
+                path = batch.get(edge_key, [ps, pt])
+                self._apply_path_to_edge_immediate(edge_item, path)
+                results[edge_key] = path
+        finally:
+            self.last_routing_time = int((time.time() - t0) * 1000)
+            self.routing_stats['layout_count'] += 1
+        return results
+    
     def _route_orthogonal(
         self, 
         edge_item, 
@@ -728,85 +476,22 @@ class EdgeRouterManager(QObject):
             path_points: 路徑點列表
         """
         try:
-            # 檢查是否為多邊重疊情況，計算偏移
-            offset_pixels = 0
-            if hasattr(edge_item, 'src') and hasattr(edge_item, 'dst'):
-                # 檢查是否有相同源目標的其他邊線
-                same_pair_edges = self._find_same_pair_edges(edge_item)
-                if len(same_pair_edges) > 1:
-                    # 為多邊線計算不同偏移量
-                    edge_index = same_pair_edges.index(edge_item) if edge_item in same_pair_edges else 0
-                    offset_pixels = (edge_index - len(same_pair_edges) / 2) * 4  # ±4px 偏移
-            
-            # 若路徑退化為單列垂直，於此加入保險的水平偏移列，避免視覺上重疊
-            def _is_single_column(pts: List[QPointF], tol: float = 0.5) -> bool:
-                if not pts:
-                    return False
-                x0 = pts[0].x()
-                return all(abs(p.x() - x0) <= tol for p in pts)
-
+            # Band routing 模式下，直接使用計算好的路徑，不再做額外偏移
             adjusted = path_points
-            if path_points and _is_single_column(path_points):
-                ps, pt = path_points[0], path_points[-1]
-                # 依 TB 規範取上下 stub
-                s_side, t_side = self._tb_port_sides(ps, pt)
-                s_out = self._stub(ps, s_side, PORT_STUB)
-                t_in = self._stub(pt, t_side, PORT_STUB)
-                y_low = min(s_out.y(), t_in.y()) + CLEAR
-                y_high = max(s_out.y(), t_in.y()) - CLEAR
-                y_mid = self._snap(0.5 * (y_low + y_high))
-                # 依同對邊索引決定左右偏移列
-                same_pair_edges = self._find_same_pair_edges(edge_item)
-                edge_index = same_pair_edges.index(edge_item) if edge_item in same_pair_edges else 0
-                n = len(same_pair_edges)
-                # 產生對稱序列：[-1,+1,-2,+2,...] * GRID
-                def _rank_to_dx(rank: int, step: float = GRID) -> float:
-                    k = (rank - 1) // 2 + 1
-                    sign = -1 if rank % 2 == 1 else +1
-                    return sign * max(step, 16)
-                rank = edge_index + 1
-                dx = _rank_to_dx(rank)
-                x_mid = s_out.x() + dx
-                mid1 = QPointF(s_out.x(), y_mid)
-                midc = QPointF(x_mid, y_mid)
-                mid2 = QPointF(t_in.x(), y_mid)
-                adjusted = [ps, s_out, mid1, midc, mid2, t_in, pt]
-                adjusted = self._ensure_manhattan(adjusted)
+            offset_pixels = 0  # Band routing 已經處理了位置分配，不需要額外偏移
 
             # 使用 EdgeItem 的增強路徑設置方法
             if hasattr(edge_item, 'set_complex_path'):
                 edge_item.set_complex_path(adjusted, offset_pixels)
             else:
-                # 回退方案：直接設置 QPainterPath
-                from PyQt5.QtGui import QPainterPath
-                if adjusted and len(adjusted) >= 2:
-                    painter_path = QPainterPath(adjusted[0])
-                    for point in adjusted[1:]:
-                        painter_path.lineTo(point)
-                    edge_item.setPath(painter_path)
-                    edge_item.update()
+                # 回退方案：若無 set_complex_path 且無法建立 QPainterPath，則略過
+                # 實際環境具備 PyQt5 時，應提供 set_complex_path，否則忽略回退繪製
+                pass
                     
         except Exception as e:
             print(f"應用路徑到邊線失敗: {e}")
     
-    def _find_same_pair_edges(self, target_edge) -> list:
-        """尋找相同源目標對的所有邊線"""
-        same_edges = []
-        if not hasattr(target_edge, 'src') or not hasattr(target_edge, 'dst'):
-            return [target_edge]
-            
-        target_src = target_edge.src.taskId
-        target_dst = target_edge.dst.taskId
-        
-        # 從場景中找到所有相同配對的邊線
-        if hasattr(target_edge, 'scene') and target_edge.scene():
-            for item in target_edge.scene().items():
-                if (hasattr(item, 'src') and hasattr(item, 'dst') and
-                        hasattr(item.src, 'taskId') and hasattr(item.dst, 'taskId')):
-                    if (item.src.taskId == target_src and item.dst.taskId == target_dst):
-                        same_edges.append(item)
-        
-        return same_edges
+    # 移除成對邊搜尋：禁止基於同節點對的合併或特別處理。
     
     def _route_simple_orthogonal(self, start_pos: QPointF, end_pos: QPointF) -> List[QPointF]:
         """
@@ -981,94 +666,12 @@ class EdgeRouterManager(QObject):
             'user_modified_count': len(self.user_modified_edges)
         }
 
-    def _infer_port_side(self, node, pos: QPointF) -> str:
-        """推斷端口位於節點的哪一側，回傳 'top'|'right'|'bottom'|'left'"""
-        if not node or not hasattr(node, 'sceneBoundingRect'):
-            return 'right'  # 預設值
-            
-        r = node.sceneBoundingRect()
-        d = {
-            'left': abs(pos.x() - r.left()),
-            'right': abs(pos.x() - r.right()),
-            'top': abs(pos.y() - r.top()),
-            'bottom': abs(pos.y() - r.bottom()),
-        }
-        return min(d, key=d.get)
+    def set_band_router_enabled(self, enabled: bool) -> None:
+        """啟用/停用帶狀進階 TB 路由（預設 False）。"""
+        self._band_router_enabled = bool(enabled)
+        print(f"Band router enabled = {self._band_router_enabled}")
 
-    def _make_stub_point(self, pos: QPointF, side: str, length: float = None) -> QPointF:
-        """從端口位置向外推出指定長度的 stub 點"""
-        if length is None:
-            length = self.STUB_LEN
-            
-        if side == 'left':
-            return QPointF(pos.x() - length, pos.y())
-        elif side == 'right':
-            return QPointF(pos.x() + length, pos.y())
-        elif side == 'top':
-            return QPointF(pos.x(), pos.y() - length)
-        else:  # bottom
-            return QPointF(pos.x(), pos.y() + length)
-
-    def _ensure_manhattan(self, pts: List[QPointF], prefer: str = 'TB', always_elbow: bool = True) -> List[QPointF]:
-        """
-        將任意點列正規化為完全正交路徑
-        
-        Args:
-            pts: 原始點列
-            prefer: 'TB' → 優先垂直再水平（HV），'LR' → 優先水平再垂直（VH）
-            always_elbow: 若只有兩點，強制插入一個轉角
-            
-        Returns:
-            完全正交的點列
-        """
-        if not pts:
-            return []
-        
-        out = [pts[0]]
-        for a, b in zip(pts, pts[1:]):
-            ax, ay = a.x(), a.y()
-            bx, by = b.x(), b.y()
-            
-            # 如果已經是正交連接（同 x 或同 y），直接加入
-            if abs(ax - bx) < 0.1 or abs(ay - by) < 0.1:
-                out.append(b)
-            else:
-                # 插入中繼點強制正交
-                if prefer == 'TB':
-                    mid = QPointF(ax, by)  # 先垂直再水平
-                else:  # 'LR'
-                    mid = QPointF(bx, ay)  # 先水平再垂直
-                out.append(mid)
-                out.append(b)
-        
-        # always_elbow：若只有兩點，強制插一個轉角
-        if always_elbow and len(out) == 2:
-            a, b = out[0], out[1]
-            ax, ay = a.x(), a.y()
-            bx, by = b.x(), b.y()
-            
-            # 檢查是否已經是正交的（水平或垂直線）
-            if abs(ax - bx) < 0.1:  # 垂直線
-                # 插入水平中點
-                mid = QPointF((ax + bx) / 2 + 20, ay)  # 稍微偏移避免重疊
-            elif abs(ay - by) < 0.1:  # 水平線
-                # 插入垂直中點
-                mid = QPointF(ax, (ay + by) / 2 + 20)  # 稍微偏移避免重疊
-            else:
-                # 對角線按照 prefer 策略
-                if prefer == 'TB':
-                    mid = QPointF(ax, by)
-                else:
-                    mid = QPointF(bx, ay)
-            out = [a, mid, b]
-        
-        # 去除重複點
-        dedup = [out[0]]
-        for p in out[1:]:
-            if abs(p.x() - dedup[-1].x()) > 0.1 or abs(p.y() - dedup[-1].y()) > 0.1:
-                dedup.append(p)
-        
-        return dedup
+    
 
     def reset_user_modifications(self) -> None:
         """重置所有用戶修改記錄"""
@@ -1110,7 +713,7 @@ def create_yed_router_manager(scene, timeout_ms: int = 5000) -> EdgeRouterManage
         print(f"高級路由器初始化失敗: {e}")
         print("回退到智能簡單正交路由")
     
-    # 啟用帶狀進階 TB 路由（可用環境變數關閉：BIRDMAN_BAND_ROUTER=0）
+    # 啟用帶狀進階 TB 路由（預設開啟以使用通用直線欄位分配；可用 BIRDMAN_BAND_ROUTER=0 關閉）
     try:
         import os
         flag = os.environ.get("BIRDMAN_BAND_ROUTER", "1")
