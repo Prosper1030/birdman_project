@@ -99,3 +99,17 @@ def test_reorder_dsm_duplicate():
     order = ["A", "A"]
     with pytest.raises(ValueError):
         reorderDsm(dsm, order)
+
+
+def test_merge_by_scc_year_mismatch():
+    """同一 SCC 內若存在不同年份 Task ID 應拋出錯誤"""
+    data = {
+        "Task ID": ["A24-001", "B25-001"],
+        "TRF": [1, 2],
+        "M": [10, 20],
+        "Layer": [0, 0],
+        "SCC_ID": [0, 0],
+    }
+    wbs = pd.DataFrame(data)
+    with pytest.raises(ValueError):
+        mergeByScc(wbs)
