@@ -5,15 +5,22 @@ set -euo pipefail
 projectRoot="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$projectRoot"
 
+pythonBin="${PYTHON_BIN:-$(command -v python3)}"
+
 echo "==> 準備 Birdman Project 的 macOS 環境"
 
 if [ ! -d ".venv" ]; then
   echo "==> 建立虛擬環境 .venv"
   if command -v uv >/dev/null 2>&1; then
-    uv venv .venv --python python3
+    uv venv .venv --python "$pythonBin" --seed --no-managed-python --no-python-downloads
   else
-    python3 -m venv .venv
+    "$pythonBin" -m venv .venv
   fi
+fi
+
+if ! "$projectRoot/.venv/bin/python" -m pip --version >/dev/null 2>&1; then
+  echo "==> 補裝 pip"
+  "$projectRoot/.venv/bin/python" -m ensurepip --upgrade
 fi
 
 echo "==> 安裝／更新必要套件"
