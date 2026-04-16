@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,10 +12,15 @@ import networkx as nx
 import pandas as pd
 
 from ...app_paths import projectRoot
-from ...dsm_processor import buildGraph
+from ...dsm_processor import buildGraph, readDsm
 
 
 AUTOSAVE_DIR_NAME = ".birdman_autosave"
+AUTOSAVE_INTERVAL_MS = 30_000
+AUTOSAVE_KEEP_COUNT = 10
+SNAPSHOT_DSM_FILENAME = "dsm_snapshot.csv"
+SNAPSHOT_WBS_FILENAME = "wbs_snapshot.csv"
+SNAPSHOT_META_FILENAME = "session.json"
 
 
 @dataclass
@@ -23,6 +29,17 @@ class SccGroupSummary:
 
     groupId: int
     taskIds: list[str]
+
+
+@dataclass
+class SessionSnapshotInfo:
+    """工作階段快照資訊。"""
+
+    snapshotDir: Path
+    savedAt: str
+    reason: str
+    dirty: bool
+    hasCycles: bool
 
 
 @dataclass
@@ -175,3 +192,159 @@ def serializeSccGroups(groups: list[SccGroupSummary]) -> list[dict[str, Any]]:
         }
         for group in groups
     ]
+
+
+def getSessionSnapshotRoot(session: DsmEditorSession) -> Path:
+    """回傳指定工作階段的快照根目錄。"""
+    return session.autosaveRoot / session.sessionId
+
+
+def writeSessionSnapshot(
+    session: DsmEditorSession,
+    reason: str = "autosave",
+) -> SessionSnapshotInfo:
+    """寫入工作階段快照並保留最近 10 份。"""
+    now = datetime.now().astimezone()
+    savedAt = now.isoformat(timespec="seconds")
+    snapshotRoot = getSessionSnapshotRoot(session)
+    snapshotRoot.mkdir(parents=True, exist_ok=True)
+
+    snapshotDir = snapshotRoot / now.strftime("%Y%m%dT%H%M%S%f")
+    snapshotDir.mkdir(parents=True, exist_ok=False)
+
+    session.dsmDf.to_csv(
+        snapshotDir / SNAPSHOT_DSM_FILENAME,
+        encoding="utf-8-sig",
+    )
+    session.wbsDf.to_csv(
+        snapshotDir / SNAPSHOT_WBS_FILENAME,
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    metadata = {
+        "session_id": session.sessionId,
+        "saved_at": savedAt,
+        "reason": reason,
+        "dirty": session.dirty,
+        "has_cycles": session.hasCycles,
+        "scc_groups": serializeSccGroups(session.sccGroups),
+        "wbs_path": session.wbsPath,
+        "dsm_path": session.dsmPath,
+        "snapshot_dir": str(snapshotDir),
+    }
+    (snapshotDir / SNAPSHOT_META_FILENAME).write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    trimSessionSnapshots(snapshotRoot)
+    session.lastAutosavePath = str(snapshotDir)
+    session.lastAutosaveTime = savedAt
+
+    return SessionSnapshotInfo(
+        snapshotDir=snapshotDir,
+        savedAt=savedAt,
+        reason=reason,
+        dirty=session.dirty,
+        hasCycles=session.hasCycles,
+    )
+
+
+def listSessionSnapshots(session: DsmEditorSession) -> list[SessionSnapshotInfo]:
+    """列出工作階段現有快照，依新到舊排序。"""
+    snapshotRoot = getSessionSnapshotRoot(session)
+    if not snapshotRoot.exists():
+        return []
+
+    snapshots: list[SessionSnapshotInfo] = []
+    for candidate in snapshotRoot.iterdir():
+        if not candidate.is_dir():
+            continue
+        metadataPath = candidate / SNAPSHOT_META_FILENAME
+        if not metadataPath.exists():
+            continue
+        try:
+            metadata = json.loads(metadataPath.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        snapshots.append(
+            SessionSnapshotInfo(
+                snapshotDir=candidate,
+                savedAt=str(metadata.get("saved_at", candidate.name)),
+                reason=str(metadata.get("reason", "autosave")),
+                dirty=bool(metadata.get("dirty", False)),
+                hasCycles=bool(metadata.get("has_cycles", False)),
+            )
+        )
+
+    snapshots.sort(key=lambda item: item.snapshotDir.name, reverse=True)
+    return snapshots
+
+
+def trimSessionSnapshots(snapshotRoot: Path) -> None:
+    """每個工作階段僅保留最近 10 份快照。"""
+    if not snapshotRoot.exists():
+        return
+
+    snapshotDirs = sorted(
+        [path for path in snapshotRoot.iterdir() if path.is_dir()],
+        key=lambda path: path.name,
+        reverse=True,
+    )
+    for staleDir in snapshotDirs[AUTOSAVE_KEEP_COUNT:]:
+        for child in staleDir.iterdir():
+            child.unlink(missing_ok=True)
+        staleDir.rmdir()
+
+
+def findLatestRestorableSnapshot(
+    session: DsmEditorSession,
+) -> SessionSnapshotInfo | None:
+    """找出可提示恢復的最新快照。"""
+    if not session.wbsPath and not session.dsmPath:
+        return None
+
+    snapshots = listSessionSnapshots(session)
+    if not snapshots:
+        return None
+
+    latest = snapshots[0]
+    if not latest.dirty:
+        return None
+    latestSourceMtime = getLatestSourceMtime(session)
+    if latestSourceMtime is None:
+        return latest
+
+    if latest.snapshotDir.stat().st_mtime <= latestSourceMtime:
+        return None
+    return latest
+
+
+def loadSnapshotData(
+    snapshot: SessionSnapshotInfo,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """讀取快照內的 WBS、DSM 與 metadata。"""
+    metadataPath = snapshot.snapshotDir / SNAPSHOT_META_FILENAME
+    metadata = json.loads(metadataPath.read_text(encoding="utf-8"))
+    wbsDf = pd.read_csv(
+        snapshot.snapshotDir / SNAPSHOT_WBS_FILENAME,
+        encoding="utf-8-sig",
+    )
+    dsmDf = readDsm(str(snapshot.snapshotDir / SNAPSHOT_DSM_FILENAME))
+    validatedWbs, validatedDsm = validateEditorInputs(wbsDf, dsmDf)
+    return validatedWbs, validatedDsm, metadata
+
+
+def getLatestSourceMtime(session: DsmEditorSession) -> float | None:
+    """回傳來源檔案的最新修改時間。"""
+    mtimes = []
+    for sourcePath in (session.wbsPath, session.dsmPath):
+        if not sourcePath:
+            continue
+        path = Path(sourcePath)
+        if path.exists():
+            mtimes.append(path.stat().st_mtime)
+    if not mtimes:
+        return None
+    return max(mtimes)

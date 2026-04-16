@@ -5,7 +5,7 @@ from typing import Dict, Set, List
 
 import pandas as pd
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QBrush, QKeySequence
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -31,12 +31,16 @@ from .nodes import TaskNode
 from .scene import DsmScene
 from .session import (
     AUTOSAVE_DIR_NAME,
+    AUTOSAVE_INTERVAL_MS,
     DsmEditorSession,
     SccGroupSummary,
     buildSessionId,
     dsmEquals,
+    findLatestRestorableSnapshot,
+    loadSnapshotData,
     summarizeCyclicSccGroups,
     validateEditorInputs,
+    writeSessionSnapshot,
 )
 from .view import CanvasView
 from ...app_paths import projectRoot
@@ -104,12 +108,18 @@ class DsmEditor(QDialog):
         self.highlightedSccTaskIds: set[str] = set()
         self.noticeText = "已載入編輯器。"
         self.graph = None
+        self.autosaveTimer = QTimer(self)
+        self.autosaveTimer.setSingleShot(True)
+        self.autosaveTimer.setInterval(AUTOSAVE_INTERVAL_MS)
+        self.autosaveTimer.timeout.connect(self._autosaveIfNeeded)
 
         self.setupUI()
+        self._restoreLatestSnapshotIfNeeded()
         self.loadWbs(self.session.wbsDf)
         self.loadDsm(self.session.dsmDf)
         self._syncSessionState()
-        self._setNotice("已完成資料載入。")
+        if not self.noticeText or self.noticeText == "已載入編輯器。":
+            self._setNotice("已完成資料載入。")
 
     def setupUI(self) -> None:
         """設定使用者介面"""
@@ -119,6 +129,11 @@ class DsmEditor(QDialog):
         rootLayout.setMenuBar(menuBar)
 
         fileMenu = menuBar.addMenu("檔案(&F)")
+
+        saveSessionAction = QAction("儲存工作階段(&S)", self)
+        saveSessionAction.setShortcut(QKeySequence.Save)
+        saveSessionAction.triggered.connect(self.saveSessionSnapshot)
+        fileMenu.addAction(saveSessionAction)
 
         exportAction = QAction("匯出 DSM(&E)...", self)
         exportAction.setShortcut(QKeySequence.SaveAs)
@@ -602,6 +617,38 @@ class DsmEditor(QDialog):
                 matrix.loc[dst, src] = 1
         return matrix
 
+    def buildWbsSnapshot(self) -> pd.DataFrame:
+        """根據目前節點建立最新的 WBS 快照。"""
+        baseWbs = self.session.wbsDf.copy()
+        baseColumns = list(baseWbs.columns)
+        if "Task ID" not in baseColumns:
+            baseColumns.insert(0, "Task ID")
+        for requiredColumn in ("Name", "Property"):
+            if requiredColumn not in baseColumns:
+                baseColumns.append(requiredColumn)
+
+        existingRows: dict[str, dict] = {}
+        if not baseWbs.empty and "Task ID" in baseWbs.columns:
+            for _, row in baseWbs.iterrows():
+                existingRows[str(row.get("Task ID", "")).strip()] = row.to_dict()
+
+        snapshotRows = []
+        for taskId, node in self.nodes.items():
+            rowData = existingRows.get(taskId, {})
+            rowData["Task ID"] = taskId
+            rowData["Name"] = node.taskName
+            rowData["Property"] = node.taskProperty
+            snapshotRows.append(rowData)
+
+        if not snapshotRows:
+            return pd.DataFrame(columns=baseColumns)
+
+        snapshotDf = pd.DataFrame(snapshotRows)
+        for column in baseColumns:
+            if column not in snapshotDf.columns:
+                snapshotDf[column] = ""
+        return snapshotDf[baseColumns].reset_index(drop=True)
+
     def getCurrentDsmDataFrame(self) -> pd.DataFrame:
         """回傳目前 DSM DataFrame。"""
         return self.session.dsmDf.copy()
@@ -639,13 +686,37 @@ class DsmEditor(QDialog):
         except OSError as error:
             QMessageBox.critical(self, "錯誤", f"匯出失敗：{error}")
 
+    def saveSessionSnapshot(self) -> None:
+        """手動儲存目前工作階段快照。"""
+        self._refreshSessionFrames()
+        try:
+            snapshot = writeSessionSnapshot(self.session, reason="manual")
+        except OSError as error:
+            QMessageBox.critical(self, "錯誤", f"儲存工作階段失敗：{error}")
+            return
+
+        self._setNotice(
+            f"已儲存工作階段快照：{snapshot.snapshotDir}"
+        )
+        QMessageBox.information(
+            self,
+            "完成",
+            f"已儲存工作階段快照：\n{snapshot.snapshotDir}",
+        )
+
     def notifyGraphStructureChanged(self) -> None:
         """當依賴圖結構有變化時同步更新狀態。"""
         self._syncSessionState()
 
+    def _refreshSessionFrames(self) -> None:
+        """將目前畫面資料同步回工作階段。"""
+        self.session.wbsDf = self.buildWbsSnapshot()
+        self.session.dsmDf = self.buildDsmMatrix()
+
     def _syncSessionState(self) -> None:
         """同步目前的圖狀態、dirty 狀態與 SCC 摘要。"""
-        currentDsm = self.buildDsmMatrix()
+        self._refreshSessionFrames()
+        currentDsm = self.session.dsmDf.copy()
         graph, sccGroups = summarizeCyclicSccGroups(currentDsm)
 
         self.graph = graph
@@ -654,6 +725,7 @@ class DsmEditor(QDialog):
         self.session.sccGroups = sccGroups
         self.session.dirty = not dsmEquals(currentDsm, self.session.baselineDsmDf)
 
+        self._scheduleAutosaveIfNeeded()
         self._updateStatusPanel()
         self._refreshSccListWidget()
 
@@ -741,6 +813,28 @@ class DsmEditor(QDialog):
         self.noticeText = message
         self.noticeLabel.setText(message)
 
+    def _scheduleAutosaveIfNeeded(self) -> None:
+        """依目前 dirty 狀態安排自動存檔。"""
+        if self.session.dirty:
+            self.autosaveTimer.start()
+        else:
+            self.autosaveTimer.stop()
+
+    def _autosaveIfNeeded(self) -> None:
+        """在有修改時寫入自動存檔。"""
+        if not self.session.dirty:
+            return
+        self._refreshSessionFrames()
+        try:
+            snapshot = writeSessionSnapshot(self.session, reason="autosave")
+        except OSError as error:
+            self._setNotice(f"自動存檔失敗：{error}")
+            return
+
+        self._setNotice(
+            f"已自動儲存工作階段：{snapshot.savedAt}"
+        )
+
     def _updateLayoutNotice(self, layoutName: str) -> None:
         """依目前循環狀態更新佈局提示文案。"""
         if self.session.hasCycles:
@@ -792,6 +886,41 @@ class DsmEditor(QDialog):
             return f"[{taskProperty}] {taskName}"
         return taskName
 
+    def _restoreLatestSnapshotIfNeeded(self) -> None:
+        """若偵測到較新的快照，提供恢復選項。"""
+        snapshot = findLatestRestorableSnapshot(self.session)
+        if snapshot is None:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "恢復工作階段",
+            (
+                "偵測到較新的工作階段快照。\n"
+                f"時間：{snapshot.savedAt}\n\n"
+                "是否恢復最近自動存檔？\n"
+                "此操作不會覆寫原始 DSM 檔案。"
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            restoredWbs, restoredDsm, metadata = loadSnapshotData(snapshot)
+        except (OSError, ValueError, pd.errors.ParserError) as error:
+            QMessageBox.warning(self, "警告", f"恢復快照失敗：{error}")
+            return
+
+        self.session.wbsDf = restoredWbs
+        self.session.dsmDf = restoredDsm
+        self.session.lastAutosavePath = str(snapshot.snapshotDir)
+        self.session.lastAutosaveTime = str(metadata.get("saved_at", snapshot.savedAt))
+        self._setNotice(
+            f"已恢復工作階段快照：{self.session.lastAutosaveTime}"
+        )
+
     def keyPressEvent(self, event):
         """鍵盤事件處理。"""
         if event.key() == Qt.Key_Escape:
@@ -819,6 +948,14 @@ class DsmEditor(QDialog):
 
     def closeEvent(self, event) -> None:
         """關閉前提示循環風險。"""
+        self.autosaveTimer.stop()
+        if self.session.dirty:
+            self._refreshSessionFrames()
+            try:
+                snapshot = writeSessionSnapshot(self.session, reason="close")
+                self._setNotice(f"關閉前已儲存工作階段：{snapshot.savedAt}")
+            except OSError as error:
+                QMessageBox.warning(self, "警告", f"關閉前自動存檔失敗：{error}")
         if self.session.hasCycles:
             QMessageBox.warning(
                 self,
