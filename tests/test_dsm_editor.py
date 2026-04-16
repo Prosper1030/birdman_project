@@ -1,166 +1,287 @@
-import os
-os.environ["QT_QPA_PLATFORM"] = "offscreen"
+import time
+from pathlib import Path
 
-import pandas as pd  # noqa: E402
-from PyQt5.QtWidgets import QApplication  # noqa: E402
-from PyQt5.QtCore import QPointF  # noqa: E402
+import pandas as pd
+import pytest
+from PyQt5.QtWidgets import QFileDialog, QMessageBox
 
-from src.ui.dsm_editor import DsmEditor, TaskNode, LayoutAlgorithm  # noqa: E402
+from src.dsm_processor import readDsm
+from src.gui_qt import BirdmanQtApp, launch_editor
+from src.ui.dsm_editor import DsmEditor
+from src.ui.dsm_editor.session import (
+    listSessionSnapshots,
+    validateEditorInputs,
+    writeSessionSnapshot,
+)
 
 
-def test_build_dsm_matrix():
-    """測試編輯器可依連線生成 DSM"""
-    app = QApplication.instance() or QApplication([])
-    wbs = pd.DataFrame(
+def build_test_wbs(task_ids: list[str]) -> pd.DataFrame:
+    """建立測試用 WBS。"""
+    return pd.DataFrame(
         {
-            "Task ID": ["A1", "A2", "A3"],
-            "Property": ["A", "A", "B"],
-            "Name": ["任務1", "任務2", "任務3"],
+            "Task ID": task_ids,
+            "Property": ["測試"] * len(task_ids),
+            "Name": [f"任務{index + 1}" for index in range(len(task_ids))],
         }
     )
-    editor = DsmEditor(wbs)
-    editor.addDependencyById("A1", "A2")
-    editor.addDependencyById("A2", "A3")
-    matrix = editor.buildDsmMatrix()
-    assert matrix.loc["A1", "A2"] == 1
-    assert matrix.loc["A2", "A3"] == 1
-    assert matrix.loc["A1", "A3"] == 0
+
+
+def build_test_dsm(task_ids: list[str], edges: list[tuple[str, str]]) -> pd.DataFrame:
+    """依據邊列表建立測試用 DSM。"""
+    dsm = pd.DataFrame(0, index=task_ids, columns=task_ids, dtype=int)
+    for src, dst in edges:
+        dsm.loc[dst, src] = 1
+    return dsm
+
+
+def write_source_files(
+    root: Path,
+    wbs_df: pd.DataFrame,
+    dsm_df: pd.DataFrame,
+) -> tuple[Path, Path]:
+    """寫入測試用 WBS/DSM 來源檔。"""
+    wbs_path = root / "WBS.csv"
+    dsm_path = root / "DSM.csv"
+    wbs_df.to_csv(wbs_path, index=False, encoding="utf-8-sig")
+    dsm_df.to_csv(dsm_path, encoding="utf-8-sig")
+    return wbs_path, dsm_path
+
+
+def test_editor_loads_existing_dsm_and_reports_clean_state(qapp):
+    """編輯器可載入既有 DSM，且初始狀態不應標記為 dirty。"""
+    wbs = build_test_wbs(["A1", "A2", "A3"])
+    dsm = build_test_dsm(
+        ["A1", "A2", "A3"],
+        [("A1", "A2"), ("A2", "A3")],
+    )
+
+    editor = DsmEditor(wbs, dsmDf=dsm)
+
+    pd.testing.assert_frame_equal(editor.getCurrentDsmDataFrame(), dsm)
+    assert editor.isSessionDirty() is False
+    assert editor.session.hasCycles is False
+    assert editor.sccListWidget.count() == 0
+
     editor.close()
-    app.quit()
 
 
-def test_layout_algorithms():
-    """測試佈局演算法"""
-    app = QApplication.instance() or QApplication([])
+def test_validate_editor_inputs_rejects_duplicate_wbs_task_id():
+    """重複的 WBS Task ID 應直接阻止載入。"""
     wbs = pd.DataFrame(
         {
-            "Task ID": ["A1", "A2", "A3", "A4"],
-            "Property": ["A", "A", "B", "B"],
-            "Name": ["任務1", "任務2", "任務3", "任務4"],
+            "Task ID": ["A1", "A1"],
+            "Name": ["任務1", "任務1-重複"],
         }
     )
-    editor = DsmEditor(wbs)
-    
-    # 測試階層式佈局
-    editor.applyLayout(LayoutAlgorithm.HIERARCHICAL)
-    positions_hierarchical = {taskId: node.pos() for taskId, node in editor.nodes.items()}
-    
-    # 測試正交式佈局
-    editor.applyLayout(LayoutAlgorithm.ORTHOGONAL)
-    positions_orthogonal = {taskId: node.pos() for taskId, node in editor.nodes.items()}
-    
-    # 測試力導向佈局
-    editor.applyLayout(LayoutAlgorithm.FORCE_DIRECTED)
-    positions_force = {taskId: node.pos() for taskId, node in editor.nodes.items()}
-    
-    # 確認位置有改變
-    assert positions_hierarchical != positions_orthogonal
-    assert positions_orthogonal != positions_force
-    
-    editor.close()
-    app.quit()
+
+    with pytest.raises(ValueError, match="WBS 存在重複的 Task ID"):
+        validateEditorInputs(wbs)
 
 
-def test_undo_redo_functionality():
-    """測試撤銷/重做功能"""
-    app = QApplication.instance() or QApplication([])
-    wbs = pd.DataFrame(
-        {
-            "Task ID": ["A1", "A2", "A3"],
-            "Property": ["A", "A", "B"],
-            "Name": ["任務1", "任務2", "任務3"],
-        }
+def test_validate_editor_inputs_rejects_non_square_dsm():
+    """非方陣 DSM 應回報明確錯誤。"""
+    wbs = build_test_wbs(["A1", "A2"])
+    dsm = pd.DataFrame(
+        [[0, 1, 0], [0, 0, 1]],
+        index=["A1", "A2"],
+        columns=["A1", "A2", "A3"],
     )
+
+    with pytest.raises(ValueError, match="DSM 必須為方陣"):
+        validateEditorInputs(wbs, dsm)
+
+
+def test_validate_editor_inputs_rejects_task_id_mismatch():
+    """DSM 與 WBS Task ID 不對齊時應拒絕載入。"""
+    wbs = build_test_wbs(["A1", "A2"])
+    dsm = pd.DataFrame(
+        [[0, 1], [0, 0]],
+        index=["A1", "A3"],
+        columns=["A1", "A3"],
+    )
+
+    with pytest.raises(ValueError, match="DSM 缺少以下 WBS 任務"):
+        validateEditorInputs(wbs, dsm)
+
+
+def test_cycle_changes_update_scc_summary_and_selection(qapp):
+    """新增循環依賴後，SCC 摘要與高亮應立即同步。"""
+    wbs = build_test_wbs(["A1", "A2", "A3"])
     editor = DsmEditor(wbs)
-    
-    # 初始狀態：無依賴關係
-    assert len(editor.edges) == 0
-    
-    # 新增依賴關係
+
     editor.addDependencyById("A1", "A2")
-    assert len(editor.edges) == 1
-    assert ("A1", "A2") in editor.edges
-    
-    # 撤銷操作
+    editor.addDependencyById("A2", "A1")
+
+    assert editor.session.hasCycles is True
+    assert len(editor.getCurrentSccSummary()) == 1
+    assert editor.getCurrentSccSummary()[0].taskIds == ["A1", "A2"]
+    assert editor.sccListWidget.count() == 1
+
+    editor.sccListWidget.setCurrentRow(0)
+    assert editor.highlightedSccTaskIds == {"A1", "A2"}
+
     editor.undo()
-    assert len(editor.edges) == 0
-    
-    # 重做操作
-    editor.redo()
-    assert len(editor.edges) == 1
-    assert ("A1", "A2") in editor.edges
-    
+    assert editor.session.hasCycles is False
+    assert editor.sccListWidget.count() == 0
+
     editor.close()
-    app.quit()
 
 
-def test_node_custom_properties():
-    """測試節點自訂屬性"""
-    app = QApplication.instance() or QApplication([])
-    wbs = pd.DataFrame(
-        {
-            "Task ID": ["A1"],
-            "Property": ["A"],
-            "Name": ["任務1"],
-        }
+def test_export_dsm_with_cycles_still_writes_matrix(tmp_path, monkeypatch, qapp):
+    """含循環時仍可匯出 DSM，且會保留正確矩陣內容。"""
+    export_path = tmp_path / "exported_dsm.csv"
+    warning_messages = []
+
+    monkeypatch.setattr(
+        QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *args, **kwargs: (str(export_path), "CSV Files (*.csv)")),
     )
-    editor = DsmEditor(wbs)
-    
-    # 獲取節點
-    node = editor.nodes["A1"]
-    
-    # 測試初始自訂屬性
-    assert node.customData["assignee"] == ""
-    assert node.customData["status"] == ""
-    assert node.customData["duration"] == 0
-    assert node.customData["priority"] == "Medium"
-    
-    # 修改屬性
-    node.customData.update({
-        "assignee": "張三",
-        "status": "進行中",
-        "duration": 8,
-        "priority": "High"
-    })
-    
-    # 驗證修改
-    assert node.customData["assignee"] == "張三"
-    assert node.customData["status"] == "進行中"
-    assert node.customData["duration"] == 8
-    assert node.customData["priority"] == "High"
-    
-    editor.close()
-    app.quit()
-
-
-def test_grid_functionality():
-    """測試網格功能"""
-    app = QApplication.instance() or QApplication([])
-    wbs = pd.DataFrame(
-        {
-            "Task ID": ["A1"],
-            "Property": ["A"],
-            "Name": ["任務1"],
-        }
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        staticmethod(
+            lambda *args, **kwargs: warning_messages.append(args[2]) or QMessageBox.Ok
+        ),
     )
+
+    wbs = build_test_wbs(["A1", "A2"])
     editor = DsmEditor(wbs)
-    
-    # 測試網格顯示切換
-    editor.view.setGridVisible(True)
-    assert editor.view.showGrid is True
-    
-    editor.view.setGridVisible(False)
-    assert editor.view.showGrid is False
-    
-    # 測試網格對齊
-    editor.view.setSnapToGrid(True)
-    assert editor.view.snapToGrid is True
-    
-    # 測試點對齊功能
-    point = QPointF(23, 37)
-    snapped = editor.view.snapPointToGrid(point)
-    expected = QPointF(0, 50)  # 預設網格大小 50
-    assert snapped == expected
-    
+    editor.addDependencyById("A1", "A2")
+    editor.addDependencyById("A2", "A1")
+
+    editor.exportDsm()
+
+    exported = readDsm(str(export_path))
+    pd.testing.assert_frame_equal(exported, editor.buildDsmMatrix())
+    assert any("後續 CPM 或排序分析可能受影響" in message for message in warning_messages)
+
     editor.close()
-    app.quit()
+
+
+def test_autosave_only_keeps_latest_ten_snapshots(tmp_path, qapp):
+    """自動存檔應只保留最近 10 份快照。"""
+    autosave_root = tmp_path / ".birdman_autosave"
+    wbs = build_test_wbs(["A1", "A2"])
+    dsm = build_test_dsm(["A1", "A2"], [])
+    wbs_path, dsm_path = write_source_files(tmp_path, wbs, dsm)
+
+    editor = DsmEditor(
+        wbs,
+        dsmDf=dsm,
+        wbsPath=str(wbs_path),
+        dsmPath=str(dsm_path),
+        autosaveRoot=autosave_root,
+    )
+    editor.addDependencyById("A1", "A2")
+
+    for _ in range(12):
+        editor._autosaveIfNeeded()
+        time.sleep(0.001)
+
+    snapshots = listSessionSnapshots(editor.session)
+    assert len(snapshots) == 10
+    assert all((snapshot.snapshotDir / "session.json").exists() for snapshot in snapshots)
+
+    editor.close()
+
+
+def test_editor_restores_latest_snapshot_when_user_confirms(
+    tmp_path,
+    monkeypatch,
+    qapp,
+):
+    """重新開啟相同來源時，應可恢復較新的快照。"""
+    autosave_root = tmp_path / ".birdman_autosave"
+    wbs = build_test_wbs(["A1", "A2"])
+    original_dsm = build_test_dsm(["A1", "A2"], [])
+    wbs_path, dsm_path = write_source_files(tmp_path, wbs, original_dsm)
+
+    first_editor = DsmEditor(
+        wbs,
+        dsmDf=original_dsm,
+        wbsPath=str(wbs_path),
+        dsmPath=str(dsm_path),
+        autosaveRoot=autosave_root,
+    )
+    first_editor.addDependencyById("A1", "A2")
+    writeSessionSnapshot(first_editor.session, reason="autosave")
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(lambda *args, **kwargs: QMessageBox.Yes),
+    )
+
+    restored_editor = DsmEditor(
+        wbs,
+        dsmDf=original_dsm,
+        wbsPath=str(wbs_path),
+        dsmPath=str(dsm_path),
+        autosaveRoot=autosave_root,
+    )
+
+    assert restored_editor.isSessionDirty() is True
+    assert int(restored_editor.getCurrentDsmDataFrame().values.sum()) == 1
+    assert restored_editor.noticeText.startswith("已恢復工作階段快照：")
+
+    first_editor.close()
+    restored_editor.close()
+
+
+def test_launch_editor_smoke_loads_existing_wbs_and_dsm(tmp_path, qapp):
+    """CLI/啟動器模式下可直接帶入既有 WBS 與 DSM。"""
+    autosave_root = tmp_path / ".birdman_autosave"
+    wbs = build_test_wbs(["A1", "A2"])
+    dsm = build_test_dsm(["A1", "A2"], [("A1", "A2")])
+    wbs_path, dsm_path = write_source_files(tmp_path, wbs, dsm)
+
+    app, editor = launch_editor(
+        wbs_df=wbs,
+        dsm_df=dsm,
+        wbs_path=str(wbs_path),
+        dsm_path=str(dsm_path),
+        autosave_root=autosave_root,
+    )
+
+    assert app is qapp
+    assert editor.session.wbsPath == str(wbs_path)
+    assert editor.session.dsmPath == str(dsm_path)
+    pd.testing.assert_frame_equal(editor.getCurrentDsmDataFrame(), dsm)
+
+    editor.close()
+
+
+def test_main_window_open_dsm_editor_uses_loaded_wbs_and_dsm(
+    tmp_path,
+    monkeypatch,
+    qapp,
+):
+    """主 GUI 開啟 DSM 編輯器時，應沿用目前已載入的 WBS/DSM。"""
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("src.ui.dsm_editor.main_editor.projectRoot", tmp_path)
+
+    def fake_exec(dialog_self):
+        captured["wbs_path"] = dialog_self.session.wbsPath
+        captured["dsm_path"] = dialog_self.session.dsmPath
+        captured["dsm_df"] = dialog_self.getCurrentDsmDataFrame().copy()
+        return 0
+
+    monkeypatch.setattr(DsmEditor, "exec_", fake_exec)
+
+    wbs = build_test_wbs(["A1", "A2"])
+    dsm = build_test_dsm(["A1", "A2"], [("A1", "A2")])
+    wbs_path, dsm_path = write_source_files(tmp_path, wbs, dsm)
+
+    window = BirdmanQtApp()
+    window.wbsDf = wbs.copy()
+    window.wbsPath = str(wbs_path)
+    window.dsmPath = str(dsm_path)
+
+    window.openDsmEditor()
+
+    assert captured["wbs_path"] == str(wbs_path)
+    assert captured["dsm_path"] == str(dsm_path)
+    pd.testing.assert_frame_equal(captured["dsm_df"], dsm)
+
+    window.close()
