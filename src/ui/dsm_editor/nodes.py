@@ -21,11 +21,21 @@ class TaskNode(QGraphicsRectItem):
     DEFAULT_WIDTH = 120
     DEFAULT_HEIGHT = 60
 
-    def __init__(self, taskId: str, text: str, color: QColor, editor: DsmEditor) -> None:
+    def __init__(
+        self,
+        taskId: str,
+        text: str,
+        color: QColor,
+        editor: DsmEditor,
+        propertyValue: str = "",
+        name: str | None = None,
+    ) -> None:
         super().__init__(-self.DEFAULT_WIDTH / 2, -self.DEFAULT_HEIGHT / 2,
                          self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
 
         self.taskId = taskId
+        self.taskName = text if name is None else name
+        self.taskProperty = propertyValue
         self.text = text
         self.editor = editor
         self.edges: List[EdgeItem] = []
@@ -79,8 +89,19 @@ class TaskNode(QGraphicsRectItem):
             "assignee": "",
             "status": "",
             "duration": 0,
-            "priority": "Medium"
+            "priority": "Medium",
+            "name": self.taskName,
+            "property": self.taskProperty,
         }
+
+    def refreshDisplayText(self) -> None:
+        """根據目前名稱與屬性刷新節點顯示文字。"""
+        if self.taskProperty:
+            self.text = f"[{self.taskProperty}] {self.taskName}"
+        else:
+            self.text = self.taskName
+        self.customData["name"] = self.taskName
+        self.customData["property"] = self.taskProperty
 
     def _createSelectionHandles(self) -> None:
         """建立 8 個選取把手"""
@@ -439,9 +460,15 @@ class TaskNode(QGraphicsRectItem):
 
     def startTextEdit(self):
         """開始編輯文字"""
-        text, ok = QInputDialog.getText(None, "編輯標籤", "輸入任務名稱:", text=self.text)
+        text, ok = QInputDialog.getText(
+            None,
+            "編輯標籤",
+            "輸入任務名稱:",
+            text=self.taskName,
+        )
         if ok:
-            self.text = text
+            self.taskName = text
+            self.refreshDisplayText()
             self.update()
 
     def deleteNode(self):
@@ -452,3 +479,5 @@ class TaskNode(QGraphicsRectItem):
 
         self.scene().removeItem(self)
         del self.editor.nodes[self.taskId]
+        if hasattr(self.editor, "notifyGraphStructureChanged"):
+            self.editor.notifyGraphStructureChanged()

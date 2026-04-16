@@ -44,7 +44,9 @@ from src.app_paths import prepareQtApplication, sampleDataDir
 
 prepareQtApplication()
 
+from src.dsm_processor import readDsm
 from src.gui_qt import launch_editor
+from src.ui.dsm_editor.session import validateEditorInputs
 
 
 def load_sample_wbs() -> pd.DataFrame:
@@ -137,18 +139,26 @@ def load_wbs_file(file_path: str) -> pd.DataFrame:
 
 def load_dsm_file(file_path: str) -> pd.DataFrame:
     """
-    載入 DSM 矩陣檔案（未來功能）。
-    
+    載入 DSM 矩陣檔案。
+
     Args:
         file_path: DSM CSV 檔案路徑
-    
+
     Returns:
         DSM DataFrame
-    
-    TODO(next): 實作 DSM 載入並轉換為 WBS + edges
     """
-    print("DSM 載入功能尚未實作")
-    return pd.DataFrame()
+    path = Path(file_path)
+    if not path.exists():
+        print(f"錯誤：DSM 檔案不存在 - {path}")
+        return pd.DataFrame()
+
+    try:
+        dsm = readDsm(str(path))
+        print(f"成功載入 DSM，大小為 {dsm.shape[0]}x{dsm.shape[1]}")
+        return dsm
+    except Exception as e:
+        print(f"載入 DSM 失敗：{e}")
+        return pd.DataFrame()
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -216,16 +226,33 @@ def main():
         print("除錯模式已啟用")
         print(f"參數：{args}")
     
+    if args.dsm and not args.wbs:
+        print("錯誤：目前指定 --dsm 時，必須同時提供 --wbs。")
+        sys.exit(1)
+
+    dsm_df = None
+    wbs_path = args.wbs
+    dsm_path = args.dsm
+
     # 載入資料
     if args.wbs:
         print(f"載入 WBS 檔案：{args.wbs}")
         wbs_df = load_wbs_file(args.wbs)
-    elif args.dsm:
-        print(f"載入 DSM 檔案：{args.dsm}")
-        wbs_df = load_dsm_file(args.dsm)
     else:
         print("使用預設 sample 資料")
         wbs_df = load_sample_wbs()
+        if not wbs_path and not wbs_df.empty:
+            wbs_path = str(sampleDataDir / "WBS.csv")
+
+    if args.dsm:
+        print(f"載入 DSM 檔案：{args.dsm}")
+        dsm_df = load_dsm_file(args.dsm)
+    elif not args.wbs:
+        sample_dsm_path = sampleDataDir / "DSM.csv"
+        if sample_dsm_path.exists():
+            print("使用預設 sample DSM 資料")
+            dsm_df = load_dsm_file(str(sample_dsm_path))
+            dsm_path = str(sample_dsm_path)
     
     # 檢查資料
     if wbs_df.empty:
@@ -236,7 +263,13 @@ def main():
     
     # 使用統一的啟動器
     try:
-        app, editor = launch_editor(wbs_df)
+        validated_wbs, validated_dsm = validateEditorInputs(wbs_df, dsm_df)
+        app, editor = launch_editor(
+            validated_wbs,
+            dsm_df=validated_dsm,
+            wbs_path=wbs_path,
+            dsm_path=dsm_path,
+        )
         
         # 儲存佈局方向設定（供編輯器使用）
         editor.default_layout_direction = args.direction

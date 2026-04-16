@@ -1019,7 +1019,21 @@ class BirdmanQtApp(QMainWindow):
         if self.wbsDf is None:
             QMessageBox.warning(self, "警告", "請先匯入 WBS 檔案")
             return
-        editor = DsmEditor(self.wbsDf, self)
+        dsm_df = None
+        if getattr(self, "dsmPath", ""):
+            try:
+                dsm_df = readDsm(self.dsmPath)
+            except (OSError, pd.errors.ParserError, ValueError) as e:
+                QMessageBox.critical(self, "錯誤", f"DSM 載入失敗：{e}")
+                return
+
+        editor = DsmEditor(
+            self.wbsDf.copy(),
+            self,
+            dsmDf=dsm_df,
+            wbsPath=getattr(self, "wbsPath", None),
+            dsmPath=getattr(self, "dsmPath", None) or None,
+        )
         editor.exec_()
 
     def import_from_folder(self):
@@ -2641,11 +2655,21 @@ def main():
     sys.exit(exit_code)
 
 
-def launch_editor(wbs_df=None):
+def launch_editor(
+    wbs_df=None,
+    dsm_df=None,
+    wbs_path: str | None = None,
+    dsm_path: str | None = None,
+    autosave_root=None,
+):
     """啟動 DSM 編輯器。
     
     Args:
         wbs_df: WBS 資料表，如果為 None 則使用空資料表
+        dsm_df: DSM 資料表，可為 None
+        wbs_path: WBS 檔案路徑，可為 None
+        dsm_path: DSM 檔案路徑，可為 None
+        autosave_root: 自動存檔根目錄，可為 None
         
     Returns:
         tuple: (QApplication, DsmEditor) 應用程式物件和編輯器實例
@@ -2662,7 +2686,13 @@ def launch_editor(wbs_df=None):
     if wbs_df is None:
         wbs_df = pd.DataFrame()
     
-    editor = DsmEditor(wbs_df)
+    editor = DsmEditor(
+        wbs_df,
+        dsmDf=dsm_df,
+        wbsPath=wbs_path,
+        dsmPath=dsm_path,
+        autosaveRoot=autosave_root,
+    )
     editor.show()
     
     return app, editor

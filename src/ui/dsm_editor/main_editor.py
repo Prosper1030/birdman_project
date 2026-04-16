@@ -1,74 +1,123 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, Set, List
+
 import pandas as pd
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush, QKeySequence
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QMenuBar, QAction, QFileDialog,
-    QMessageBox
+    QAbstractItemView,
+    QAction,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMenuBar,
+    QMessageBox,
+    QVBoxLayout,
+    QWidget,
 )
 
-from .enums import EditorState, LayoutAlgorithm
 from .commands import Command, AddEdgeCommand, RemoveEdgeCommand
-from .scene import DsmScene
-from .view import CanvasView
-from .nodes import TaskNode
+from .edge_router_manager import create_yed_router_manager
 from .edges import EdgeItem
+from .enums import EditorState, LayoutAlgorithm
 from .layouts import layout_hierarchical_with_info
+from .nodes import TaskNode
+from .scene import DsmScene
+from .session import (
+    AUTOSAVE_DIR_NAME,
+    DsmEditorSession,
+    SccGroupSummary,
+    buildSessionId,
+    dsmEquals,
+    summarizeCyclicSccGroups,
+    validateEditorInputs,
+)
+from .view import CanvasView
+from ...app_paths import projectRoot
 
 
 class DsmEditor(QDialog):
     """視覺化 DSM 編輯器 - 主視窗"""
 
-    def __init__(self, wbsDf: pd.DataFrame, parent=None) -> None:
+    def __init__(
+        self,
+        wbsDf: pd.DataFrame,
+        parent=None,
+        dsmDf: pd.DataFrame | None = None,
+        wbsPath: str | None = None,
+        dsmPath: str | None = None,
+        autosaveRoot=None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("依賴關係編輯器")
-        self.resize(1200, 800)
+        self.resize(1400, 860)
 
-        # 設定視窗標誌
         self.setWindowFlags(
-            Qt.Window |
-            Qt.WindowTitleHint |
-            Qt.WindowSystemMenuHint |
-            Qt.WindowMinimizeButtonHint |
-            Qt.WindowMaximizeButtonHint |
-            Qt.WindowCloseButtonHint
+            Qt.Window
+            | Qt.WindowTitleHint
+            | Qt.WindowSystemMenuHint
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowCloseButtonHint
         )
 
-        # 初始化狀態
+        validatedWbs, validatedDsm = validateEditorInputs(wbsDf, dsmDf)
+        autosavePath = autosaveRoot if autosaveRoot is not None else None
+        self.session = DsmEditorSession(
+            wbsDf=validatedWbs.copy(),
+            dsmDf=validatedDsm.copy(),
+            baselineDsmDf=validatedDsm.copy(),
+            wbsPath=wbsPath,
+            dsmPath=dsmPath,
+            autosaveRoot=(
+                Path(autosavePath)
+                if autosavePath
+                else projectRoot / AUTOSAVE_DIR_NAME
+            ),
+            sessionId=buildSessionId(
+                wbsPath,
+                dsmPath,
+                validatedWbs["Task ID"].astype(str).tolist(),
+            ),
+        )
+
         self.state = EditorState.IDLE
         self.commandHistory: List[Command] = []
         self.commandIndex = -1
 
         self.nodes: Dict[str, TaskNode] = {}
         self.edges: Set[tuple[str, str]] = set()
-        self.edge_ports: Dict[tuple[str, str], tuple] = {}  # 儲存佈局引擎計算的 Port 座標
-
-        # yEd 風格布局設置
-        self.layout_direction = 'TB'  # 'TB' (Top-Bottom) 或 'LR' (Left-Right)
-        self.layer_spacing = 200      # 層間距離
-        self.node_spacing = 150       # 同層節點間距離
-        self.isolated_spacing = 100   # 孤立節點間距離
-
-        # 邊的路由模式（佈局完成後才啟用正交路由）
+        self.edge_ports: Dict[tuple[str, str], tuple] = {}
+        self.layout_direction = "TB"
+        self.layer_spacing = 200
+        self.node_spacing = 150
+        self.isolated_spacing = 100
         self.routing_enabled = False
-
-        # yEd 風格邊線路由管理器
-        self.edge_router_manager = None  # 在場景建立後初始化
+        self.edge_router_manager = None
+        self.current_edge_ports = {}
+        self.highlightedSccTaskIds: set[str] = set()
+        self.noticeText = "已載入編輯器。"
+        self.graph = None
 
         self.setupUI()
-        self.loadWbs(wbsDf)
+        self.loadWbs(self.session.wbsDf)
+        self.loadDsm(self.session.dsmDf)
+        self._syncSessionState()
+        self._setNotice("已完成資料載入。")
 
     def setupUI(self) -> None:
         """設定使用者介面"""
-        layout = QVBoxLayout(self)
+        rootLayout = QVBoxLayout(self)
 
-        # 選單列
         menuBar = QMenuBar(self)
-        layout.setMenuBar(menuBar)
+        rootLayout.setMenuBar(menuBar)
 
-        # 檔案選單
         fileMenu = menuBar.addMenu("檔案(&F)")
 
         exportAction = QAction("匯出 DSM(&E)...", self)
@@ -76,7 +125,6 @@ class DsmEditor(QDialog):
         exportAction.triggered.connect(self.exportDsm)
         fileMenu.addAction(exportAction)
 
-        # 編輯選單
         editMenu = menuBar.addMenu("編輯(&E)")
 
         self.undoAction = QAction("撤銷(&U)", self)
@@ -91,7 +139,6 @@ class DsmEditor(QDialog):
         self.redoAction.setEnabled(False)
         editMenu.addAction(self.redoAction)
 
-        # 佈局選單
         layoutMenu = menuBar.addMenu("佈局(&L)")
 
         hierarchicalAction = QAction("階層式佈局(&H)", self)
@@ -99,18 +146,17 @@ class DsmEditor(QDialog):
         layoutMenu.addAction(hierarchicalAction)
 
         orthogonalAction = QAction("正交式佈局(&O)", self)
-        orthogonalAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.ORTHOGONAL))
+        orthogonalAction.triggered.connect(
+            lambda: self.applyLayout(LayoutAlgorithm.ORTHOGONAL)
+        )
         layoutMenu.addAction(orthogonalAction)
 
         forceAction = QAction("力導向佈局(&F)", self)
-        forceAction.triggered.connect(lambda: self.applyLayout(LayoutAlgorithm.FORCE_DIRECTED))
+        forceAction.triggered.connect(
+            lambda: self.applyLayout(LayoutAlgorithm.FORCE_DIRECTED)
+        )
         layoutMenu.addAction(forceAction)
 
-        # 路由選項
-        layoutMenu.addSeparator()
-
-
-        # 檢視選單
         viewMenu = menuBar.addMenu("檢視(&V)")
 
         self.gridAction = QAction("顯示網格(&G)", self)
@@ -125,19 +171,38 @@ class DsmEditor(QDialog):
         self.snapAction.triggered.connect(self.toggleSnapToGrid)
         viewMenu.addAction(self.snapAction)
 
-        # 建立場景和視圖
+        statusWidget = QWidget(self)
+        statusLayout = QHBoxLayout(statusWidget)
+        statusLayout.setContentsMargins(8, 6, 8, 6)
+        statusLayout.setSpacing(12)
+
+        self.sourceLabel = QLabel()
+        self.dirtyLabel = QLabel()
+        self.cycleLabel = QLabel()
+        self.sccLabel = QLabel()
+        self.noticeLabel = QLabel()
+        self.noticeLabel.setWordWrap(True)
+
+        for label in (
+            self.sourceLabel,
+            self.dirtyLabel,
+            self.cycleLabel,
+            self.sccLabel,
+        ):
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            statusLayout.addWidget(label)
+
+        statusLayout.addStretch()
+        statusLayout.addWidget(self.noticeLabel, stretch=2)
+        rootLayout.addWidget(statusWidget)
+
         self.scene = DsmScene(self)
         self.scene.setSceneRect(-5000, -5000, 10000, 10000)
-        # 設定場景背景為白色
         self.scene.setBackgroundBrush(QBrush(QColor(255, 255, 255)))
         self.view = CanvasView(self.scene)
-        layout.addWidget(self.view)
 
-        # 初始化邊線路由管理器
-        from .edge_router_manager import create_yed_router_manager
         self.edge_router_manager = create_yed_router_manager(self.scene)
 
-        # 新增最小距離設定（用於階層佈局）
         self.min_node_node = 30.0
         self.min_node_edge = 15.0
         self.min_edge_edge = 15.0
@@ -147,87 +212,129 @@ class DsmEditor(QDialog):
         self.node_margin = 8
         self.min_gap = 16
 
-        # 當前佈局的 edge_ports 信息
-        self.current_edge_ports = {}
+        self.sccListWidget = QListWidget(self)
+        self.sccListWidget.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.sccListWidget.currentItemChanged.connect(self._handleSccSelectionChanged)
+
+        sidebar = QWidget(self)
+        sidebarLayout = QVBoxLayout(sidebar)
+        sidebarLayout.setContentsMargins(0, 0, 0, 0)
+        sidebarLayout.addWidget(QLabel("循環 SCC 清單"))
+        self.sccHintLabel = QLabel("目前沒有循環依賴。")
+        self.sccHintLabel.setWordWrap(True)
+        sidebarLayout.addWidget(self.sccHintLabel)
+        sidebarLayout.addWidget(self.sccListWidget, stretch=1)
+        sidebar.setMinimumWidth(300)
+        sidebar.setMaximumWidth(360)
+
+        contentLayout = QHBoxLayout()
+        contentLayout.addWidget(self.view, stretch=4)
+        contentLayout.addWidget(sidebar, stretch=1)
+        rootLayout.addLayout(contentLayout)
 
     def loadWbs(self, wbsDf: pd.DataFrame) -> None:
-        """載入 WBS 資料"""
+        """載入 WBS 資料。"""
         if wbsDf.empty:
             return
 
         yedYellow = QColor(255, 215, 0)
-
         cols = 5
+
         for i, row in wbsDf.iterrows():
-            taskId = str(row.get("Task ID", f"Task_{i}"))
-            name = str(row.get("Name", "未命名任務"))
-            prop = str(row.get("Property", ""))
+            taskId = str(row.get("Task ID", f"Task_{i}")).strip()
+            taskName = str(row.get("Name", "未命名任務"))
+            taskProperty = str(row.get("Property", ""))
+            if taskProperty == "nan":
+                taskProperty = ""
 
-            if prop and prop != "nan":
-                text = f"[{prop}] {name}"
-            else:
-                text = name
-
-            # 檢查節點是否已存在，避免重複添加
             if taskId in self.nodes:
                 continue
 
-            node = TaskNode(taskId, text, yedYellow, self)
+            displayText = self._formatNodeText(taskName, taskProperty)
+            node = TaskNode(
+                taskId,
+                displayText,
+                yedYellow,
+                self,
+                propertyValue=taskProperty,
+                name=taskName,
+            )
             node.setPos((i % cols) * 180, (i // cols) * 120)
 
-            # 檢查項目是否已在場景中，避免重複添加警告
             if node.scene() != self.scene:
                 self.scene.addItem(node)
             self.nodes[taskId] = node
 
+    def loadDsm(self, dsmDf: pd.DataFrame) -> None:
+        """依據 DSM 建立現有依賴邊。"""
+        if dsmDf.empty:
+            return
+
+        for rowTask in dsmDf.index:
+            for colTask in dsmDf.columns:
+                if int(dsmDf.at[rowTask, colTask]) != 1:
+                    continue
+                self._addDependencyDirect(str(colTask), str(rowTask))
+
     def executeCommand(self, command: Command) -> None:
-        """執行命令並加入歷史記錄"""
-        self.commandHistory = self.commandHistory[:self.commandIndex + 1]
+        """執行命令並加入歷史記錄。"""
+        self.commandHistory = self.commandHistory[: self.commandIndex + 1]
         command.execute()
         self.commandHistory.append(command)
         self.commandIndex += 1
         self.updateUndoRedoState()
+        self._syncSessionState()
 
     def undo(self) -> None:
-        """撤銷"""
+        """撤銷。"""
         if self.commandIndex >= 0:
             self.commandHistory[self.commandIndex].undo()
             self.commandIndex -= 1
             self.updateUndoRedoState()
+            self._syncSessionState()
 
     def redo(self) -> None:
-        """重做"""
+        """重做。"""
         if self.commandIndex < len(self.commandHistory) - 1:
             self.commandIndex += 1
             self.commandHistory[self.commandIndex].execute()
             self.updateUndoRedoState()
+            self._syncSessionState()
 
     def updateUndoRedoState(self) -> None:
-        """更新撤銷/重做按鈕狀態"""
+        """更新撤銷/重做按鈕狀態。"""
         self.undoAction.setEnabled(self.commandIndex >= 0)
         self.redoAction.setEnabled(self.commandIndex < len(self.commandHistory) - 1)
 
     def toggleGrid(self) -> None:
-        """切換網格顯示"""
+        """切換網格顯示。"""
         self.view.setGridVisible(self.gridAction.isChecked())
 
     def toggleSnapToGrid(self) -> None:
-        """切換網格對齊"""
+        """切換網格對齊。"""
         self.view.setSnapToGrid(self.snapAction.isChecked())
 
     def addDependency(self, src: TaskNode, dst: TaskNode) -> None:
-        """新增依賴關係"""
+        """新增依賴關係。"""
         if (src.taskId, dst.taskId) not in self.edges:
             command = AddEdgeCommand(self, src, dst)
             self.executeCommand(command)
 
+    def addDependencyById(self, srcTaskId: str, dstTaskId: str) -> None:
+        """以 Task ID 新增依賴關係。"""
+        srcNode = self.nodes.get(srcTaskId)
+        dstNode = self.nodes.get(dstTaskId)
+        if srcNode is None or dstNode is None:
+            raise ValueError("找不到指定的 Task ID，無法建立依賴關係。")
+        self.addDependency(srcNode, dstNode)
+
     def removeEdge(self, edge: EdgeItem) -> None:
-        """移除邊"""
+        """移除邊。"""
         command = RemoveEdgeCommand(self, edge)
         self.executeCommand(command)
 
     def applyLayout(self, algorithm: LayoutAlgorithm) -> None:
-        """套用佈局演算法"""
+        """套用佈局演算法。"""
         if algorithm == LayoutAlgorithm.HIERARCHICAL:
             self.applyHierarchicalLayout()
         elif algorithm == LayoutAlgorithm.ORTHOGONAL:
@@ -236,56 +343,42 @@ class DsmEditor(QDialog):
             self.applyForceDirectedLayout()
 
     def showHierarchicalLayoutDialog(self) -> None:
-        """顯示階層佈局設定對話框"""
+        """顯示階層佈局設定對話框。"""
         from .hierarchical_layout_dialog import HierarchicalLayoutDialog
 
         dialog = HierarchicalLayoutDialog(self)
         if dialog.exec() == dialog.Accepted:
             settings = dialog.getSettings()
 
-            # 更新內部設定
-            self.layout_direction = settings['orientation']
-            self.layer_spacing = settings['layer_spacing']
-            self.node_spacing = settings['node_spacing']
-            self.isolated_spacing = settings['isolated_spacing']
+            self.layout_direction = settings["orientation"]
+            self.layer_spacing = settings["layer_spacing"]
+            self.node_spacing = settings["node_spacing"]
+            self.isolated_spacing = settings["isolated_spacing"]
+            self.min_node_node = settings["min_node_node"]
+            self.min_node_edge = settings["min_node_edge"]
+            self.min_edge_edge = settings["min_edge_edge"]
+            self.min_layer_layer = settings["min_layer_layer"]
+            self.node_width = settings["node_width"]
+            self.node_height = settings["node_height"]
+            self.node_margin = settings["node_margin"]
+            self.min_gap = settings["min_gap"]
 
-            # 更新最小距離設定
-            self.min_node_node = settings['min_node_node']
-            self.min_node_edge = settings['min_node_edge']
-            self.min_edge_edge = settings['min_edge_edge']
-            self.min_layer_layer = settings['min_layer_layer']
-
-            # 更新節點尺寸設定
-            self.node_width = settings['node_width']
-            self.node_height = settings['node_height']
-            self.node_margin = settings['node_margin']
-            self.min_gap = settings['min_gap']
-
-            # 應用佈局
             self.applyHierarchicalLayout()
 
     def applyHierarchicalLayout(self) -> None:
-        """
-        yEd 風格階層式佈局 - 先做佈局再做路由。
+        """執行階層式佈局。"""
+        wbsData = []
+        for taskId, node in self.nodes.items():
+            wbsData.append(
+                {
+                    "Task ID": taskId,
+                    "Name": node.taskName,
+                }
+            )
+        wbsDf = pd.DataFrame(wbsData)
 
-        實現專業級布局特性：
-        - 方向限制：TB 或 LR，邊只允許對應方向
-        - 孤立節點優先擺放：TB模式左側，LR模式上方
-        - 智能端口分配：根據方向限制進出邊的連接點
-        - 佈局完成後才啟用正交路由
-        """
-        # 準備 WBS DataFrame
-        wbs_data = []
-        for task_id, node in self.nodes.items():
-            wbs_data.append({
-                'Task ID': task_id,
-                'Name': node.text
-            })
-        wbs_df = pd.DataFrame(wbs_data)
-
-        # 呼叫 yEd 風格佈局函數，獲取完整信息包括 edge_ports
-        layout_result = layout_hierarchical_with_info(
-            wbs_df,
+        layoutResult = layout_hierarchical_with_info(
+            wbsDf,
             edges=self.edges,
             direction=self.layout_direction,
             layer_spacing=self.layer_spacing,
@@ -293,87 +386,58 @@ class DsmEditor(QDialog):
             isolated_spacing=self.isolated_spacing,
             min_node_node=self.min_node_node,
             min_layer_layer=self.min_layer_layer,
-            min_node_edge=self.min_node_edge
+            min_node_edge=self.min_node_edge,
         )
 
-        positions = layout_result['coordinates']
-        self.edge_ports = layout_result.get('edge_ports', {})  # 將 port 資訊儲存到新屬性中
+        positions = layoutResult["coordinates"]
+        self.edge_ports = layoutResult.get("edge_ports", {})
 
-        print(f"佈局完成 - 獲得 {len(self.edge_ports)} 條邊的 port 信息")
+        for taskId, (x, y) in positions.items():
+            if taskId in self.nodes:
+                self.nodes[taskId].setPos(x, y)
 
-        # 套用位置到節點
-        for task_id, (x, y) in positions.items():
-            if task_id in self.nodes:
-                self.nodes[task_id].setPos(x, y)
-
-        # 應用 edge_ports 到邊線繪製
         self._applyEdgePortsToEdges()
-
-        # 佈局完成後調整場景範圍並確保內容可見
         self._updateSceneRectToFitNodes(padding=300)
         self._ensureContentVisible(margin=80)
-
-        # 先完成佈局，再啟用正交路由 (yEd 風格流程)
-        print(f"佈局完成 - 方向: {self.layout_direction}, 節點數: {len(positions)}")
         self._apply_orthogonal_routing_after_layout()
+        self._updateLayoutNotice("階層式")
 
-    def _applyEdgePortsToEdges(self):
-        """將佈局引擎計算的 edge_ports 應用到場景中的邊線"""
+    def _applyEdgePortsToEdges(self) -> None:
+        """將佈局引擎計算的 edge_ports 套用到場景中的邊線。"""
         if not self.edge_ports:
-            print("無 edge_ports 信息，使用預設連接點")
             return
 
-        applied_count = 0
-        processed_edges = set()  # 避免重複處理同一條邊
+        processedEdges = set()
+        for edge in self._iterEdgeItems():
+            edgeId = id(edge)
+            if edgeId in processedEdges:
+                continue
+            processedEdges.add(edgeId)
+            edgeKey = (edge.src.taskId, edge.dst.taskId)
+            if edgeKey not in self.edge_ports:
+                edge.updatePath()
+                continue
 
-        # 遍歷節點的邊線集合而不是場景項目
-        for node in self.nodes.values():
-            if hasattr(node, 'edges'):
-                for edge in node.edges:
-                    edge_id = id(edge)
-                    if edge_id in processed_edges:
-                        continue
-                    processed_edges.add(edge_id)
+            srcPortPos, dstPortPos = self.edge_ports[edgeKey]
+            from PyQt5.QtCore import QPointF
 
-                    # 構建邊的標識符
-                    edge_key = (edge.src.taskId, edge.dst.taskId)
-
-                    if edge_key in self.edge_ports:
-                        src_port_pos, dst_port_pos = self.edge_ports[edge_key]
-                        from PyQt5.QtCore import QPointF
-                        # 直接使用 set_complex_path，確保嚴格按照 port 座標繪製（兩點直線）
-                        edge.set_complex_path([QPointF(*src_port_pos), QPointF(*dst_port_pos)], offset_pixels=0)
-                        applied_count += 1
-                        print(f"[DEBUG] 應用 port 到邊 {edge_key}（set_complex_path）: {src_port_pos} -> {dst_port_pos}")
-                    else:
-                        # 沒有對應的端口信息，使用預設方法
-                        edge.updatePath()
-                        print(f"[DEBUG] 邊 {edge_key} 無 port 信息，使用預設路徑")
-
-        print(f"應用 edge_ports 到 {applied_count} 條邊線（已直接用 port 兩點設路徑）")
+            edge.set_complex_path(
+                [QPointF(*srcPortPos), QPointF(*dstPortPos)],
+                offset_pixels=0,
+            )
 
     def setLayoutDirection(self, direction: str) -> None:
-        """
-        設置佈局方向。
-
-        Args:
-            direction: 'TB' (Top-Bottom) 或 'LR' (Left-Right)
-        """
-        if direction in ['TB', 'LR']:
+        """設定佈局方向。"""
+        if direction in ["TB", "LR"]:
             self.layout_direction = direction
-            print(f"佈局方向設為: {direction}")
-        else:
-            print(f"警告：無效的佈局方向 '{direction}'，保持 '{self.layout_direction}'")
 
-    def setLayoutSpacing(self, layer_spacing: int = None, node_spacing: int = None, isolated_spacing: int = None) -> None:
-        """
-        設置佈局間距參數。
-
-        Args:
-            layer_spacing: 層間距離
-            node_spacing: 同層節點間距離
-            isolated_spacing: 孤立節點間距離
-        """
+    def setLayoutSpacing(
+        self,
+        layer_spacing: int = None,
+        node_spacing: int = None,
+        isolated_spacing: int = None,
+    ) -> None:
+        """設定佈局間距參數。"""
         if layer_spacing is not None:
             self.layer_spacing = layer_spacing
         if node_spacing is not None:
@@ -381,262 +445,362 @@ class DsmEditor(QDialog):
         if isolated_spacing is not None:
             self.isolated_spacing = isolated_spacing
 
-        print(f"佈局參數 - 層間距: {self.layer_spacing}, "
-              f"節點間距: {self.node_spacing}, 孤立節點間距: {self.isolated_spacing}")
-
     def enableOrthogonalRouting(self, enabled: bool = True) -> None:
-        """
-        啟用或禁用正交路由。
-
-        Args:
-            enabled: 是否啟用正交路由
-        """
+        """啟用或禁用正交路由。"""
         self.routing_enabled = enabled
         if enabled:
-            print("正交路由已啟用")
             self._apply_orthogonal_routing_after_layout()
+            self._updateLayoutNotice("正交路由")
         else:
-            print("正交路由已禁用 - 使用直線邊")
             self._resetToStraightEdges()
+            self._setNotice("已切換為直線邊模式。")
 
     def applySimpleHierarchicalLayout(self) -> None:
-        """簡單階層式佈局"""
+        """簡單階層式佈局。"""
         nodes = list(self.nodes.values())
-        level_spacing = 200
-        node_spacing = 150
-        nodes_per_level = 4
+        levelSpacing = 200
+        nodeSpacing = 150
+        nodesPerLevel = 4
 
         for i, node in enumerate(nodes):
-            level = i // nodes_per_level
-            pos_in_level = i % nodes_per_level
-
-            start_x = -(nodes_per_level - 1) * node_spacing / 2
-            x = start_x + pos_in_level * node_spacing
-            y = level * level_spacing
-
+            level = i // nodesPerLevel
+            posInLevel = i % nodesPerLevel
+            startX = -(nodesPerLevel - 1) * nodeSpacing / 2
+            x = startX + posInLevel * nodeSpacing
+            y = level * levelSpacing
             node.setPos(x, y)
 
     def applyOrthogonalLayout(self) -> None:
-        """
-        正交式佈局 - 使用模組化的正交佈局演算法。
-
-        LAYOUT: 使用 layouts/orthogonal.py 中的專門實現
-        """
+        """正交式佈局。"""
         from .layouts import layout_orthogonal
-        import pandas as pd
 
-        # 準備 WBS 資料
-        task_ids = list(self.nodes.keys())
-        if not task_ids:
+        taskIds = list(self.nodes.keys())
+        if not taskIds:
             return
 
-        wbs_df = pd.DataFrame({'Task ID': task_ids})
+        wbsDf = pd.DataFrame({"Task ID": taskIds})
+        direction = getattr(self, "default_layout_direction", "TB")
 
-        # 取得佈局方向（如果有設定的話）
-        direction = getattr(self, 'default_layout_direction', 'TB')
-
-        # 使用模組化的正交佈局
         positions = layout_orthogonal(
-            wbs_df,
+            wbsDf,
             direction=direction,
             layer_spacing=200,
             node_spacing=180,
-            grid_cols=5
+            grid_cols=5,
         )
 
-        # 套用位置
-        for task_id, (x, y) in positions.items():
-            if task_id in self.nodes:
-                node = self.nodes[task_id]
-                node.setPos(x, y)
+        for taskId, (x, y) in positions.items():
+            if taskId in self.nodes:
+                self.nodes[taskId].setPos(x, y)
 
         self._updateSceneRectToFitNodes(padding=300)
         self._ensureContentVisible(margin=80)
-
-        # 佈局完成後執行正交路由 (yEd 風格)
         self._apply_orthogonal_routing_after_layout()
+        self._updateLayoutNotice("正交式")
 
     def applyForceDirectedLayout(self) -> None:
-        """
-        力導向佈局 - 使用模組化的力導向演算法。
-
-        LAYOUT: 使用 layouts/force_directed.py 中的專門實現
-        """
+        """力導向佈局。"""
         from .layouts import layout_force_directed
-        import pandas as pd
 
-        # 準備資料
-        task_ids = list(self.nodes.keys())
-        if not task_ids:
+        taskIds = list(self.nodes.keys())
+        if not taskIds:
             return
 
-        wbs_df = pd.DataFrame({'Task ID': task_ids})
+        wbsDf = pd.DataFrame({"Task ID": taskIds})
         edges = set(self.edges)
 
         try:
-            # 使用模組化的力導向佈局
-            node_count = len(task_ids)
-            # 根據節點數量調整迭代次數
-            iterations = min(200, max(50, node_count * 2))
-
+            nodeCount = len(taskIds)
+            iterations = min(200, max(50, nodeCount * 2))
             positions = layout_force_directed(
-                wbs_df,
+                wbsDf,
                 edges,
                 iterations=iterations,
-                k_spring=2.0,  # 增加彈簧力
+                k_spring=2.0,
                 k_repulsion=1.0,
-                scale=500,  # 增加縮放
-                seed=42  # 固定種子確保結果一致
+                scale=500,
+                seed=42,
             )
 
-            # 套用位置
-            for task_id, (x, y) in positions.items():
-                if task_id in self.nodes:
-                    node = self.nodes[task_id]
-                    node.setPos(x, y)
+            for taskId, (x, y) in positions.items():
+                if taskId in self.nodes:
+                    self.nodes[taskId].setPos(x, y)
 
-            # 佈局完成後調整場景範圍並確保內容可見
             self._updateSceneRectToFitNodes(padding=300)
             self._ensureContentVisible(margin=80)
+            self._updateLayoutNotice("力導向")
 
-        except Exception as e:
-            print(f"力導向佈局失敗: {e}")
-            # 回退到正交佈局
+        except Exception as error:
+            print(f"力導向佈局失敗: {error}")
             self.applyOrthogonalLayout()
 
-
     def _apply_orthogonal_routing_after_layout(self) -> None:
-        """
-        佈局完成後執行正交路由
-
-        這是「套用佈局」流程的最後步驟：
-        1. 節點佈局 (已完成)
-        2. 全圖正交路由 (此步驟)
-        3. 重繪 (自動)
-        """
-        # 階層佈局後一律執行正交路由
-        if not self.edge_router_manager:
-            return
-        
-        # 【新增】如果沒有 port 資訊，也直接返回
-        if not self.edge_ports:
-            print("警告：缺少 Port 資訊，無法執行正交繞線。")
+        """佈局完成後執行正交路由。"""
+        if not self.edge_router_manager or not self.edge_ports:
             return
 
-        # 收集所有邊線的資料
-        edges_data = []
-        for edge_item in self.scene.items():
-            # 【修改】從 self.edge_ports 獲取精確的起點和終點
-            if hasattr(edge_item, 'src') and hasattr(edge_item, 'dst'):
-                edge_key = (edge_item.src.taskId, edge_item.dst.taskId)
-                if edge_key in self.edge_ports:
-                    src_port_pos, dst_port_pos = self.edge_ports[edge_key]
-                    # 將 tuple 轉換為 QPointF
-                    from PyQt5.QtCore import QPointF
-                    start_pos = QPointF(*src_port_pos)
-                    end_pos = QPointF(*dst_port_pos)
-                    edges_data.append((edge_item, start_pos, end_pos))
+        edgesData = []
+        from PyQt5.QtCore import QPointF
 
-        if not edges_data:
+        for edgeItem in self._iterEdgeItems():
+            edgeKey = (edgeItem.src.taskId, edgeItem.dst.taskId)
+            if edgeKey not in self.edge_ports:
+                continue
+            srcPortPos, dstPortPos = self.edge_ports[edgeKey]
+            startPos = QPointF(*srcPortPos)
+            endPos = QPointF(*dstPortPos)
+            edgesData.append((edgeItem, startPos, endPos))
+
+        if not edgesData:
             return
 
-        print(f"執行佈局後正交路由，處理 {len(edges_data)} 條邊線...")
-
-        # 執行全圖正交路由（路徑會直接應用到邊線）
         try:
-            routing_results = self.edge_router_manager.route_all_edges_for_layout(edges_data)
-            
-            # 路徑已經在 route_all_edges_for_layout 中直接應用到 EdgeItem
-            # 這裡只需要確保所有邊線都已更新
-            edge_count = len(edges_data)
-            successful_routes = len([r for r in routing_results.values() if r and len(r) >= 2])
-            
-            print(f"佈局後正交路由完成：{successful_routes}/{edge_count} 條邊線成功路由")
-
-        except Exception as e:
-            print(f"正交路由執行失敗: {e}")
-
-    def _apply_path_to_edge(self, edge_item, path_points) -> None:
-        """
-        將路由路徑應用到邊線圖形項目
-        """
-        # 【修改】呼叫 EdgeItem 自己的方法來處理複雜路徑
-        if hasattr(edge_item, 'set_complex_path'):
-            edge_item.set_complex_path(path_points)
-        else:
-            # 保留回退方案
-            from PyQt5.QtGui import QPainterPath
-            path = QPainterPath(path_points[0])
-            for p in path_points[1:]:
-                path.lineTo(p)
-            edge_item.setPath(path)
+            self.edge_router_manager.route_all_edges_for_layout(edgesData)
+        except Exception as error:
+            print(f"正交路由執行失敗: {error}")
 
     def _updateSceneRectToFitNodes(self, padding: int = 200) -> None:
-        """將場景範圍擴張至涵蓋所有節點，避免節點被裁切。僅在佈局完成後呼叫。"""
+        """將場景範圍擴張至涵蓋所有節點。"""
         if not self.nodes:
             return
 
         rect = None
         for node in self.nodes.values():
-            r = node.sceneBoundingRect()
-            rect = r if rect is None else rect.united(r)
+            nodeRect = node.sceneBoundingRect()
+            rect = nodeRect if rect is None else rect.united(nodeRect)
 
         if rect is None:
             return
 
         expanded = rect.adjusted(-padding, -padding, padding, padding)
         current = self.scene.sceneRect()
-        target = current.united(expanded)
-        self.scene.setSceneRect(target)
+        self.scene.setSceneRect(current.united(expanded))
 
     def _ensureContentVisible(self, margin: int = 50) -> None:
-        """確保目前內容在視圖中可見（不改變縮放比例）。"""
+        """確保目前內容在視圖中可見。"""
         if not self.nodes:
             return
+
         rect = None
         for node in self.nodes.values():
-            r = node.sceneBoundingRect()
-            rect = r if rect is None else rect.united(r)
+            nodeRect = node.sceneBoundingRect()
+            rect = nodeRect if rect is None else rect.united(nodeRect)
         if rect is None:
             return
+
         try:
             self.view.ensureVisible(rect, margin, margin)
         except Exception:
             self.view.centerOn(rect.center())
 
     def buildDsmMatrix(self) -> pd.DataFrame:
-        """建立 DSM 矩陣"""
+        """建立 DSM 矩陣。"""
         taskIds = list(self.nodes.keys())
         matrix = pd.DataFrame(0, index=taskIds, columns=taskIds, dtype=int)
         for src, dst in self.edges:
-            matrix.loc[dst, src] = 1
+            if src in matrix.columns and dst in matrix.index:
+                matrix.loc[dst, src] = 1
         return matrix
 
-    def exportDsm(self) -> None:
-        """匯出 DSM"""
-        path, _ = QFileDialog.getSaveFileName(self, "匯出 DSM", "", "CSV Files (*.csv)")
-        if path:
-            try:
-                self.buildDsmMatrix().to_csv(path, encoding="utf-8-sig")
-                QMessageBox.information(self, "完成", f"已匯出 DSM：{path}")
-            except OSError as e:
-                QMessageBox.critical(self, "錯誤", f"匯出失敗：{e}")
+    def getCurrentDsmDataFrame(self) -> pd.DataFrame:
+        """回傳目前 DSM DataFrame。"""
+        return self.session.dsmDf.copy()
 
+    def getCurrentSccSummary(self) -> list[SccGroupSummary]:
+        """回傳目前循環 SCC 摘要。"""
+        return list(self.session.sccGroups)
+
+    def isSessionDirty(self) -> bool:
+        """回傳目前是否有未儲存變更。"""
+        return self.session.dirty
+
+    def exportDsm(self) -> None:
+        """匯出 DSM。"""
+        if self.session.hasCycles:
+            QMessageBox.warning(
+                self,
+                "循環依賴提醒",
+                "目前依賴圖含有循環依賴，匯出不會被阻擋，但後續 CPM 或排序分析可能受影響。",
+            )
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "匯出 DSM",
+            "",
+            "CSV Files (*.csv)",
+        )
+        if not path:
+            return
+
+        try:
+            self.buildDsmMatrix().to_csv(path, encoding="utf-8-sig")
+            self._setNotice(f"已匯出 DSM：{path}")
+            QMessageBox.information(self, "完成", f"已匯出 DSM：{path}")
+        except OSError as error:
+            QMessageBox.critical(self, "錯誤", f"匯出失敗：{error}")
+
+    def notifyGraphStructureChanged(self) -> None:
+        """當依賴圖結構有變化時同步更新狀態。"""
+        self._syncSessionState()
+
+    def _syncSessionState(self) -> None:
+        """同步目前的圖狀態、dirty 狀態與 SCC 摘要。"""
+        currentDsm = self.buildDsmMatrix()
+        graph, sccGroups = summarizeCyclicSccGroups(currentDsm)
+
+        self.graph = graph
+        self.session.dsmDf = currentDsm.copy()
+        self.session.hasCycles = bool(sccGroups)
+        self.session.sccGroups = sccGroups
+        self.session.dirty = not dsmEquals(currentDsm, self.session.baselineDsmDf)
+
+        self._updateStatusPanel()
+        self._refreshSccListWidget()
+
+    def _updateStatusPanel(self) -> None:
+        """更新狀態區資訊。"""
+        self.sourceLabel.setText(self.session.sourceSummary())
+        self.dirtyLabel.setText(
+            f"未儲存變更：{'是' if self.session.dirty else '否'}"
+        )
+        if self.session.hasCycles:
+            self.cycleLabel.setText("循環依賴：有")
+            self.cycleLabel.setStyleSheet("color: #c0392b; font-weight: bold;")
+        else:
+            self.cycleLabel.setText("循環依賴：無")
+            self.cycleLabel.setStyleSheet("color: #1e8449; font-weight: bold;")
+        self.sccLabel.setText(f"循環 SCC 群組：{len(self.session.sccGroups)}")
+        self.noticeLabel.setText(self.noticeText)
+
+    def _refreshSccListWidget(self) -> None:
+        """刷新循環 SCC 清單。"""
+        previousSelection = set(self.highlightedSccTaskIds)
+        self.sccListWidget.blockSignals(True)
+        self.sccListWidget.clear()
+
+        if not self.session.sccGroups:
+            self.sccHintLabel.setText("目前沒有循環依賴。")
+            self.sccListWidget.setEnabled(False)
+            self.sccListWidget.blockSignals(False)
+            self._clearSccHighlight()
+            return
+
+        self.sccHintLabel.setText("點選群組可高亮對應節點與邊線。")
+        self.sccListWidget.setEnabled(True)
+
+        matchedItem = None
+        for group in self.session.sccGroups:
+            item = QListWidgetItem(
+                f"SCC {group.groupId}｜" + "、".join(group.taskIds)
+            )
+            item.setData(Qt.UserRole, list(group.taskIds))
+            self.sccListWidget.addItem(item)
+            if previousSelection and set(group.taskIds) == previousSelection:
+                matchedItem = item
+
+        self.sccListWidget.blockSignals(False)
+        if matchedItem is not None:
+            self.sccListWidget.setCurrentItem(matchedItem)
+        else:
+            self._clearSccHighlight()
+
+    def _handleSccSelectionChanged(
+        self,
+        current: QListWidgetItem | None,
+        previous: QListWidgetItem | None,
+    ) -> None:
+        """當 SCC 清單改變選取時高亮相關項目。"""
+        del previous
+        self._clearSccHighlight()
+        if current is None:
+            return
+
+        taskIds = set(current.data(Qt.UserRole) or [])
+        if not taskIds:
+            return
+
+        self.highlightedSccTaskIds = taskIds
+        for taskId, node in self.nodes.items():
+            node.set_highlight(taskId in taskIds)
+
+        for edge in self._iterEdgeItems():
+            edge.set_highlight(
+                edge.src.taskId in taskIds and edge.dst.taskId in taskIds
+            )
+
+    def _clearSccHighlight(self) -> None:
+        """清除 SCC 高亮。"""
+        self.highlightedSccTaskIds = set()
+        for node in self.nodes.values():
+            node.set_highlight(False)
+        for edge in self._iterEdgeItems():
+            edge.set_highlight(False)
+
+    def _setNotice(self, message: str) -> None:
+        """更新狀態提醒文字。"""
+        self.noticeText = message
+        self.noticeLabel.setText(message)
+
+    def _updateLayoutNotice(self, layoutName: str) -> None:
+        """依目前循環狀態更新佈局提示文案。"""
+        if self.session.hasCycles:
+            self._setNotice(
+                f"{layoutName}視覺化重排完成；目前仍存在循環依賴，系統僅更新畫面配置。"
+            )
+        else:
+            self._setNotice(f"{layoutName}佈局完成。")
+
+    def _addDependencyDirect(self, srcTaskId: str, dstTaskId: str) -> None:
+        """直接建立依賴關係，不記錄撤銷歷史。"""
+        if (srcTaskId, dstTaskId) in self.edges:
+            return
+        srcNode = self.nodes.get(srcTaskId)
+        dstNode = self.nodes.get(dstTaskId)
+        if srcNode is None or dstNode is None:
+            return
+
+        edge = EdgeItem(srcNode, dstNode)
+        if edge.scene() != self.scene:
+            self.scene.addItem(edge)
+        if hasattr(edge, "arrowHead") and edge.arrowHead.scene() != self.scene:
+            self.scene.addItem(edge.arrowHead)
+        srcNode.edges.append(edge)
+        dstNode.edges.append(edge)
+        self.edges.add((srcTaskId, dstTaskId))
+
+    def _iterEdgeItems(self) -> list[EdgeItem]:
+        """回傳場景中的唯一邊線項目。"""
+        edges: list[EdgeItem] = []
+        seen = set()
+        for node in self.nodes.values():
+            for edge in node.edges:
+                edgeId = id(edge)
+                if edgeId in seen:
+                    continue
+                seen.add(edgeId)
+                edges.append(edge)
+        return edges
 
     def _resetToStraightEdges(self) -> None:
-        """重置所有邊線為直線模式"""
-        for edge_item in self.scene.items():
-            if hasattr(edge_item, 'updatePath') and hasattr(edge_item, 'src') and hasattr(edge_item, 'dst'):
-                # 重置為直線
-                edge_item.updatePath()
+        """重置所有邊線為直線模式。"""
+        for edgeItem in self._iterEdgeItems():
+            edgeItem.updatePath()
+
+    def _formatNodeText(self, taskName: str, taskProperty: str) -> str:
+        """建立節點顯示文字。"""
+        if taskProperty:
+            return f"[{taskProperty}] {taskName}"
+        return taskName
 
     def keyPressEvent(self, event):
-        """鍵盤事件處理"""
+        """鍵盤事件處理。"""
         if event.key() == Qt.Key_Escape:
-            if hasattr(self.scene, 'connectionMode') and self.scene.connectionMode:
+            if hasattr(self.scene, "connectionMode") and self.scene.connectionMode:
                 self.scene.cancelConnectionMode()
             else:
                 self.scene.clearSelection()
+                self.sccListWidget.clearSelection()
+                self._clearSccHighlight()
         elif event.key() == Qt.Key_Delete:
             selectedItems = self.scene.selectedItems()
             for item in selectedItems:
@@ -646,7 +810,19 @@ class DsmEditor(QDialog):
                     self.removeEdge(item)
         elif event.key() == Qt.Key_A and event.modifiers() & Qt.ControlModifier:
             for item in self.scene.items():
-                if isinstance(item, (TaskNode, EdgeItem)) and not getattr(item, 'isTemporary', False):
+                if isinstance(item, (TaskNode, EdgeItem)) and not getattr(
+                    item, "isTemporary", False
+                ):
                     item.setSelected(True)
         else:
             super().keyPressEvent(event)
+
+    def closeEvent(self, event) -> None:
+        """關閉前提示循環風險。"""
+        if self.session.hasCycles:
+            QMessageBox.warning(
+                self,
+                "循環依賴提醒",
+                "目前依賴圖仍含循環依賴，關閉後若使用於 CPM 或排序分析，結果可能受影響。",
+            )
+        super().closeEvent(event)

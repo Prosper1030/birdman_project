@@ -31,9 +31,23 @@ class GlowArrowHead(QGraphicsPathItem):
                 is_selected = getattr(self.parent_edge, '_is_selected', False)
                 is_shift_highlighted = getattr(self.parent_edge, '_is_shift_highlighted', False)
                 is_hovered = getattr(self.parent_edge, '_is_hovered', False)
+                is_external_highlighted = getattr(self.parent_edge, "_external_highlighted", False)
 
                 # 繪製發光效果（與父邊線同步）
-                if is_shift_highlighted:
+                if is_external_highlighted:
+                    glow_brush = QBrush(QColor(39, 174, 96, 150))
+                    glow_pen = QPen(QColor(39, 174, 96, 150), 4)
+                    painter.setBrush(glow_brush)
+                    painter.setPen(glow_pen)
+                    painter.drawPath(self.path())
+
+                    mid_brush = QBrush(QColor(39, 174, 96, 210))
+                    mid_pen = QPen(QColor(39, 174, 96, 210), 2)
+                    painter.setBrush(mid_brush)
+                    painter.setPen(mid_pen)
+                    painter.drawPath(self.path())
+
+                elif is_shift_highlighted:
                     # Shift + 懸停：最亮的發光效果
                     glow_brush = QBrush(QColor(255, 220, 50, 150))
                     glow_pen = QPen(QColor(255, 220, 50, 150), 4)
@@ -112,6 +126,7 @@ class EdgeItem(QGraphicsPathItem):
         self.arrowHead = GlowArrowHead(self)
         self.arrowHead.setZValue(15)  # 確保箭頭在所有節點之上
         self.arrowHead.setParentItem(self)
+        self._external_highlighted = False
 
         # 精確連線系統：效能優化快取
         self._cached_src_point = None
@@ -594,6 +609,13 @@ class EdgeItem(QGraphicsPathItem):
         """保留的相容性方法 - 調用新的精確實作"""
         self._updateArrowHead(srcPos, dstPos)
 
+    def set_highlight(self, highlighted: bool) -> None:
+        """設定外部高亮狀態，用於 SCC 清單聯動。"""
+        self._external_highlighted = highlighted
+        self.update()
+        if hasattr(self, "arrowHead") and self.arrowHead:
+            self.arrowHead.update()
+
     def hoverEnterEvent(self, event):
         """滑鼠懸停進入 - 支援 Shift 鍵發亮"""
         if not self.isTemporary:
@@ -750,9 +772,23 @@ class EdgeItem(QGraphicsPathItem):
             is_selected = getattr(self, '_is_selected', False)
             is_shift_highlighted = getattr(self, '_is_shift_highlighted', False)
             is_hovered = getattr(self, '_is_hovered', False)
+            is_external_highlighted = getattr(self, "_external_highlighted", False)
 
             # 繪製發光效果
-            if is_shift_highlighted:
+            if is_external_highlighted:
+                glow_pen = QPen(QColor(39, 174, 96, 130), 8, Qt.SolidLine)
+                glow_pen.setCapStyle(Qt.RoundCap)
+                glow_pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(glow_pen)
+                painter.drawPath(self.path())
+
+                mid_glow_pen = QPen(QColor(39, 174, 96, 210), 5, Qt.SolidLine)
+                mid_glow_pen.setCapStyle(Qt.RoundCap)
+                mid_glow_pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(mid_glow_pen)
+                painter.drawPath(self.path())
+
+            elif is_shift_highlighted:
                 # Shift + 懸停：最亮的發光效果
                 glow_pen = QPen(QColor(255, 220, 50, 150), 10, Qt.SolidLine)  # 亮橘黃色
                 glow_pen.setCapStyle(Qt.RoundCap)
