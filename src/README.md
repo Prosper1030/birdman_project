@@ -87,11 +87,11 @@ k = base + sqrt((ΣTRF / n) * trf_scale / trf_divisor) + n_coef * (n - 1)
 
 ```bash
 # CLI 介面
-python main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv --config config.json
+python3 main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv
 
 # GUI 介面  
-python -m src.gui_qt                    # 完整 PyQt5 GUI
-python src/ui/main_window.py           # 僅蒙地卡羅視窗
+python3 -m src.gui_qt                       # 完整 PyQt5 GUI
+python3 -m src.ui.main_app.main_window     # 僅蒙地卡羅視窗
 
 # 測試與程式碼檢查
 pytest                                 # 執行所有測試
