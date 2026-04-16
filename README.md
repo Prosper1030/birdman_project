@@ -46,12 +46,18 @@ python3 -m src.gui_qt
 ### DSM 編輯器 (快速測試工具)
 
 ```bash
-python3 run_dsm_editor.py                    # 使用預設 sample 資料
-python3 run_dsm_editor.py --wbs path/to.csv  # 指定 WBS 檔案
-python3 run_dsm_editor.py --help             # 顯示說明
+python3 run_dsm_editor.py                                      # 使用預設 sample 資料
+python3 run_dsm_editor.py --wbs path/to/WBS.csv                # 只載入 WBS，從空白依賴圖開始
+python3 run_dsm_editor.py --wbs path/to/WBS.csv --dsm path/to/DSM.csv
+python3 run_dsm_editor.py --help                               # 顯示說明
 ```
 
-直接啟動視覺化的 DSM 依賴關係編輯器，支援 yEd 風格的節點拖拽、連線編輯和階層式佈局。包含改良的分層邏輯，能區分源節點與獨立節點。
+直接啟動視覺化的 DSM 依賴關係編輯器，支援載入既有 DSM、連線編輯、循環 SCC 提示、工作階段 autosave 與安全匯出。
+
+補充文件：
+
+- [DSM 編輯器使用流程](docs/dsm_editor_workflow.md)
+- [DSM 編輯器 Web 化可行性評估](docs/dsm_editor_web_feasibility.md)
 
 ## 安裝套件
 
