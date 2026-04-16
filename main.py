@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
-import json
 import networkx as nx
+from typing import TYPE_CHECKING
 from src.dsm_processor import (
     readDsm,
     buildGraph,
@@ -21,16 +21,17 @@ from src.cpm_processor import (
     monteCarloSchedule,
 )
 import numpy as np
-from src.rcpsp_solver import solveRcpsp
 from src.resource_processor import readResources
-from src.racp_solver import solve_racp_basic
-from src import visualizer
-from matplotlib.figure import Figure
-import matplotlib
+from src.app_paths import defaultConfigPath, loadProjectConfig
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 
 def set_chinese_font():
     """設定 Matplotlib 支援中文的字型"""
+    import matplotlib
+
     try:
         font_path = None
         common_paths = [
@@ -62,7 +63,7 @@ def set_chinese_font():
         print(f"字型設定時發生錯誤: {e}")
 
 
-def saveFigure(fig: Figure, path: str) -> None:
+def saveFigure(fig: "Figure", path: str) -> None:
     """以副檔名決定輸出格式"""
     ext = Path(path).suffix.lower()
     fmt = 'png' if ext != '.svg' else 'svg'
@@ -75,6 +76,8 @@ def saveFigure(fig: Figure, path: str) -> None:
 
 def saveGanttChart(cpmDf, durations: dict[str, float], path: str) -> None:
     """根據 CPM 結果輸出甘特圖"""
+    from matplotlib.figure import Figure
+
     set_chinese_font()
     fig = Figure(figsize=(10, max(4, len(cpmDf) * 0.6)))
     ax = fig.add_subplot(111)
@@ -118,6 +121,8 @@ def saveGanttChart(cpmDf, durations: dict[str, float], path: str) -> None:
 def saveRcpspGanttChart(
         scheduleDf, durationField, path: str, total_duration: float):
     """根據 RCPSP 結果輸出甘特圖"""
+    from matplotlib.figure import Figure
+
     set_chinese_font()
     df = scheduleDf.sort_values(by="Start").reset_index(drop=True)
     fig = Figure(figsize=(10, max(4, len(df) * 0.6)))
@@ -164,7 +169,11 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="DSM 排序與專案管理工具")
     parser.add_argument("--dsm", required=True, help="DSM 檔案路徑")
     parser.add_argument("--wbs", required=True, help="WBS 檔案路徑")
-    parser.add_argument("--config", default="config.json", help="設定檔路徑")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help=f"設定檔路徑（預設：{defaultConfigPath}）",
+    )
     parser.add_argument("--cpm", action="store_true", help="執行 CPM 分析")
     parser.add_argument(
         "--export-graph", metavar="PATH", help="匯出依賴關係圖 (SVG/PNG)")
@@ -202,8 +211,7 @@ def load_data(args):
     dsm = readDsm(args.dsm)
     wbs = readWbs(args.wbs)
     validateIds(wbs, dsm)
-    with open(args.config, 'r', encoding='utf-8') as f:
-        config = json.load(f)
+    config = loadProjectConfig(args.config)
     return dsm, wbs, config
 
 
@@ -242,6 +250,8 @@ def generate_outputs(
 
     # 執行 RCPSP
     if args.rcpsp_opt:
+        from src.rcpsp_solver import solveRcpsp
+
         if not args.resources:
             raise ValueError("使用 RCPSP 排程時必須提供 --resources 檔案")
         if args.resourceField not in merged.columns:
@@ -274,6 +284,8 @@ def generate_outputs(
             print(f"已匯出 RCPSP 甘特圖至 {args.export_rcpsp_gantt}")
 
     if args.racp_opt is not None:
+        from src.racp_solver import solve_racp_basic
+
         if args.demandField not in merged.columns:
             raise ValueError(f'WBS 缺少需求欄位 {args.demandField}')
         if "Eligible_Groups" not in merged.columns:
@@ -293,6 +305,8 @@ def generate_outputs(
 
     # 匯出依賴圖
     if args.export_graph:
+        from src import visualizer
+
         viz_params = config.get('visualization_params', {})
         scc_map = dict(zip(wbs_sorted['Task ID'], wbs_sorted['SCC_ID']))
         layer_map = dict(zip(wbs_sorted['Task ID'], wbs_sorted['Layer']))

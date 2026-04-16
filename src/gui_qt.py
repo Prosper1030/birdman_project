@@ -9,6 +9,10 @@ import networkx as nx
 import numpy as np
 from functools import partial
 from scipy.stats import gaussian_kde
+try:
+    import qdarkstyle
+except ImportError:
+    qdarkstyle = None
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -41,7 +45,6 @@ from matplotlib.backends.backend_qt5agg import (
 )
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
-import qdarkstyle
 import pandas as pd
 from pandas import DataFrame
 
@@ -59,10 +62,9 @@ from .cpm_processor import (
     findCriticalPath,
     extractDurationFromWbs,
 )
-from .rcpsp_solver import solveRcpsp
 from .resource_processor import readResources
-from .racp_solver import solve_racp_basic
 from . import visualizer
+from .app_paths import loadProjectConfig, prepareQtApplication, saveProjectConfig
 from .ui.dsm_editor import DsmEditor
 
 
@@ -343,9 +345,8 @@ class BirdmanQtApp(QMainWindow):
 
         # 嘗試從 config.json 讀取設定
         try:
-            with open("config.json", "r", encoding="utf-8") as f:
-                config = json.load(f)
-                self.kParams = config.get("merge_k_params", self.defaultKParams)
+            config = loadProjectConfig()
+            self.kParams = config.get("merge_k_params", self.defaultKParams)
         except (OSError, json.JSONDecodeError):
             # 檔案不存在或解析失敗時以預設值處理
             self.kParams = self.defaultKParams
@@ -401,6 +402,51 @@ class BirdmanQtApp(QMainWindow):
                     "axes.spines.right": True,
                 }
             )
+
+    def buildDarkModeStylesheet(self) -> str:
+        """建立深色模式樣式表，缺少 qdarkstyle 時改用內建樣式。"""
+        extraStyle = """
+        QMainWindow {
+            background-color: #2b2b2b;
+            color: #ffffff;
+        }
+        QMenuBar {
+            background-color: #353535;
+            color: #ffffff;
+            border: 1px solid #555555;
+        }
+        QMenuBar::item {
+            background-color: transparent;
+            color: #ffffff;
+        }
+        QMenuBar::item:selected {
+            background-color: #4a90e2;
+        }
+        """
+
+        if qdarkstyle is None:
+            return """
+            QWidget {
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QLineEdit, QTextEdit, QComboBox, QSpinBox, QTableView, QTabWidget::pane {
+                background-color: #353535;
+                color: #ffffff;
+                border: 1px solid #555555;
+            }
+            QPushButton {
+                background-color: #3d6fb4;
+                color: #ffffff;
+                border: 1px solid #5b87c8;
+                padding: 4px 8px;
+            }
+            QPushButton:hover {
+                background-color: #4a90e2;
+            }
+            """ + extraStyle
+
+        return qdarkstyle.load_stylesheet_pyqt5() + extraStyle
 
     def get_critical_path_edges(self, graph, critical_path_nodes):
         """將關鍵路徑節點轉換為關鍵路徑邊線集合"""
@@ -1724,11 +1770,9 @@ class BirdmanQtApp(QMainWindow):
 
             # 將新設定寫入 config.json
             try:
-                with open("config.json", "r", encoding="utf-8") as f:
-                    config = json.load(f)
+                config = loadProjectConfig()
                 config["merge_k_params"] = self.kParams
-                with open("config.json", "w", encoding="utf-8") as f:
-                    json.dump(config, f, indent=2, ensure_ascii=False)
+                saveProjectConfig(config)
             except (OSError, json.JSONDecodeError) as e:
                 QMessageBox.warning(self, "警告", f"無法保存設定：{e}")
 
@@ -1772,28 +1816,7 @@ class BirdmanQtApp(QMainWindow):
             was_maximized = self.isMaximized()
 
             if checked:
-                # 載入深色樣式表，包含標題欄
-                dark_style = qdarkstyle.load_stylesheet_pyqt5()
-                # 為標題欄添加額外的樣式
-                dark_style += """
-                QMainWindow {
-                    background-color: #2b2b2b;
-                    color: #ffffff;
-                }
-                QMenuBar {
-                    background-color: #353535;
-                    color: #ffffff;
-                    border: 1px solid #555555;
-                }
-                QMenuBar::item {
-                    background-color: transparent;
-                    color: #ffffff;
-                }
-                QMenuBar::item:selected {
-                    background-color: #4a90e2;
-                }
-                """
-                self.setStyleSheet(dark_style)
+                self.setStyleSheet(self.buildDarkModeStylesheet())
                 self.isDarkMode = True
                 self.dark_mode_action.setText("啟用淺色模式")
             else:
@@ -1868,8 +1891,7 @@ class BirdmanQtApp(QMainWindow):
 
         if hasattr(self, "sortedWbs") and self.sortedWbs is not None:
             try:
-                with open("config.json", "r", encoding="utf-8") as f:
-                    config = json.load(f)
+                config = loadProjectConfig()
                 viz_params = config.get("visualization_params", {})
 
                 # 清除舊的 Canvas
@@ -1934,8 +1956,7 @@ class BirdmanQtApp(QMainWindow):
             return
 
         try:
-            with open("config.json", "r", encoding="utf-8") as f:
-                config = json.load(f)
+            config = loadProjectConfig()
             viz_params = config.get("visualization_params", {})
 
             # 清除舊的合併圖 Canvas
@@ -2358,8 +2379,9 @@ class BirdmanQtApp(QMainWindow):
             return None
 
         try:
-            with open("config.json", "r", encoding="utf-8") as f:
-                config = json.load(f)
+            from .rcpsp_solver import solveRcpsp
+
+            config = loadProjectConfig()
             cmpParams = config.get("cmp_params", {})
             durationField = cmpParams.get("default_duration_field", "Te_newbie")
 
@@ -2405,8 +2427,9 @@ class BirdmanQtApp(QMainWindow):
                 raise ValueError('WBS 缺少 "ResourceDemand" 欄位')
 
             # 載入配置
-            with open("config.json", "r", encoding="utf-8") as f:
-                config = json.load(f)
+            from .racp_solver import solve_racp_basic
+
+            config = loadProjectConfig()
             cmpParams = config.get("cmp_params", {})
             durationField = cmpParams.get("default_duration_field", "Te_newbie")
 
@@ -2567,8 +2590,7 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.warning(self, "警告", "請先完成分析並匯入 Resources 檔案")
             return
         try:
-            with open("config.json", "r", encoding="utf-8") as f:
-                config = json.load(f)
+            config = loadProjectConfig()
             cmpParams = config.get("cmp_params", {})
             durationField = cmpParams.get("default_duration_field", "Te_newbie")
             resourceCap = readResources(
@@ -2598,6 +2620,7 @@ class BirdmanQtApp(QMainWindow):
 
 def main():
     """啟動 Birdman Qt 應用程式。"""
+    prepareQtApplication()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
 
@@ -2628,7 +2651,8 @@ def launch_editor(wbs_df=None):
         tuple: (QApplication, DsmEditor) 應用程式物件和編輯器實例
     """
     from .ui.dsm_editor import DsmEditor
-    
+
+    prepareQtApplication()
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)

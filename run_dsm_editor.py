@@ -40,6 +40,10 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 import pandas as pd
+from src.app_paths import prepareQtApplication, sampleDataDir
+
+prepareQtApplication()
+
 from src.gui_qt import launch_editor
 
 
@@ -50,7 +54,7 @@ def load_sample_wbs() -> pd.DataFrame:
     Returns:
         WBS DataFrame
     """
-    sample_path = Path(__file__).parent / "sample_data" / "WBS.csv"
+    sample_path = sampleDataDir / "WBS.csv"
     
     if not sample_path.exists():
         print(f"找不到 sample 檔案：{sample_path}")
@@ -202,6 +206,7 @@ def create_parser() -> argparse.ArgumentParser:
 
 def main():
     """主程式進入點。"""
+    prepareQtApplication()
     # 解析命令列參數
     parser = create_parser()
     args = parser.parse_args()
