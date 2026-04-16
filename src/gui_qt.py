@@ -9,10 +9,6 @@ import networkx as nx
 import numpy as np
 from functools import partial
 from scipy.stats import gaussian_kde
-try:
-    import qdarkstyle
-except ImportError:
-    qdarkstyle = None
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -27,9 +23,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QTableView,
     QFormLayout,
-    QLineEdit,
     QDialog,
-    QCheckBox,
     QComboBox,
     QAction,
     QActionGroup,
@@ -39,14 +33,13 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QSpinBox,
 )
-from PyQt5.QtCore import Qt, QThread, QObject, pyqtSignal, QAbstractTableModel
+from PyQt5.QtCore import Qt, QThread
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import pandas as pd
-from pandas import DataFrame
 
 from .dsm_processor import (
     readDsm,
@@ -66,220 +59,16 @@ from .resource_processor import readResources
 from . import visualizer
 from .app_paths import loadProjectConfig, prepareQtApplication, saveProjectConfig
 from .ui.dsm_editor import DsmEditor
-
-
-class MonteCarloWorker(QObject):
-    """執行蒙地卡羅模擬的背景工作執行緒"""
-
-    progress = pyqtSignal(int)
-    finished = pyqtSignal(list)
-
-    def __init__(
-        self,
-        wbsDf: pd.DataFrame,
-        graph: nx.DiGraph,
-        roleKey: str,
-        iterations: int,
-        parent: QObject | None = None,
-    ) -> None:
-        """初始化背景工作者。
-
-        Args:
-            wbsDf: 任務資料表。
-            graph: 依賴關係圖。
-            roleKey: 角色鍵值。
-            iterations: 模擬次數。
-            parent: 父物件，預設為 ``None``。
-        """
-        super().__init__(parent)
-        self.wbsDf = wbsDf
-        self.graph = graph
-        self.roleKey = roleKey
-        self.iterations = iterations
-        self.isRunning = True
-
-    def run(self) -> None:
-        """執行模擬並回報進度"""
-        oCol = f"O_{self.roleKey}"
-        mCol = f"M_{self.roleKey}"
-        pCol = f"P_{self.roleKey}"
-        for field in (oCol, mCol, pCol):
-            if field not in self.wbsDf.columns:
-                self.finished.emit([])
-                return
-        wbsDf = self.wbsDf.set_index("Task ID")
-        simulationResults: list[float] = []
-        for i in range(max(1, self.iterations)):
-            if not self.isRunning:
-                break
-            sampled: dict[str, float] = {}
-            for taskId in wbsDf.index:
-                o = wbsDf.loc[taskId, oCol]
-                m = wbsDf.loc[taskId, mCol]
-                p = wbsDf.loc[taskId, pCol]
-                if p == o:
-                    simulatedDuration = o
-                else:
-                    mu = (o + 4 * m + p) / 6
-                    mu = max(o, min(p, mu))
-                    if mu == o:
-                        alpha = 1
-                    else:
-                        alpha = 1 + 4 * ((mu - o) / (p - o))
-                    if mu == p:
-                        beta = 1
-                    else:
-                        beta = 1 + 4 * ((p - mu) / (p - o))
-                    randomBeta = np.random.beta(alpha, beta)
-                    simulatedDuration = o + randomBeta * (p - o)
-                sampled[taskId] = float(simulatedDuration)
-            forward = cpmForwardPass(self.graph, sampled)
-            projectEnd = max(v[1] for v in forward.values())
-            simulationResults.append(projectEnd)
-            self.progress.emit(i + 1)
-            if not self.isRunning:
-                break
-        self.finished.emit(simulationResults)
-
-    def stop(self) -> None:
-        """停止模擬"""
-        self.isRunning = False
-
-
-class PandasModel(QAbstractTableModel):
-    """用於顯示 DataFrame 的 Qt 模型。"""
-
-    def __init__(self, df: DataFrame, dsmMode: bool = False) -> None:
-        """初始化模型。
-
-        Args:
-            df: 欲顯示的資料表。
-            dsmMode: 是否為 DSM 模式。
-        """
-        super().__init__()
-        self._df = df
-        self._dsmMode = dsmMode
-
-    def rowCount(self, parent=None):
-        """回傳列數。"""
-        return self._df.shape[0]
-
-    def columnCount(self, parent=None):
-        """回傳欄數。"""
-        return self._df.shape[1]
-
-    def data(self, index, role=Qt.DisplayRole):
-        """提供儲存格資料與背景顏色。"""
-        if not index.isValid():
-            return None
-        value = self._df.iloc[index.row(), index.column()]
-        if role == Qt.DisplayRole:
-            return str(value)
-        if self._dsmMode and role == Qt.BackgroundRole:
-            """若值為 1 則以紅色標示，避免解析失敗"""
-            try:
-                if str(value).strip() in {"1", "1.0"}:
-                    from PyQt5.QtGui import QColor
-
-                    return QColor(255, 120, 120)
-                if float(value) == 1:
-                    from PyQt5.QtGui import QColor
-
-                    return QColor(255, 120, 120)
-            except (ValueError, TypeError):
-                pass
-        return None
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        """提供表頭顯示文字。"""
-        if role == Qt.DisplayRole:
-            if orientation == Qt.Horizontal:
-                return str(self._df.columns[section])
-            else:
-                if self._dsmMode:
-                    return str(self._df.index[section])
-                return str(section + 1)
-        return None
-
-
-class SettingsDialog(QDialog):
-    """設定 k 係數的對話框。"""
-
-    def __init__(self, current_params, parent=None):
-        """初始化對話框。
-
-        Args:
-            current_params: 目前的參數設定。
-            parent: 父視窗，預設為 ``None``。
-        """
-        super().__init__(parent)
-        self.setWindowTitle("k 係數參數設定")
-        self.setModal(True)
-
-        layout = QVBoxLayout()
-        form_layout = QFormLayout()
-
-        # 建立輸入框
-        self.trfScaleInput = QLineEdit(str(current_params.get("trf_scale", 1.0)))
-        self.trfDivisorInput = QLineEdit(str(current_params.get("trf_divisor", 10.0)))
-        self.nCoefInput = QLineEdit(str(current_params.get("n_coef", 0.05)))
-
-        # Override 相關元件
-        self.overrideCheck = QCheckBox("直接覆蓋 k 值 (Override)")
-        self.overrideInput = QLineEdit(str(current_params.get("override", "")))
-        self.overrideInput.setEnabled(False)
-
-        # 加入到表單佈局
-        form_layout.addRow("轉換比例 (trf_scale):", self.trfScaleInput)
-        form_layout.addRow("轉換除數 (trf_divisor):", self.trfDivisorInput)
-        form_layout.addRow("數量係數 (n_coef):", self.nCoefInput)
-        form_layout.addRow(self.overrideCheck)
-        form_layout.addRow("覆寫值:", self.overrideInput)
-
-        layout.addLayout(form_layout)
-
-        # 按鈕
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-
-        self.setLayout(layout)
-
-        # 連接 override checkbox 的信號
-        self.overrideCheck.stateChanged.connect(
-            lambda state: self.overrideInput.setEnabled(state == Qt.Checked)
-        )
-
-        # 初始化 override 狀態
-        if current_params.get("override") is not None:
-            self.overrideCheck.setChecked(True)
-            self.overrideInput.setEnabled(True)
-            self.overrideInput.setText(str(current_params["override"]))
-
-    def get_settings(self):
-        """取得使用者輸入的設定值。
-
-        Returns:
-            dict | None: 包含參數設定的字典，若輸入無效則回傳 ``None``。
-        """
-        try:
-            settings = {
-                "base": 1.0,  # 固定值
-                "trf_scale": float(self.trfScaleInput.text()),
-                "trf_divisor": float(self.trfDivisorInput.text()),
-                "n_coef": float(self.nCoefInput.text()),
-                "override": None,
-            }
-
-            if self.overrideCheck.isChecked():
-                overrideValue = self.overrideInput.text().strip()
-                if overrideValue:
-                    settings["override"] = float(overrideValue)
-
-            return settings
-        except ValueError:
-            return None
+from .ui.main_app.helpers import (
+    addNoColumn,
+    buildDarkModeStylesheet,
+    configureChartTheme,
+    createCpmDisplayDf,
+    getCriticalPathEdges,
+)
+from .ui.main_app.settings_dialog import SettingsDialog
+from .ui.main_app.workers import MonteCarloWorker
+from .ui.shared import PandasModel
 
 
 class BirdmanQtApp(QMainWindow):
@@ -354,115 +143,16 @@ class BirdmanQtApp(QMainWindow):
         self.initUI()
 
     def configure_chart_theme(self):
-        """統一設定所有圖表的深色模式顏色，以蒙地卡羅圖表為標準"""
-        if self.isDarkMode:
-            # 統一的深色背景色（以蒙地卡羅為標準）
-            dark_bg_color = "#2b2b2b"
-            text_color = "white"
-            grid_color = "#555555"
-            edge_color = "#666666"
-
-            # 更新 matplotlib 的全域設定
-            plt.rcParams.update(
-                {
-                    "figure.facecolor": dark_bg_color,
-                    "axes.facecolor": dark_bg_color,
-                    "axes.labelcolor": text_color,
-                    "axes.edgecolor": edge_color,
-                    "text.color": text_color,
-                    "xtick.color": text_color,
-                    "ytick.color": text_color,
-                    "grid.color": grid_color,
-                    "axes.spines.left": True,
-                    "axes.spines.bottom": True,
-                    "axes.spines.top": True,
-                    "axes.spines.right": True,
-                }
-            )
-        else:
-            # 淺色模式
-            light_bg_color = "white"
-            text_color = "black"
-            grid_color = "#cccccc"
-            edge_color = "black"
-
-            plt.rcParams.update(
-                {
-                    "figure.facecolor": light_bg_color,
-                    "axes.facecolor": light_bg_color,
-                    "axes.labelcolor": text_color,
-                    "axes.edgecolor": edge_color,
-                    "text.color": text_color,
-                    "xtick.color": text_color,
-                    "ytick.color": text_color,
-                    "grid.color": grid_color,
-                    "axes.spines.left": True,
-                    "axes.spines.bottom": True,
-                    "axes.spines.top": True,
-                    "axes.spines.right": True,
-                }
-            )
+        """統一設定所有圖表的顏色主題。"""
+        configureChartTheme(self.isDarkMode)
 
     def buildDarkModeStylesheet(self) -> str:
-        """建立深色模式樣式表，缺少 qdarkstyle 時改用內建樣式。"""
-        extraStyle = """
-        QMainWindow {
-            background-color: #2b2b2b;
-            color: #ffffff;
-        }
-        QMenuBar {
-            background-color: #353535;
-            color: #ffffff;
-            border: 1px solid #555555;
-        }
-        QMenuBar::item {
-            background-color: transparent;
-            color: #ffffff;
-        }
-        QMenuBar::item:selected {
-            background-color: #4a90e2;
-        }
-        """
-
-        if qdarkstyle is None:
-            return """
-            QWidget {
-                background-color: #2b2b2b;
-                color: #ffffff;
-            }
-            QLineEdit, QTextEdit, QComboBox, QSpinBox, QTableView, QTabWidget::pane {
-                background-color: #353535;
-                color: #ffffff;
-                border: 1px solid #555555;
-            }
-            QPushButton {
-                background-color: #3d6fb4;
-                color: #ffffff;
-                border: 1px solid #5b87c8;
-                padding: 4px 8px;
-            }
-            QPushButton:hover {
-                background-color: #4a90e2;
-            }
-            """ + extraStyle
-
-        return qdarkstyle.load_stylesheet_pyqt5() + extraStyle
+        """建立深色模式樣式表。"""
+        return buildDarkModeStylesheet()
 
     def get_critical_path_edges(self, graph, critical_path_nodes):
-        """將關鍵路徑節點轉換為關鍵路徑邊線集合"""
-        if not critical_path_nodes or len(critical_path_nodes) < 2:
-            return set()
-
-        criticalEdges = set()
-        for i in range(len(critical_path_nodes) - 1):
-            currentNode = critical_path_nodes[i]
-            nextNode = critical_path_nodes[i + 1]
-
-            # 檢查圖中是否存在這個邊
-            if graph.has_edge(currentNode, nextNode):
-                criticalEdges.add((currentNode, nextNode))
-
-        return criticalEdges
+        """將關鍵路徑節點轉換為關鍵路徑邊線集合。"""
+        return getCriticalPathEdges(graph, critical_path_nodes)
 
     def closeEvent(self, event):
         """處理視窗關閉事件，確保正確清理 QThread"""
@@ -1201,45 +891,11 @@ class BirdmanQtApp(QMainWindow):
 
     def _add_no_column(self, df: pd.DataFrame) -> pd.DataFrame:
         """若無 ``No.`` 欄位則新增連續編號。"""
-        # 僅針對 WBS 及其衍生表格加 No. 欄，且不覆蓋 Task ID
-        df = df.copy()
-        first_col = df.columns[0]
-        if first_col != "Task ID" and first_col != "No.":
-            try:
-                as_num = pd.to_numeric(df[first_col], errors="coerce")
-                if as_num.notnull().all():
-                    df = df.drop(columns=[first_col])
-            except (ValueError, TypeError):
-                pass
-        df.insert(0, "No.", range(1, len(df) + 1))
-        return df
+        return addNoColumn(df)
 
     def _create_cpm_display_df(self, full_results_df, roleKey, time_key):
         """產生精簡版 CPM 結果表"""
-        core_display_cols = [
-            "Task ID",
-            "Name",
-            "ES",
-            "EF",
-            "LS",
-            "LF",
-            "TF",
-            "FF",
-            "Critical",
-        ]
-
-        role_map = {"novice": "newbie", "expert": "expert"}
-        role_suffix = role_map.get(roleKey.lower(), roleKey.lower())
-        time_column = f"{time_key}_{role_suffix}"
-
-        columns = core_display_cols.copy()
-        if time_column in full_results_df.columns:
-            insert_index = columns.index("Name") + 1
-            columns.insert(insert_index, time_column)
-
-        existing_cols = [c for c in columns if c in full_results_df.columns]
-        display_df = full_results_df[existing_cols].copy()
-        return display_df
+        return createCpmDisplayDf(full_results_df, roleKey, time_key)
 
     def exportSortedWbs(self) -> None:
         """匯出排序後的 WBS。"""

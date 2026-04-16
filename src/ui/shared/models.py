@@ -9,16 +9,22 @@ from pandas import DataFrame
 class PandasModel(QAbstractTableModel):
     """用於顯示 DataFrame 的 Qt 模型"""
 
-    def __init__(self, df: DataFrame, dsm_mode: bool = False) -> None:
+    def __init__(
+        self,
+        df: DataFrame,
+        dsm_mode: bool = False,
+        dsmMode: bool | None = None,
+    ) -> None:
         """初始化模型。
 
         Args:
             df: 欲顯示的資料表。
             dsm_mode: 是否為 DSM 模式。
+            dsmMode: 舊版相容參數，功能同 ``dsm_mode``。
         """
         super().__init__()
         self._df = df
-        self._dsm_mode = dsm_mode
+        self._dsm_mode = dsm_mode if dsmMode is None else dsmMode
 
     def rowCount(self, parent=None):  # type: ignore[override]
         """回傳列數。"""
