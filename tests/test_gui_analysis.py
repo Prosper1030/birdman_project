@@ -99,3 +99,5 @@ def test_workflow_buttons_follow_loaded_inputs_and_analysis(tmp_path, qapp):
     assert gui.configResourcesButton.isEnabled() is True
     assert gui.runRcpspButton.isEnabled() is True
     assert "可執行 RACP、RCPSP" in gui.workflowStatusLabel.text()
+    assert "分析摘要" in gui.analysisSummaryLabel.text()
+    assert "原始任務數：2" in gui.analysisSummaryLabel.text()

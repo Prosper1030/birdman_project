@@ -93,6 +93,7 @@ from .ui.main_app.input_service import (
     loadWbsPreview,
 )
 from .ui.main_app.settings_dialog import SettingsDialog
+from .ui.main_app.summary_service import buildAnalysisSummaryHtml
 from .ui.main_app.workflow_service import buildWorkflowState
 from .ui.main_app.workers import MonteCarloWorker, RcpspWorker
 from .ui.shared import PandasModel
@@ -261,6 +262,12 @@ class BirdmanQtApp(QMainWindow):
         self.main_tabs.setTabEnabled(1, False)
 
         results_layout.addWidget(QLabel("點擊「開始分析」後，結果將會顯示於此"))
+        self.analysisSummaryLabel = QLabel("分析摘要：尚未執行分析")
+        self.analysisSummaryLabel.setWordWrap(True)
+        self.analysisSummaryLabel.setStyleSheet(
+            "padding: 10px; border: 1px solid #d7ccc8; background-color: #fff8f2;"
+        )
+        results_layout.addWidget(self.analysisSummaryLabel)
 
         # 檔案路徑顯示區
         self.path_layout = QHBoxLayout()
@@ -725,6 +732,32 @@ class BirdmanQtApp(QMainWindow):
         if self.rcpspThread is None:
             self.runRcpspButton.setEnabled(workflowState.canRunRcpsp)
 
+    def updateAnalysisSummary(self) -> None:
+        """更新結果頁上方的分析摘要。"""
+        roleKey = None
+        timeKey = None
+        projectEnd = None
+        if self.ganttResults and self.selected_role in self.ganttResults:
+            modeText = self.ganttDisplayCombo.currentText()
+            timeKey = resolveTimeKey(modeText)
+            scenarioResult = self.ganttResults[self.selected_role].get(timeKey)
+            if scenarioResult is not None:
+                roleKey = self.selected_role
+                projectEnd = scenarioResult.projectEnd
+
+        self.analysisSummaryLabel.setText(
+            buildAnalysisSummaryHtml(
+                sortedWbs=self.sortedWbs,
+                mergedWbs=self.mergedWbs,
+                sortedDsm=self.sortedDsm,
+                sccMap=self.scc_map,
+                hasResources=bool(self.resourcePath),
+                roleKey=roleKey,
+                timeKey=timeKey,
+                projectEnd=projectEnd,
+            )
+        )
+
     def chooseDsm(self) -> None:
         """選擇 DSM 檔案並預覽。"""
         path, _ = QFileDialog.getOpenFileName(
@@ -771,6 +804,7 @@ class BirdmanQtApp(QMainWindow):
                 self.resourcePath = path
                 self.resources_path_label.setText(path)
                 self.updateWorkflowState()
+                self.updateAnalysisSummary()
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, "錯誤", f"Resources 載入失敗：{e}")
 
@@ -826,6 +860,7 @@ class BirdmanQtApp(QMainWindow):
         for warningMessage in bundle.warnings:
             QMessageBox.warning(self, "錯誤", warningMessage)
         self.updateWorkflowState()
+        self.updateAnalysisSummary()
 
     def runAnalysis(self, show_notification: bool = True) -> bool:
         """執行資料分析並更新各分頁。
@@ -882,6 +917,7 @@ class BirdmanQtApp(QMainWindow):
             self.main_tabs.setTabEnabled(1, True)
             self.main_tabs.setCurrentIndex(1)
             self.updateWorkflowState()
+            self.updateAnalysisSummary()
             if show_notification:
                 QMessageBox.information(self, "完成", "分析完成，可切換分頁預覽與匯出")
             return True
@@ -1079,6 +1115,7 @@ class BirdmanQtApp(QMainWindow):
 
         self.cmp_result_view.setModel(PandasModel(self.currentDisplayCpmDf.head(100)))
         self.total_hours_label.setText(displayState.totalHoursText)
+        self.updateAnalysisSummary()
 
         # 先清除舊的圖表
         layout = self.gantt_container.layout()
