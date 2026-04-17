@@ -6,6 +6,10 @@ import networkx as nx
 import numpy as np
 from pandas import DataFrame
 
+from ...matplotlib_runtime import prepareMatplotlibForQt
+
+prepareMatplotlibForQt()
+
 from PyQt5.QtCore import QThread
 from PyQt5.QtWidgets import (
     QWidget,

@@ -10,6 +10,10 @@ import numpy as np
 from functools import partial
 from scipy.stats import gaussian_kde
 
+from .matplotlib_runtime import prepareMatplotlibForQt
+
+prepareMatplotlibForQt()
+
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,

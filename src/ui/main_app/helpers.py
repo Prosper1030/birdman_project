@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from ...matplotlib_runtime import prepareMatplotlibForQt
+
+prepareMatplotlibForQt()
+
 try:
     import qdarkstyle
 except ImportError:
