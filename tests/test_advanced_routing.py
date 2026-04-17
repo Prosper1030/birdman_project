@@ -200,3 +200,61 @@ def test_edge_router_manager_offsets_duplicate_paths(monkeypatch, qapp):
         edge_two.applied_paths[-1][1],
     ]
     assert sorted(applied_offsets) == [-5.0, 5.0]
+
+
+def test_edge_router_manager_offsets_shared_horizontal_corridor(monkeypatch, qapp):
+    """不是完全同路徑，但若共用中段水平走廊也應分 lane。"""
+
+    class MockNode:
+        def __init__(self, task_id: str):
+            self.taskId = task_id
+
+    class MockEdge:
+        def __init__(self, src_id: str, dst_id: str):
+            self.src = MockNode(src_id)
+            self.dst = MockNode(dst_id)
+            self.applied_paths = []
+
+        def set_complex_path(self, path_points, offset_pixels=0):
+            self.applied_paths.append((path_points, offset_pixels))
+
+    class FakeBatchRouter:
+        def route_edges(self, requests):
+            return {
+                ("A1", "A2"): [
+                    QPointF(0, 0),
+                    QPointF(20, 0),
+                    QPointF(20, 50),
+                    QPointF(80, 50),
+                    QPointF(80, 100),
+                    QPointF(100, 100),
+                ],
+                ("B1", "B2"): [
+                    QPointF(10, 10),
+                    QPointF(30, 10),
+                    QPointF(30, 50),
+                    QPointF(90, 50),
+                    QPointF(90, 110),
+                    QPointF(110, 110),
+                ],
+            }
+
+    manager = EdgeRouterManager()
+    manager.set_band_router_enabled(False)
+    manager.set_orthogonal_router(FakeBatchRouter())
+    monkeypatch.setattr(manager, "_collect_obstacles", lambda edge_item, roi_rect=None: [])
+
+    edge_one = MockEdge("A1", "A2")
+    edge_two = MockEdge("B1", "B2")
+    manager.route_all_edges_for_layout(
+        [
+            (edge_one, QPointF(0, 0), QPointF(100, 100)),
+            (edge_two, QPointF(10, 10), QPointF(110, 110)),
+        ]
+    )
+
+    applied_offsets = [
+        edge_one.applied_paths[-1][1],
+        edge_two.applied_paths[-1][1],
+    ]
+    assert sorted(applied_offsets) == [-5.0, 5.0]

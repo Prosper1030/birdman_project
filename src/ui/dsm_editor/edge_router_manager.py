@@ -533,6 +533,14 @@ class EdgeRouterManager(QObject):
             center = (len(ordered_keys) - 1) / 2.0
             for index, edge_key in enumerate(ordered_keys):
                 offsets[edge_key] = (index - center) * lane_spacing
+        corridor_offsets = self._compute_shared_horizontal_corridor_offsets(
+            batch_paths,
+            lane_spacing=lane_spacing,
+        )
+        for edge_key, offset in corridor_offsets.items():
+            existing = offsets.get(edge_key, 0.0)
+            if abs(offset) > abs(existing):
+                offsets[edge_key] = offset
         return offsets
 
     def _path_signature(self, path: List[QPointF]) -> Tuple[Tuple[float, float], ...]:
@@ -540,6 +548,79 @@ class EdgeRouterManager(QObject):
         forward = tuple((round(point.x(), 1), round(point.y(), 1)) for point in path)
         backward = tuple(reversed(forward))
         return min(forward, backward)
+
+    def _compute_shared_horizontal_corridor_offsets(
+        self,
+        batch_paths: Dict[Tuple[str, str], List[QPointF]],
+        lane_spacing: float,
+    ) -> Dict[Tuple[str, str], float]:
+        """
+        對中段共用的水平走廊做簡化 lane ordering。
+
+        先抓每條路徑最主要的 interior horizontal segment，
+        對相同 y 軸上的重疊區間做 first-fit lane assignment。
+        """
+        try:
+            from .band_routing import IntervalItem, interval_partition_first_fit
+        except ImportError:
+            from band_routing import IntervalItem, interval_partition_first_fit
+
+        grouped_items: Dict[int, List[IntervalItem]] = {}
+        edge_lookup: Dict[int, Tuple[str, str]] = {}
+        next_index = 0
+
+        for edge_key, path in batch_paths.items():
+            corridor = self._extract_primary_horizontal_corridor(path)
+            if corridor is None:
+                continue
+            y_pos, x_left, x_right = corridor
+            if x_right - x_left < lane_spacing * 2:
+                continue
+            bucket = int(round(y_pos * 10))
+            grouped_items.setdefault(bucket, []).append(
+                IntervalItem(next_index, x_left, x_right)
+            )
+            edge_lookup[next_index] = edge_key
+            next_index += 1
+
+        offsets: Dict[Tuple[str, str], float] = {}
+        for items in grouped_items.values():
+            if len(items) <= 1:
+                continue
+            assignment = interval_partition_first_fit(items)
+            lane_count = max(assignment.values(), default=1)
+            if lane_count <= 1:
+                continue
+            center = (lane_count - 1) / 2.0
+            for item_index, lane in assignment.items():
+                edge_key = edge_lookup[item_index]
+                offsets[edge_key] = (lane - 1 - center) * lane_spacing
+        return offsets
+
+    def _extract_primary_horizontal_corridor(
+        self, path: List[QPointF]
+    ) -> Optional[Tuple[float, float, float]]:
+        """取出一條路徑最長的 interior horizontal segment。"""
+        best_segment: Optional[Tuple[float, float, float]] = None
+        best_length = 0.0
+        if len(path) < 4:
+            return None
+
+        for index in range(1, len(path) - 2):
+            point1 = path[index]
+            point2 = path[index + 1]
+            if abs(point1.y() - point2.y()) >= 0.1:
+                continue
+            length = abs(point2.x() - point1.x())
+            if length <= best_length:
+                continue
+            best_length = length
+            best_segment = (
+                point1.y(),
+                min(point1.x(), point2.x()),
+                max(point1.x(), point2.x()),
+            )
+        return best_segment
     
     def _route_orthogonal(
         self, 
