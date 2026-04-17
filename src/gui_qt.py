@@ -56,6 +56,10 @@ from .ui.main_app.analysis_service import (
     buildCpmScenarioResult,
     loadAnalysisBundle,
 )
+from .ui.main_app.export_service import (
+    exportDataFrameWithDialog,
+    exportFigureWithDialog,
+)
 from .ui.main_app.helpers import (
     addNoColumn,
     buildDarkModeStylesheet,
@@ -858,138 +862,72 @@ class BirdmanQtApp(QMainWindow):
 
     def exportSortedWbs(self) -> None:
         """匯出排序後的 WBS。"""
-        if self.sortedWbs is None:
-            QMessageBox.warning(self, "警告", "請先執行分析產生排序後的 WBS")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "匯出排序後 WBS", "sorted_wbs.csv", "CSV Files (*.csv)"
+        exportDataFrameWithDialog(
+            self,
+            self.sortedWbs,
+            title="匯出排序後 WBS",
+            defaultName="sorted_wbs.csv",
+            emptyMessage="請先執行分析產生排序後的 WBS",
+            successMessage="排序後 WBS 已匯出",
         )
-        if path:
-            self.sortedWbs.to_csv(path, index=False, encoding="utf-8-sig")
-            QMessageBox.information(self, "完成", "排序後 WBS 已匯出")
 
     def exportMergedWbs(self, fmt="csv"):
         """匯出合併後的 WBS"""
-        if self.mergedWbs is None:
-            QMessageBox.warning(self, "警告", "請先執行分析")
-            return
-        if fmt == "xlsx":
-            fileFilter = "Excel 檔案 (*.xlsx)"
-            path, _ = QFileDialog.getSaveFileName(self, "匯出合併 WBS", "", fileFilter)
-            if not path:
-                return
-            if not path.lower().endswith(".xlsx"):
-                path += ".xlsx"
-            self.mergedWbs.to_excel(path, index=False)
-        else:
-            fileFilter = "CSV Files (*.csv)"
-            path, _ = QFileDialog.getSaveFileName(
-                self,
-                "匯出合併 WBS",
-                "",
-                fileFilter,
-            )
-            if not path:
-                return
-            if not path.lower().endswith(".csv"):
-                path += ".csv"
-            self.mergedWbs.to_csv(path, encoding="utf-8-sig", index=False)
-        QMessageBox.information(self, "完成", f"已匯出 {path}")
+        exportDataFrameWithDialog(
+            self,
+            self.mergedWbs,
+            title="匯出合併 WBS",
+            fmt=fmt,
+            emptyMessage="請先執行分析",
+        )
 
     def exportSortedDsm(self) -> None:
         """匯出排序後的 DSM。"""
-        if self.sortedDsm is None:
-            QMessageBox.warning(self, "警告", "請先執行分析產生排序後的 DSM")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "匯出排序後 DSM", "sorted_dsm.csv", "CSV Files (*.csv)"
+        exportDataFrameWithDialog(
+            self,
+            self.sortedDsm,
+            title="匯出排序後 DSM",
+            defaultName="sorted_dsm.csv",
+            emptyMessage="請先執行分析產生排序後的 DSM",
+            includeIndex=True,
+            successMessage="排序後 DSM 已匯出",
         )
-        if path:
-            self.sortedDsm.to_csv(path, encoding="utf-8-sig")
-            QMessageBox.information(self, "完成", "排序後 DSM 已匯出")
 
     def exportMergedDsm(self, fmt="csv"):
         """匯出合併後的 DSM"""
-        if self.mergedDsm is None:
-            QMessageBox.warning(self, "警告", "請先執行分析")
-            return
-        if fmt == "xlsx":
-            fileFilter = "Excel 檔案 (*.xlsx)"
-            path, _ = QFileDialog.getSaveFileName(
-                self,
-                "匯出合併 DSM",
-                "",
-                fileFilter,
-            )
-            if not path:
-                return
-            if not path.lower().endswith(".xlsx"):
-                path += ".xlsx"
-            self.mergedDsm.to_excel(path, index=False)
-        else:
-            fileFilter = "CSV Files (*.csv)"
-            path, _ = QFileDialog.getSaveFileName(
-                self,
-                "匯出合併 DSM",
-                "",
-                fileFilter,
-            )
-            if not path:
-                return
-            if not path.lower().endswith(".csv"):
-                path += ".csv"
-            self.mergedDsm.to_csv(path, encoding="utf-8-sig", index=False)
-        QMessageBox.information(self, "完成", f"已匯出 {path}")
+        exportDataFrameWithDialog(
+            self,
+            self.mergedDsm,
+            title="匯出合併 DSM",
+            fmt=fmt,
+            emptyMessage="請先執行分析",
+        )
 
     def exportGraph(self, fmt="png"):
         """匯出原始依賴關係圖"""
-        if not hasattr(self, "graph") or self.graph is None:
-            QMessageBox.warning(self, "警告", "請先執行分析")
-            return
-
-        fileFilter = "PNG 圖片 (*.png)" if fmt == "png" else "SVG 向量圖 (*.svg)"
-        path, _ = QFileDialog.getSaveFileName(self, "匯出依賴關係圖", "", fileFilter)
-        if not path:
-            return
-
-        try:
-            if not path.lower().endswith(f".{fmt}"):
-                path += f".{fmt}"
-            self.graphCanvas.figure.savefig(
-                path,
-                format=fmt,
-                bbox_inches="tight",
-                dpi=300,
-            )
-            QMessageBox.information(self, "完成", f"已匯出依賴關係圖至：{path}")
-        except (OSError, ValueError) as e:
-            QMessageBox.critical(self, "錯誤", f"匯出圖檔時發生錯誤：{e}")
+        exportFigureWithDialog(
+            self,
+            self.graphCanvas.figure if self.graph is not None and self.graphCanvas is not None else None,
+            title="匯出依賴關係圖",
+            fmt=fmt,
+            emptyMessage="請先執行分析",
+            successMessage="已匯出依賴關係圖至：{path}",
+        )
 
     def exportMergedGraph(self, fmt="png"):
         """匯出合併後依賴關係圖"""
-        if not hasattr(self, "mergedGraph") or self.mergedGraph is None:
-            QMessageBox.warning(self, "警告", "請先執行分析")
-            return
-
-        fileFilter = "PNG 圖片 (*.png)" if fmt == "png" else "SVG 向量圖 (*.svg)"
-        path, _ = QFileDialog.getSaveFileName(
-            self, "匯出合併後依賴關係圖", "", fileFilter
+        exportFigureWithDialog(
+            self,
+            (
+                self.mergedGraphCanvas.figure
+                if self.mergedGraph is not None and self.mergedGraphCanvas is not None
+                else None
+            ),
+            title="匯出合併後依賴關係圖",
+            fmt=fmt,
+            emptyMessage="請先執行分析",
+            successMessage="已匯出合併後依賴圖至：{path}",
         )
-        if not path:
-            return
-
-        try:
-            if not path.lower().endswith(f".{fmt}"):
-                path += f".{fmt}"
-            self.mergedGraphCanvas.figure.savefig(
-                path,
-                format=fmt,
-                bbox_inches="tight",
-                dpi=300,
-            )
-            QMessageBox.information(self, "完成", f"已匯出合併後依賴圖至：{path}")
-        except (OSError, ValueError) as e:
-            QMessageBox.critical(self, "錯誤", f"匯出圖檔時發生錯誤：{e}")
 
     def runCmpAnalysis(self):
         """執行 CPM 分析"""
@@ -1304,42 +1242,23 @@ class BirdmanQtApp(QMainWindow):
 
     def exportCmpResult(self):
         """匯出 CPM 分析結果"""
-        if self.cmpResult is None:
-            QMessageBox.warning(self, "警告", "請先執行 CPM 分析")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "匯出 CPM 分析結果", "", "CSV Files (*.csv)"
+        exportDataFrameWithDialog(
+            self,
+            self.cmpResult,
+            title="匯出 CPM 分析結果",
+            emptyMessage="請先執行 CPM 分析",
+            successMessage="已匯出 CPM 結果：{path}",
         )
-        if path:
-            self.cmpResult.to_csv(path, index=False, encoding="utf-8-sig")
-            QMessageBox.information(self, "完成", f"已匯出 CPM 結果：{path}")
 
     def export_cpm_results(self, fmt="csv"):
         """匯出目前顯示的 CPM 精簡報告"""
-        if self.currentDisplayCpmDf is None:
-            QMessageBox.warning(self, "警告", "沒有可匯出的 CPM 結果")
-            return
-        if fmt == "xlsx":
-            fileFilter = "Excel 檔案 (*.xlsx)"
-            path, _ = QFileDialog.getSaveFileName(
-                self, "匯出 CPM 分析結果", "", fileFilter
-            )
-            if not path:
-                return
-            if not path.lower().endswith(".xlsx"):
-                path += ".xlsx"
-            self.currentDisplayCpmDf.to_excel(path, index=False)
-        else:
-            fileFilter = "CSV Files (*.csv)"
-            path, _ = QFileDialog.getSaveFileName(
-                self, "匯出 CPM 分析結果", "", fileFilter
-            )
-            if not path:
-                return
-            if not path.lower().endswith(".csv"):
-                path += ".csv"
-            self.currentDisplayCpmDf.to_csv(path, index=False, encoding="utf-8-sig")
-        QMessageBox.information(self, "完成", f"已匯出 {path}")
+        exportDataFrameWithDialog(
+            self,
+            self.currentDisplayCpmDf,
+            title="匯出 CPM 分析結果",
+            fmt=fmt,
+            emptyMessage="沒有可匯出的 CPM 結果",
+        )
 
     def open_settings_dialog(self):
         """開啟 k 係數參數設定對話框"""
@@ -1579,25 +1498,15 @@ class BirdmanQtApp(QMainWindow):
 
     def exportGanttChart(self, fmt="png"):
         """匯出甘特圖"""
-        if not hasattr(self, "ganttFigure") or self.ganttFigure is None:
-            QMessageBox.warning(self, "警告", "請先執行 CPM 分析")
-            return
-
-        fileFilter = "PNG 圖片 (*.png)" if fmt == "png" else "SVG 向量圖 (*.svg)"
-        path, _ = QFileDialog.getSaveFileName(self, "匯出甘特圖", "", fileFilter)
-
-        if not path:
-            return
-
-        try:
-            if not path.lower().endswith(f".{fmt}"):
-                path += f".{fmt}"
-            self.ganttFigure.savefig(
-                path, format=fmt, bbox_inches="tight", dpi=300, pad_inches=0.5
-            )
-            QMessageBox.information(self, "完成", f"已匯出甘特圖至：{path}")
-        except (OSError, ValueError) as e:
-            QMessageBox.critical(self, "錯誤", f"匯出圖檔時發生錯誤：{e}")
+        exportFigureWithDialog(
+            self,
+            self.ganttFigure,
+            title="匯出甘特圖",
+            fmt=fmt,
+            emptyMessage="請先執行 CPM 分析",
+            successMessage="已匯出甘特圖至：{path}",
+            savefigKwargs={"pad_inches": 0.5},
+        )
 
     def run_monte_carlo_simulation(self) -> None:
         """執行蒙地卡羅模擬"""
@@ -1878,31 +1787,19 @@ class BirdmanQtApp(QMainWindow):
 
     def export_monte_carlo_chart(self, fmt="png"):
         """匯出蒙地卡羅模擬圖表"""
-        if not hasattr(self, "mcFigure") or self.mcFigure is None:
-            QMessageBox.warning(self, "警告", "請先執行蒙地卡羅模擬")
-            return
-
         if not hasattr(self, "mcLastResults") or not self.mcLastResults:
             QMessageBox.warning(self, "警告", "沒有可匯出的模擬結果")
             return
 
-        fileFilter = "PNG 圖片 (*.png)" if fmt == "png" else "SVG 向量圖 (*.svg)"
-        path, _ = QFileDialog.getSaveFileName(
-            self, "匯出蒙地卡羅模擬圖表", "", fileFilter
+        exportFigureWithDialog(
+            self,
+            self.mcFigure,
+            title="匯出蒙地卡羅模擬圖表",
+            fmt=fmt,
+            emptyMessage="請先執行蒙地卡羅模擬",
+            successMessage="已匯出蒙地卡羅圖表至：{path}",
+            savefigKwargs={"pad_inches": 0.2},
         )
-
-        if not path:
-            return
-
-        try:
-            if not path.lower().endswith(f".{fmt}"):
-                path += f".{fmt}"
-            self.mcFigure.savefig(
-                path, format=fmt, bbox_inches="tight", dpi=300, pad_inches=0.2
-            )
-            QMessageBox.information(self, "完成", f"已匯出蒙地卡羅圖表至：{path}")
-        except (OSError, ValueError) as e:
-            QMessageBox.critical(self, "錯誤", f"匯出圖檔時發生錯誤：{e}")
 
     def initialize_monte_carlo_chart(self):
         """初始化蒙地卡羅圖表，設定適當的背景色"""
