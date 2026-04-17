@@ -59,6 +59,12 @@ from .ui.main_app.advanced_analysis_service import (
     buildRcpspScheduleFrame,
     runRacpAnalysis,
 )
+from .ui.main_app.display_service import (
+    TIME_MODE_OPTIONS,
+    buildRoleStatusMessage,
+    buildScenarioDisplayState,
+    resolveTimeKey,
+)
 from .ui.main_app.chart_service import (
     createGanttFigure,
     createRacpBarChartFigure,
@@ -523,12 +529,7 @@ class BirdmanQtApp(QMainWindow):
         cpm_display_label = QLabel("顯示模式：")
         cpm_top_layout.addWidget(cpm_display_label)
         self.cpmDisplayCombo = QComboBox()
-        self.cpmDisplayCombo.addItems([
-            "期望時間 (Te)",
-            "樂觀時間 (O)",
-            "悲觀時間 (P)",
-            "最可能時間 (M)",
-        ])
+        self.cpmDisplayCombo.addItems(TIME_MODE_OPTIONS)
         self.cpmDisplayCombo.currentIndexChanged.connect(self.update_cpm_display)
         cpm_top_layout.addWidget(self.cpmDisplayCombo)
 
@@ -682,12 +683,7 @@ class BirdmanQtApp(QMainWindow):
 
         # 顯示模式選擇
         self.ganttDisplayCombo = QComboBox()
-        self.ganttDisplayCombo.addItems([
-            "期望時間 (Te)",
-            "樂觀時間 (O)",
-            "悲觀時間 (P)",
-            "最可能時間 (M)",
-        ])
+        self.ganttDisplayCombo.addItems(TIME_MODE_OPTIONS)
         self.ganttDisplayCombo.currentIndexChanged.connect(self.update_gantt_display)
         gantt_top_layout.addWidget(self.ganttDisplayCombo)
 
@@ -956,13 +952,7 @@ class BirdmanQtApp(QMainWindow):
             return
 
         try:
-            mode_map = {
-                "期望時間 (Te)": "Te",
-                "樂觀時間 (O)": "O",
-                "悲觀時間 (P)": "P",
-                "最可能時間 (M)": "M",
-            }
-            timeKey = mode_map.get(self.ganttDisplayCombo.currentText(), "Te")
+            timeKey = resolveTimeKey(self.ganttDisplayCombo.currentText())
             wbsWithCpm = self.mergedWbs.copy()
             self.ganttResults = {"newbie": {}, "expert": {}}
             self.ganttResults[self.selected_role][timeKey] = buildCpmScenarioResult(
@@ -1025,14 +1015,8 @@ class BirdmanQtApp(QMainWindow):
 
     def update_gantt_display(self):
         """根據選擇的角色與時間模式更新顯示"""
-        mode_map = {
-            "期望時間 (Te)": "Te",
-            "樂觀時間 (O)": "O",
-            "悲觀時間 (P)": "P",
-            "最可能時間 (M)": "M",
-        }
         mode_text = self.ganttDisplayCombo.currentText()
-        time_key = mode_map.get(mode_text, "Te")
+        time_key = resolveTimeKey(mode_text)
 
         if hasattr(self, "cpmDisplayCombo"):
             self.cpmDisplayCombo.blockSignals(True)
@@ -1047,22 +1031,25 @@ class BirdmanQtApp(QMainWindow):
         scenarioResult = self.ganttResults[roleKey][time_key]
         self.cmpResult = scenarioResult.wbsWithCpm
 
-        self.currentDisplayCpmDf = self._create_cpm_display_df(
+        displayDf = self._create_cpm_display_df(
             scenarioResult.wbsWithCpm,
             roleKey,
             time_key,
         )
+        displayState = buildScenarioDisplayState(
+            roleKey=roleKey,
+            timeKey=time_key,
+            projectEnd=scenarioResult.projectEnd,
+            displayDf=displayDf,
+        )
+        self.currentDisplayCpmDf = displayState.displayDf
         self.criticalPath = scenarioResult.criticalPath
 
         # 更新關鍵路徑後，重繪合併後的依賴圖以顯示關鍵路徑
         self.redraw_merged_graph()
 
         self.cmp_result_view.setModel(PandasModel(self.currentDisplayCpmDf.head(100)))
-        self.total_hours_label.setText(f"總工時：{scenarioResult.projectEnd:.1f} 小時")
-        role_text = "新手" if roleKey == "newbie" else "專家"
-        mode_label_map = {"Te": "期望時間", "O": "樂觀時間", "P": "悲觀時間", "M": "最可能時間"}
-        key_title = f"{role_text} - {mode_label_map[time_key]} ({time_key}_{roleKey})"
-        newTitle = f"{key_title}\n總工時: {scenarioResult.projectEnd:.2f} 小時"
+        self.total_hours_label.setText(displayState.totalHoursText)
 
         # 先清除舊的圖表
         layout = self.gantt_container.layout()
@@ -1075,7 +1062,7 @@ class BirdmanQtApp(QMainWindow):
         self.ganttFigure = self.drawGanttChart(
             scenarioResult.cpmDf,
             scenarioResult.durations,
-            newTitle,
+            displayState.figureTitle,
             scenarioResult.wbsWithCpm,
         )
         self.ganttCanvas = FigureCanvas(self.ganttFigure)
@@ -1147,8 +1134,7 @@ class BirdmanQtApp(QMainWindow):
     def setGlobalRole(self, role):
         """設定全域角色並更新相關顯示"""
         self.selected_role = role
-        role_name = "新手" if role == 'newbie' else "專家"
-        self.statusBar().showMessage(f"已切換至 {role_name} 模式", 3000)
+        self.statusBar().showMessage(buildRoleStatusMessage(role), 3000)
         self.update_gantt_display()
 
     def toggle_dark_mode(self, checked):
