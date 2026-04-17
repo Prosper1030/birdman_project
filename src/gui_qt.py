@@ -6,9 +6,7 @@ import sys
 import json
 import os
 import networkx as nx
-import numpy as np
 from functools import partial
-from scipy.stats import gaussian_kde
 
 from .matplotlib_runtime import prepareMatplotlibForQt
 
@@ -42,7 +40,6 @@ from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
 from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
 import pandas as pd
 
 from .dsm_processor import readDsm
@@ -55,6 +52,12 @@ from .ui.main_app.analysis_service import (
     buildAllCpmScenarioResults,
     buildCpmScenarioResult,
     loadAnalysisBundle,
+)
+from .ui.main_app.chart_service import (
+    createGanttFigure,
+    createRcpspGanttFigure,
+    initializeMonteCarloFigure,
+    renderMonteCarloFigure,
 )
 from .ui.main_app.export_service import (
     exportDataFrameWithDialog,
@@ -990,97 +993,7 @@ class BirdmanQtApp(QMainWindow):
             wbsDf: 含任務順序的 WBS 資料
         """
         try:
-            fig = Figure(figsize=(16, 12), dpi=100)
-            ax = fig.add_subplot(111)
-
-            fig.patch.set_facecolor(plt.rcParams["figure.facecolor"])
-            ax.set_facecolor(plt.rcParams["axes.facecolor"])
-
-            fig.subplots_adjust(
-                top=0.9,
-                bottom=0.15,
-                left=0.2,
-                right=0.95,
-            )
-
-            # 取得任務列表和相關數據
-            tasks = wbsDf["Task ID"].tolist()
-            start_times = [cpmData.at[t, "ES"] for t in tasks]
-            task_durations = [durations.get(t, 0) for t in tasks]
-
-            # 設定任務條的位置和顏色
-            y_positions = range(len(tasks))
-            colors = ["red" if cpmData.at[t, "Critical"] else "skyblue" for t in tasks]
-
-            # 繪製任務條
-            ax.barh(
-                y_positions,
-                task_durations,
-                left=start_times,
-                color=colors,
-                alpha=0.8,
-                height=0.6,
-                edgecolor=plt.rcParams["axes.edgecolor"],
-                linewidth=1,
-                zorder=2,
-            )
-
-            # 設定 Y 軸標籤
-            ax.set_yticks(y_positions)
-            ax.set_yticklabels(
-                tasks,
-                fontsize=10,
-                fontweight="bold",
-                color=plt.rcParams["axes.labelcolor"],
-            )
-
-            ax.tick_params(axis="x", colors=plt.rcParams["xtick.color"])
-            ax.tick_params(axis="y", colors=plt.rcParams["ytick.color"])
-
-            for spine in ax.spines.values():
-                spine.set_edgecolor(plt.rcParams["axes.edgecolor"])
-
-            # 加強網格線
-            ax.grid(
-                True,
-                axis="x",
-                linestyle="--",
-                color=plt.rcParams["grid.color"],
-                alpha=0.3,
-                zorder=1,
-            )
-            ax.set_axisbelow(True)
-
-            # 設定標籤和標題
-            ax.set_xlabel(
-                "時間 (小時)",
-                fontsize=11,
-                fontweight="bold",
-                color=plt.rcParams["axes.labelcolor"],
-            )
-            ax.set_title(
-                title,
-                fontsize=14,
-                pad=20,
-                color=plt.rcParams["axes.labelcolor"],
-            )
-            # 在每個任務條上添加持續時間標籤
-            for i, (duration, start) in enumerate(zip(task_durations, start_times)):
-                if duration > 0:
-                    ax.text(
-                        start + duration + 2,
-                        i,
-                        f"{duration:.1f}h",
-                        va="center",
-                        fontsize=9,
-                        alpha=0.7,
-                        color=plt.rcParams["text.color"],
-                    )
-
-            # 反轉 Y 軸
-            ax.invert_yaxis()
-
-            return fig
+            return createGanttFigure(cpmData, durations, title, wbsDf)
         except Exception as e:
             QMessageBox.warning(self, "警告", f"甘特圖繪製失敗：{e}")
             return Figure()
@@ -1088,71 +1001,7 @@ class BirdmanQtApp(QMainWindow):
     def drawRcpspGanttChart(self, scheduleDf, durationField, title):
         """繪製 RCPSP 甘特圖並回傳 Figure"""
         try:
-            fig = Figure(figsize=(16, 12), dpi=100)
-            ax = fig.add_subplot(111)
-            fig.patch.set_facecolor(plt.rcParams["figure.facecolor"])
-            ax.set_facecolor(plt.rcParams["axes.facecolor"])
-            fig.subplots_adjust(top=0.9, bottom=0.15, left=0.2, right=0.95)
-            tasks = scheduleDf["Task ID"].tolist()
-            startTimes = scheduleDf["Start"].tolist()
-            durations = scheduleDf[durationField].tolist()
-            yPos = range(len(tasks))
-            ax.barh(
-                yPos,
-                durations,
-                left=startTimes,
-                color="dodgerblue",
-                alpha=0.8,
-                height=0.6,
-                edgecolor=plt.rcParams["axes.edgecolor"],
-                linewidth=1,
-                zorder=2,
-            )
-            ax.set_yticks(list(yPos))
-            ax.set_yticklabels(
-                tasks,
-                fontsize=10,
-                fontweight="bold",
-                color=plt.rcParams["axes.labelcolor"],
-            )
-            ax.tick_params(axis="x", colors=plt.rcParams["xtick.color"])
-            ax.tick_params(axis="y", colors=plt.rcParams["ytick.color"])
-            for spine in ax.spines.values():
-                spine.set_edgecolor(plt.rcParams["axes.edgecolor"])
-            ax.grid(
-                True,
-                axis="x",
-                linestyle="--",
-                color=plt.rcParams["grid.color"],
-                alpha=0.3,
-                zorder=1,
-            )
-            ax.set_axisbelow(True)
-            ax.set_xlabel(
-                "時間 (小時)",
-                fontsize=11,
-                fontweight="bold",
-                color=plt.rcParams["axes.labelcolor"],
-            )
-            ax.set_title(
-                title,
-                fontsize=14,
-                pad=20,
-                color=plt.rcParams["axes.labelcolor"],
-            )
-            for i, (dur, start) in enumerate(zip(durations, startTimes)):
-                if dur > 0:
-                    ax.text(
-                        start + dur + 0.1,
-                        i,
-                        f"{dur:.1f}h",
-                        va="center",
-                        fontsize=9,
-                        alpha=0.7,
-                        color=plt.rcParams["text.color"],
-                    )
-            ax.invert_yaxis()
-            return fig
+            return createRcpspGanttFigure(scheduleDf, durationField, title)
         except Exception as e:
             QMessageBox.warning(self, "警告", f"RCPSP 甘特圖繪製失敗：{e}")
             return Figure()
@@ -1613,166 +1462,20 @@ class BirdmanQtApp(QMainWindow):
         # 保存結果以便深色模式切換時重繪
         self.mcLastResults = results
 
-        # 設定中文字體
-        plt.rcParams["font.sans-serif"] = [
-            "Microsoft JhengHei",
-            "SimHei",
-            "Arial Unicode MS",
-            "sans-serif",
-        ]
-        plt.rcParams["axes.unicode_minus"] = False
-
-        arr = np.array(results, dtype=float)
-        avg = float(arr.mean())
-        std = float(arr.std())
-        p50 = float(np.percentile(arr, 50))
-        p85 = float(np.percentile(arr, 85))
-        p95 = float(np.percentile(arr, 95))
-
-        self.mc_mean_label.setText(f"平均總工時：{avg:.2f}")
-        self.mc_std_label.setText(f"標準差：{std:.2f}")
-        self.mc_p50_label.setText(f"50% 完成機率：{p50:.2f}")
-        self.mc_p85_label.setText(f"85% 完成機率：{p85:.2f}")
-        self.mc_p95_label.setText(f"95% 完成機率：{p95:.2f}")
-
-        self.mcFigure.clear()
-        ax = self.mcFigure.add_subplot(111)
-
-        # 根據深色模式設定顏色
-        if self.isDarkMode:
-            bar_color = "lightblue"
-            edge_color = "white"
-            text_color = "white"
-            # 設定圖表背景為深色
-            self.mcFigure.patch.set_facecolor("#2b2b2b")
-            ax.set_facecolor("#2b2b2b")
-        else:
-            bar_color = "skyblue"
-            edge_color = "black"
-            text_color = "black"
-            # 設定圖表背景為淺色
-            self.mcFigure.patch.set_facecolor("white")
-            ax.set_facecolor("white")
-
-        # 獲取當前選擇的圖表模式
-        chart_mode = self.mc_chart_mode_combo.currentText()
-        is_density_mode = chart_mode == "密度模式"
-
-        # 根據模式繪製不同的直方圖
-        if is_density_mode:
-            # 密度模式：使用密度歸一化，並繪製KDE曲線
-            n, bins, patches = ax.hist(
-                arr,
-                bins=25,
-                color=bar_color,
-                edgecolor=edge_color,
-                alpha=0.8,
-                rwidth=0.9,
-                density=True,  # 密度歸一化
-                label="直方圖",
-            )
-
-            # 計算並繪製KDE曲線
-            try:
-                if len(arr) > 1:  # 確保有足夠的數據點計算KDE
-                    kde = gaussian_kde(arr)
-
-                    # 創建平滑的x軸數據點，範圍稍微超出數據範圍
-                    x_min, x_max = arr.min(), arr.max()
-                    x_range = x_max - x_min
-                    x_smooth = np.linspace(
-                        x_min - 0.1 * x_range, x_max + 0.1 * x_range, 200
-                    )
-
-                    # 計算KDE值
-                    kde_values = kde(x_smooth)
-
-                    # 設定KDE曲線顏色
-                    if self.isDarkMode:
-                        kde_color = "#ff6b6b"  # 紅色系，在深色背景下明顯
-                        kde_alpha = 0.9
-                    else:
-                        kde_color = "#e74c3c"  # 深紅色，在淺色背景下明顯
-                        kde_alpha = 0.8
-
-                    # 繪製KDE曲線
-                    ax.plot(
-                        x_smooth,
-                        kde_values,
-                        color=kde_color,
-                        linewidth=2.5,
-                        alpha=kde_alpha,
-                        label="KDE 密度曲線",
-                    )
-
-                    # 添加圖例
-                    legend = ax.legend(loc="upper right", fontsize=9, framealpha=0.8)
-                    # 設定圖例文字顏色
-                    legend.get_frame().set_facecolor(
-                        "white" if not self.isDarkMode else "#404040"
-                    )
-                    legend.get_frame().set_edgecolor(text_color)
-                    for text in legend.get_texts():
-                        text.set_color(text_color)
-
-            except (ValueError, np.linalg.LinAlgError) as e:
-                # 如果KDE計算失敗，不中斷程序，但記錄錯誤
-                print(f"KDE計算失敗: {e}")
-                pass
-        else:
-            # 次數模式：不使用密度歸一化，顯示原始計數
-            n, bins, patches = ax.hist(
-                arr,
-                bins=25,
-                color=bar_color,
-                edgecolor=edge_color,
-                alpha=0.8,
-                rwidth=0.9,
-                density=False,  # 不使用密度歸一化，顯示次數
-            )
-
-        # 獲取模擬條件資訊
-        role_text = "新手 (Novice)" if self.selected_role == 'newbie' else "專家 (Expert)"
-        iterations = self.mc_iterations_spinbox.value()
-
-        # 設定標題，包含模擬條件和圖表模式
-        title = (
-            f"蒙地卡羅模擬結果 ({chart_mode})\n"
-            f"分析對象: {role_text} | 模擬次數: {iterations:,} 次"
-        )
-        ax.set_title(title, color=text_color, fontsize=12, pad=15)
-
-        ax.set_xlabel("工時 (小時)", color=text_color, fontsize=10)
-
-        # 根據模式設定Y軸標籤
-        if is_density_mode:
-            ax.set_ylabel("密度", color=text_color, fontsize=10)
-        else:
-            ax.set_ylabel("次數", color=text_color, fontsize=10)
-
-        # 設定刻度顏色
-        ax.tick_params(colors=text_color)
-
-        # 在圖表上添加統計資訊文字
-        stats_text = f"平均: {avg:.1f}h\n標準差: {std:.1f}h\n中位數: {p50:.1f}h"
-        ax.text(
-            0.02,
-            0.98,
-            stats_text,
-            transform=ax.transAxes,
-            verticalalignment="top",
-            fontsize=9,
-            bbox=dict(
-                boxstyle="round",
-                facecolor="white" if not self.isDarkMode else "#404040",
-                alpha=0.8,
-                edgecolor=text_color,
-            ),
-            color=text_color,
+        stats = renderMonteCarloFigure(
+            self.mcFigure,
+            results,
+            isDarkMode=self.isDarkMode,
+            chartMode=self.mc_chart_mode_combo.currentText(),
+            selectedRole=self.selected_role,
+            iterations=self.mc_iterations_spinbox.value(),
         )
 
-        # 調整布局
-        self.mcFigure.tight_layout()
+        self.mc_mean_label.setText(f"平均總工時：{stats['average']:.2f}")
+        self.mc_std_label.setText(f"標準差：{stats['std']:.2f}")
+        self.mc_p50_label.setText(f"50% 完成機率：{stats['p50']:.2f}")
+        self.mc_p85_label.setText(f"85% 完成機率：{stats['p85']:.2f}")
+        self.mc_p95_label.setText(f"95% 完成機率：{stats['p95']:.2f}")
 
         # 強制重繪和更新畫布
         self.mcCanvas.draw()
@@ -1803,50 +1506,7 @@ class BirdmanQtApp(QMainWindow):
 
     def initialize_monte_carlo_chart(self):
         """初始化蒙地卡羅圖表，設定適當的背景色"""
-        self.mcFigure.clear()
-        ax = self.mcFigure.add_subplot(111)
-
-        # 設定中文字體
-        plt.rcParams["font.sans-serif"] = [
-            "Microsoft JhengHei",
-            "SimHei",
-            "Arial Unicode MS",
-            "sans-serif",
-        ]
-        plt.rcParams["axes.unicode_minus"] = False
-
-        # 根據當前模式設定顏色
-        if self.isDarkMode:
-            text_color = "white"
-            self.mcFigure.patch.set_facecolor("#2b2b2b")
-            ax.set_facecolor("#2b2b2b")
-        else:
-            text_color = "black"
-            self.mcFigure.patch.set_facecolor("white")
-            ax.set_facecolor("white")
-
-        # 設定空白圖表的標題和標籤
-        ax.set_title("蒙地卡羅模擬結果\n(請先執行模擬)", color=text_color, fontsize=12)
-        ax.set_xlabel("工時 (小時)", color=text_color, fontsize=10)
-        ax.set_ylabel("次數", color=text_color, fontsize=10)  # 預設為次數模式
-
-        # 設定刻度顏色
-        ax.tick_params(colors=text_color)
-
-        # 添加提示文字
-        ax.text(
-            0.5,
-            0.5,
-            "點擊「開始模擬」按鈕\n進行蒙地卡羅分析",
-            transform=ax.transAxes,
-            ha="center",
-            va="center",
-            fontsize=14,
-            color=text_color,
-            alpha=0.6,
-        )
-
-        self.mcFigure.tight_layout()
+        initializeMonteCarloFigure(self.mcFigure, isDarkMode=self.isDarkMode)
         self.mcCanvas.draw()
 
     def runRcpspOptimization(self, showDialog: bool = True) -> dict[str, float] | None:
