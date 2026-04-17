@@ -26,3 +26,5 @@ sorted_dsm.csv
 test_parallel_edges.py
 PACKAGE_README.md
 package.ps1
+build/
+dist/

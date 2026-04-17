@@ -90,6 +90,16 @@ bash scripts/setup_mac.sh
 
 這些啟動檔會自動切回專案根目錄，因此不必手動 `cd` 到專案資料夾，也能正確抓到 `config.json` 與 `sample_data/`。
 
+如果你想在 macOS 上得到可雙擊啟動的 `.app`，也可以建立開發模式 app：
+
+```bash
+bash scripts/build_birdman_app.sh
+open "dist/Birdman Project.app"
+```
+
+這個 `.app` 會直接使用目前 repo 裡的原始碼，所以平常改 code 的流程不需要改。
+如果你移動了專案資料夾位置，請重新執行一次 `scripts/build_birdman_app.sh`。
+
 ## 範例資料
 
 `sample_data/` 內含 DSM.csv 與 WBS.csv，可供測試。
