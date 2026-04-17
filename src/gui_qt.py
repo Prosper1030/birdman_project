@@ -45,7 +45,6 @@ import pandas as pd
 from .dsm_processor import readDsm
 from .wbs_processor import readWbs
 from .resource_processor import readResources
-from . import visualizer
 from .app_paths import loadProjectConfig, prepareQtApplication, saveProjectConfig
 from .ui.dsm_editor import DsmEditor
 from .ui.main_app.analysis_service import (
@@ -63,6 +62,7 @@ from .ui.main_app.export_service import (
     exportDataFrameWithDialog,
     exportFigureWithDialog,
 )
+from .ui.main_app.graph_service import renderDependencyGraph
 from .ui.main_app.helpers import (
     addNoColumn,
     buildDarkModeStylesheet,
@@ -1245,33 +1245,15 @@ class BirdmanQtApp(QMainWindow):
                 config = loadProjectConfig()
                 viz_params = config.get("visualization_params", {})
 
-                # 清除舊的 Canvas
-                for i in reversed(range(self.graph_container_layout.count())):
-                    oldWidget = self.graph_container_layout.itemAt(i).widget()
-                    if oldWidget:
-                        oldWidget.setParent(None)
-
-                for i in reversed(range(self.merged_graph_container_layout.count())):
-                    oldWidget = self.merged_graph_container_layout.itemAt(i).widget()
-                    if oldWidget:
-                        oldWidget.setParent(None)
-
                 # 重新建立原始圖
-                self.graphFigure = visualizer.create_dependency_graph_figure(
-                    self.graph,
-                    self.scc_map,
-                    self.layer_map,
-                    viz_params,
+                self.graphFigure, self.graphCanvas = renderDependencyGraph(
+                    graph=self.graph,
+                    sccMap=self.scc_map,
+                    layerMap=self.layer_map,
+                    vizParams=viz_params,
+                    layout=self.graph_container_layout,
+                    container=self.graph_container,
                 )
-                self.graphCanvas = FigureCanvas(self.graphFigure)
-                self.graph_container_layout.addWidget(self.graphCanvas)
-                self.graphCanvas.draw()
-                canvas_size = self.graphCanvas.get_width_height()
-                if canvas_size[0] > 0 and canvas_size[1] > 0:
-                    self.graph_container.setMinimumSize(
-                        int(canvas_size[0] * 1.1),
-                        int(canvas_size[1] * 1.1),
-                    )
 
                 # 重新建立合併後圖
                 if self.mergedGraph is not None:
@@ -1282,22 +1264,15 @@ class BirdmanQtApp(QMainWindow):
                             self.mergedGraph, self.criticalPath
                         )
 
-                    self.mergedGraphFigure = visualizer.create_dependency_graph_figure(
-                        self.mergedGraph,
-                        self.merged_scc_map,
-                        self.merged_layer_map,
-                        viz_params,
-                        critical_path_edges,
+                    self.mergedGraphFigure, self.mergedGraphCanvas = renderDependencyGraph(
+                        graph=self.mergedGraph,
+                        sccMap=self.merged_scc_map,
+                        layerMap=self.merged_layer_map,
+                        vizParams=viz_params,
+                        layout=self.merged_graph_container_layout,
+                        container=self.merged_graph_container,
+                        criticalPathEdges=critical_path_edges,
                     )
-                    self.mergedGraphCanvas = FigureCanvas(self.mergedGraphFigure)
-                    self.merged_graph_container_layout.addWidget(self.mergedGraphCanvas)
-                    self.mergedGraphCanvas.draw()
-                    m_size = self.mergedGraphCanvas.get_width_height()
-                    if m_size[0] > 0 and m_size[1] > 0:
-                        self.merged_graph_container.setMinimumSize(
-                            int(m_size[0] * 1.1),
-                            int(m_size[1] * 1.1),
-                        )
             except Exception as e:  # pylint: disable=broad-except
                 QMessageBox.warning(self, "警告", f"圖表重繪失敗：{e}")
 
@@ -1310,12 +1285,6 @@ class BirdmanQtApp(QMainWindow):
             config = loadProjectConfig()
             viz_params = config.get("visualization_params", {})
 
-            # 清除舊的合併圖 Canvas
-            for i in reversed(range(self.merged_graph_container_layout.count())):
-                oldWidget = self.merged_graph_container_layout.itemAt(i).widget()
-                if oldWidget:
-                    oldWidget.setParent(None)
-
             # 計算關鍵路徑邊線
             critical_path_edges = None
             if hasattr(self, "criticalPath") and self.criticalPath:
@@ -1324,23 +1293,15 @@ class BirdmanQtApp(QMainWindow):
                 )
 
             # 重新建立合併後圖
-            self.mergedGraphFigure = visualizer.create_dependency_graph_figure(
-                self.mergedGraph,
-                self.merged_scc_map,
-                self.merged_layer_map,
-                viz_params,
-                critical_path_edges,
+            self.mergedGraphFigure, self.mergedGraphCanvas = renderDependencyGraph(
+                graph=self.mergedGraph,
+                sccMap=self.merged_scc_map,
+                layerMap=self.merged_layer_map,
+                vizParams=viz_params,
+                layout=self.merged_graph_container_layout,
+                container=self.merged_graph_container,
+                criticalPathEdges=critical_path_edges,
             )
-            self.mergedGraphCanvas = FigureCanvas(self.mergedGraphFigure)
-            self.merged_graph_container_layout.addWidget(self.mergedGraphCanvas)
-            self.mergedGraphCanvas.draw()
-
-            m_size = self.mergedGraphCanvas.get_width_height()
-            if m_size[0] > 0 and m_size[1] > 0:
-                self.merged_graph_container.setMinimumSize(
-                    int(m_size[0] * 1.1),
-                    int(m_size[1] * 1.1),
-                )
 
         except Exception as e:  # pylint: disable=broad-except
             QMessageBox.warning(self, "警告", f"合併後依賴圖重繪失敗：{e}")
