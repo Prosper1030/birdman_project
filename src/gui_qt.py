@@ -93,6 +93,7 @@ from .ui.main_app.input_service import (
     loadWbsPreview,
 )
 from .ui.main_app.settings_dialog import SettingsDialog
+from .ui.main_app.workflow_service import buildWorkflowState
 from .ui.main_app.workers import MonteCarloWorker, RcpspWorker
 from .ui.shared import PandasModel
 
@@ -300,9 +301,9 @@ class BirdmanQtApp(QMainWindow):
         self.expert_action.triggered.connect(lambda: self.setGlobalRole('expert'))
 
         # 依賴關係編輯器
-        dsm_editor_action = QAction("依賴關係編輯器", self)
-        dsm_editor_action.triggered.connect(self.openDsmEditor)
-        file_menu.addAction(dsm_editor_action)
+        self.dsmEditorAction = QAction("依賴關係編輯器", self)
+        self.dsmEditorAction.triggered.connect(self.openDsmEditor)
+        file_menu.addAction(self.dsmEditorAction)
         file_menu.addSeparator()
 
         # 建立動作群組確保單選
@@ -403,6 +404,12 @@ class BirdmanQtApp(QMainWindow):
 
         setup_layout.addLayout(self.path_layout)
         setup_layout.addWidget(self.full_analysis_button)
+        self.workflowStatusLabel = QLabel()
+        self.workflowStatusLabel.setWordWrap(True)
+        self.workflowStatusLabel.setStyleSheet(
+            "padding: 10px; border: 1px solid #cfd8dc; background-color: #f7f9fb;"
+        )
+        setup_layout.addWidget(self.workflowStatusLabel)
 
         # 分析結果分頁集合 (移除原始DSM和原始WBS)
         self.tabs_results = QTabWidget()
@@ -700,6 +707,23 @@ class BirdmanQtApp(QMainWindow):
 
         # 初始化圖表主題配置
         self.configure_chart_theme()
+        self.updateWorkflowState()
+
+    def updateWorkflowState(self) -> None:
+        """更新目前操作流程提示與按鈕狀態。"""
+        workflowState = buildWorkflowState(
+            hasWbs=bool(getattr(self, "wbsPath", "")),
+            hasDsm=bool(getattr(self, "dsmPath", "")),
+            hasResources=bool(getattr(self, "resourcePath", "")),
+            hasAnalysisResult=self.mergedGraph is not None and self.mergedWbs is not None,
+        )
+        self.workflowStatusLabel.setText(workflowState.statusHtml)
+        self.full_analysis_button.setEnabled(workflowState.canRunFullAnalysis)
+        self.dsmEditorAction.setEnabled(workflowState.canOpenDsmEditor)
+        self.runRacpButton.setEnabled(workflowState.canRunRacp)
+        self.configResourcesButton.setEnabled(workflowState.canConfigResources)
+        if self.rcpspThread is None:
+            self.runRcpspButton.setEnabled(workflowState.canRunRcpsp)
 
     def chooseDsm(self) -> None:
         """選擇 DSM 檔案並預覽。"""
@@ -713,6 +737,7 @@ class BirdmanQtApp(QMainWindow):
                 dsm = loadDsmPreview(path)
                 model = PandasModel(dsm.head(100), dsmMode=True)
                 self.dsm_preview.setModel(model)
+                self.updateWorkflowState()
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, "錯誤", f"DSM 載入失敗：{e}")
 
@@ -729,6 +754,7 @@ class BirdmanQtApp(QMainWindow):
                 self.wbsDf = wbs.copy()
                 model = PandasModel(wbs_display.head(100))
                 self.wbs_preview.setModel(model)
+                self.updateWorkflowState()
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, "錯誤", f"WBS 載入失敗：{e}")
 
@@ -744,6 +770,7 @@ class BirdmanQtApp(QMainWindow):
                 self.resources_preview.setModel(model)
                 self.resourcePath = path
                 self.resources_path_label.setText(path)
+                self.updateWorkflowState()
             except (OSError, pd.errors.ParserError, ValueError) as e:
                 QMessageBox.critical(self, "錯誤", f"Resources 載入失敗：{e}")
 
@@ -798,6 +825,7 @@ class BirdmanQtApp(QMainWindow):
 
         for warningMessage in bundle.warnings:
             QMessageBox.warning(self, "錯誤", warningMessage)
+        self.updateWorkflowState()
 
     def runAnalysis(self, show_notification: bool = True) -> bool:
         """執行資料分析並更新各分頁。
@@ -853,6 +881,7 @@ class BirdmanQtApp(QMainWindow):
             # 啟用結果分頁並自動切換
             self.main_tabs.setTabEnabled(1, True)
             self.main_tabs.setCurrentIndex(1)
+            self.updateWorkflowState()
             if show_notification:
                 QMessageBox.information(self, "完成", "分析完成，可切換分頁預覽與匯出")
             return True
@@ -1550,6 +1579,7 @@ class BirdmanQtApp(QMainWindow):
         self.rcpspThread.finished.connect(self.rcpspThread.deleteLater)
         self.rcpspThread.finished.connect(lambda: setattr(self, "rcpspThread", None))
         self.rcpspThread.finished.connect(lambda: setattr(self, "rcpspWorker", None))
+        self.rcpspThread.finished.connect(self.updateWorkflowState)
         self.rcpspThread.start()
         return None
 
@@ -1702,6 +1732,7 @@ class BirdmanQtApp(QMainWindow):
         updatedCap = promptResourceCapacities(self, resourceCap, self.manualResourceCap)
         if updatedCap is not None:
             self.manualResourceCap = updatedCap
+            self.updateWorkflowState()
 
 
 def main():
