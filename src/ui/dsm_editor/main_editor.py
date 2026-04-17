@@ -366,6 +366,10 @@ class DsmEditor(QDialog):
 
     def promptCreateNode(self, scenePos=None) -> None:
         """彈出對話框建立新任務節點。"""
+        # QAction.triggered 會傳入 checked(bool)，這裡需排除非座標參數。
+        if scenePos is not None and not hasattr(scenePos, "x"):
+            scenePos = None
+
         dialog = QDialog(self)
         dialog.setWindowTitle("新增任務")
         rootLayout = QVBoxLayout(dialog)

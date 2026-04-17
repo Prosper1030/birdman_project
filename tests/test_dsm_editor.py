@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from PyQt5.QtWidgets import QFileDialog, QMessageBox
+from PyQt5.QtWidgets import QDialog, QFileDialog, QLineEdit, QMessageBox
 
 from src.dsm_processor import readDsm
 from src.gui_qt import BirdmanQtApp, launch_editor
@@ -153,6 +153,28 @@ def test_editor_can_create_node_from_blank_state(qapp):
     assert snapshot.loc[0, "Name"] == "建立測試任務"
     assert snapshot.loc[0, "Property"] == "TEST"
     assert editor.isSessionDirty() is True
+
+    editor.close()
+
+
+def test_prompt_create_node_accepts_qaction_bool_payload(monkeypatch, qapp):
+    """從選單觸發新增任務時，不應把 QAction 的 bool 當成座標。"""
+    editor = DsmEditor(pd.DataFrame())
+
+    def fake_exec(dialog_self):
+        line_edits = dialog_self.findChildren(QLineEdit)
+        line_edits[1].setText("測試任務")
+        line_edits[2].setText("TEST")
+        return QDialog.Accepted
+
+    monkeypatch.setattr(QDialog, "exec_", fake_exec)
+
+    editor.promptCreateNode(False)
+
+    assert "TASK-001" in editor.nodes
+    node = editor.nodes["TASK-001"]
+    assert node.taskName == "測試任務"
+    assert node.taskProperty == "TEST"
 
     editor.close()
 
