@@ -337,6 +337,8 @@ class AdvancedEdgeRouter:
         self.bendPenalty = 12.0
         self.congestionWeight = 18.0
         self.stabilityWeight = 4.0
+        self.rerouteIterations = 2
+        self.worstEdgeFraction = 0.25
         self.lastOccupancy: Dict[SegmentKey, int] = {}
 
     def route_edge(
@@ -397,6 +399,7 @@ class AdvancedEdgeRouter:
             key=self._estimate_route_difficulty,
             reverse=True,
         )
+        request_lookup = {request.edgeKey: request for request in ordered_requests}
 
         for request in ordered_requests:
             path_points = self.route_edge(
@@ -409,6 +412,7 @@ class AdvancedEdgeRouter:
             results[request.edgeKey] = path_points
             self._commit_path_to_occupancy(path_points, occupancy)
 
+        self._reroute_congested_edges(results, occupancy, request_lookup)
         self.lastOccupancy = occupancy.copy()
         return results
 
@@ -428,6 +432,20 @@ class AdvancedEdgeRouter:
             point2 = path_points[index + 1]
             segment_key = self._make_segment_key_from_points(point1, point2)
             occupancy[segment_key] = occupancy.get(segment_key, 0) + 1
+
+    def _remove_path_from_occupancy(
+        self, path_points: List[QPointF], occupancy: Dict[SegmentKey, int]
+    ) -> None:
+        """把暫時要 rip-up 的路徑自 occupancy 移除。"""
+        for index in range(len(path_points) - 1):
+            point1 = path_points[index]
+            point2 = path_points[index + 1]
+            segment_key = self._make_segment_key_from_points(point1, point2)
+            current = occupancy.get(segment_key, 0)
+            if current <= 1:
+                occupancy.pop(segment_key, None)
+            else:
+                occupancy[segment_key] = current - 1
 
     def _make_segment_key_from_points(
         self, point1: QPointF, point2: QPointF
@@ -452,6 +470,107 @@ class AdvancedEdgeRouter:
                 )
             )
         return segments
+
+    def _score_path_congestion(
+        self, path_points: List[QPointF], occupancy: Dict[SegmentKey, int]
+    ) -> float:
+        """估計一條路徑目前造成的擁塞程度。"""
+        score = 0.0
+        for index in range(len(path_points) - 1):
+            point1 = path_points[index]
+            point2 = path_points[index + 1]
+            segment_key = self._make_segment_key_from_points(point1, point2)
+            score += max(0, occupancy.get(segment_key, 0) - 1)
+        return score
+
+    def _estimate_path_cost(
+        self, path_points: List[QPointF], occupancy: Dict[SegmentKey, int]
+    ) -> float:
+        """用簡化成本比較 reroute 前後是否值得接受。"""
+        if len(path_points) < 2:
+            return 0.0
+
+        total_length = 0.0
+        total_bends = 0
+        previous_direction: CardinalDirection = None
+        for index in range(len(path_points) - 1):
+            point1 = path_points[index]
+            point2 = path_points[index + 1]
+            total_length += abs(point2.x() - point1.x()) + abs(point2.y() - point1.y())
+            node1 = RoutingNode(point1.x(), point1.y(), "cost_start")
+            node2 = RoutingNode(point2.x(), point2.y(), "cost_end")
+            direction = self.visibility_graph.get_direction(node1, node2)
+            if previous_direction is not None and direction is not None and direction != previous_direction:
+                total_bends += 1
+            previous_direction = direction
+
+        congestion_cost = 0.0
+        for index in range(len(path_points) - 1):
+            point1 = path_points[index]
+            point2 = path_points[index + 1]
+            segment_key = self._make_segment_key_from_points(point1, point2)
+            load = occupancy.get(segment_key, 0)
+            congestion_cost += float(2 * load + 1)
+
+        return total_length + self.bendPenalty * total_bends + self.congestionWeight * congestion_cost
+
+    def _select_worst_edges(
+        self,
+        results: Dict[Any, List[QPointF]],
+        occupancy: Dict[SegmentKey, int],
+    ) -> List[Any]:
+        """挑出最擁塞的 edge keys。"""
+        scored_edges = []
+        for edge_key, path_points in results.items():
+            congestion = self._score_path_congestion(path_points, occupancy)
+            if congestion <= 0:
+                continue
+            scored_edges.append((congestion, edge_key))
+        scored_edges.sort(reverse=True)
+        if not scored_edges:
+            return []
+
+        fraction = min(1.0, max(0.0, self.worstEdgeFraction))
+        pick_count = max(1, int(len(results) * fraction + 0.999))
+        return [edge_key for _, edge_key in scored_edges[:pick_count]]
+
+    def _reroute_congested_edges(
+        self,
+        results: Dict[Any, List[QPointF]],
+        occupancy: Dict[SegmentKey, int],
+        request_lookup: Dict[Any, EdgeRouteRequest],
+    ) -> None:
+        """對高擁塞的邊做簡化的 rip-up and reroute。"""
+        if self.rerouteIterations <= 0 or len(results) <= 1:
+            return
+
+        for _ in range(self.rerouteIterations):
+            improved = False
+            for edge_key in self._select_worst_edges(results, occupancy):
+                request = request_lookup.get(edge_key)
+                if request is None:
+                    continue
+
+                old_path = results[edge_key]
+                self._remove_path_from_occupancy(old_path, occupancy)
+                old_cost = self._estimate_path_cost(old_path, occupancy)
+                new_path = self.route_edge(
+                    request.startPos,
+                    request.endPos,
+                    obstacles=request.obstacles,
+                    occupancy=occupancy,
+                    previous_path=old_path,
+                )
+                new_cost = self._estimate_path_cost(new_path, occupancy)
+
+                if new_cost + 1e-6 < old_cost:
+                    results[edge_key] = new_path
+                    self._commit_path_to_occupancy(new_path, occupancy)
+                    improved = True
+                else:
+                    self._commit_path_to_occupancy(old_path, occupancy)
+            if not improved:
+                break
 
     def _simplify_path(self, path_points: List[QPointF]) -> List[QPointF]:
         """移除重複點與共線中繼點，避免回傳過度破碎的 polyline。"""

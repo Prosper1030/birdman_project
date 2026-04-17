@@ -99,6 +99,47 @@ def test_route_edge_without_obstacles_still_returns_orthogonal_path():
         assert abs(point1.x() - point2.x()) < 0.1 or abs(point1.y() - point2.y()) < 0.1
 
 
+def test_route_edges_reroutes_worst_congested_edge(monkeypatch):
+    """reroute pass 應讓高擁塞邊有機會改走較空的路。"""
+    router = AdvancedEdgeRouter()
+    router.rerouteIterations = 1
+    router.worstEdgeFraction = 1.0
+
+    call_counts = {
+        "edge-1": 0,
+        "edge-2": 0,
+    }
+    shared_path = [QPointF(0, 0), QPointF(40, 0)]
+    alternate_path = [QPointF(0, 20), QPointF(40, 20)]
+
+    def fake_route_edge(
+        start_pos,
+        end_pos,
+        obstacles=None,
+        occupancy=None,
+        previous_path=None,
+    ):
+        edge_name = "edge-1" if start_pos.y() < 10 else "edge-2"
+        call_counts[edge_name] += 1
+        if edge_name == "edge-2" and previous_path is not None:
+            return alternate_path
+        return shared_path
+
+    monkeypatch.setattr(router, "route_edge", fake_route_edge)
+
+    results = router.route_edges(
+        [
+            EdgeRouteRequest("edge-1", QPointF(0, 0), QPointF(40, 0), []),
+            EdgeRouteRequest("edge-2", QPointF(0, 20), QPointF(40, 20), []),
+        ]
+    )
+
+    assert results["edge-1"] == shared_path
+    assert results["edge-2"] == alternate_path
+    assert call_counts["edge-2"] >= 2
+    assert max(router.lastOccupancy.values()) == 1
+
+
 def test_edge_router_manager_uses_batch_router_for_layout(monkeypatch, qapp):
     """layout 路由流程應把非垂直邊交給批次高級路由器。"""
 
