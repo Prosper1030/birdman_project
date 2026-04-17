@@ -33,14 +33,18 @@ def buildWorkflowState(
 ) -> WorkflowState:
     """依目前輸入與分析狀態建立畫面指引。"""
     canRunFullAnalysis = hasWbs and hasDsm
-    canOpenDsmEditor = hasWbs
+    canOpenDsmEditor = True
     canRunRacp = hasAnalysisResult
     canConfigResources = hasAnalysisResult and hasResources
     canRunRcpsp = hasAnalysisResult and hasResources
 
     lines = [
         "<b>目前操作狀態</b>",
-        _buildStatusLine("WBS", hasWbs, "DSM 編輯器與完整分析都需要 WBS。"),
+        _buildStatusLine(
+            "WBS",
+            hasWbs,
+            "完整分析需要 WBS；若只想先建立依賴圖，仍可直接開 DSM 編輯器。",
+        ),
         _buildStatusLine("DSM", hasDsm, "完整分析需要 DSM。"),
         _buildStatusLine("Resources", hasResources, "RCPSP 需要 Resources；RACP 不需要。"),
         _buildStatusLine("完整分析結果", hasAnalysisResult, "完成後才會啟用 RACP / RCPSP / 蒙地卡羅等進階結果。"),
@@ -55,7 +59,7 @@ def buildWorkflowState(
     elif hasWbs:
         nextStep = "下一步：可先開 DSM 編輯器，或繼續匯入 DSM 後執行完整分析。"
     else:
-        nextStep = "下一步：請先匯入 WBS 與 DSM。"
+        nextStep = "下一步：可先開 DSM 編輯器建立空白依賴圖，或匯入 WBS 與 DSM。"
 
     lines.append(f"<br><b>{nextStep}</b>")
 

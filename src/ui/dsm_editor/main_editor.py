@@ -11,9 +11,12 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QAction,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenuBar,
@@ -22,7 +25,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from .commands import Command, AddEdgeCommand, RemoveEdgeCommand
+from .commands import Command, AddEdgeCommand, AddNodeCommand, RemoveEdgeCommand
 from .edge_router_manager import create_yed_router_manager
 from .edges import EdgeItem
 from .enums import EditorState, LayoutAlgorithm
@@ -118,7 +121,9 @@ class DsmEditor(QDialog):
         self.loadWbs(self.session.wbsDf)
         self.loadDsm(self.session.dsmDf)
         self._syncSessionState()
-        if not self.noticeText or self.noticeText == "已載入編輯器。":
+        if self.session.wbsDf.empty:
+            self._setNotice("目前為空白依賴圖，可用「新增任務」開始建立。")
+        elif not self.noticeText or self.noticeText == "已載入編輯器。":
             self._setNotice("已完成資料載入。")
 
     def setupUI(self) -> None:
@@ -141,6 +146,13 @@ class DsmEditor(QDialog):
         fileMenu.addAction(exportAction)
 
         editMenu = menuBar.addMenu("編輯(&E)")
+
+        addNodeAction = QAction("新增任務(&N)", self)
+        addNodeAction.setShortcut(QKeySequence.New)
+        addNodeAction.triggered.connect(self.promptCreateNode)
+        editMenu.addAction(addNodeAction)
+
+        editMenu.addSeparator()
 
         self.undoAction = QAction("撤銷(&U)", self)
         self.undoAction.setShortcut(QKeySequence.Undo)
@@ -342,6 +354,92 @@ class DsmEditor(QDialog):
         if srcNode is None or dstNode is None:
             raise ValueError("找不到指定的 Task ID，無法建立依賴關係。")
         self.addDependency(srcNode, dstNode)
+
+    def _generateNextTaskId(self) -> str:
+        """產生新的預設 Task ID。"""
+        index = 1
+        while True:
+            candidate = f"TASK-{index:03d}"
+            if candidate not in self.nodes:
+                return candidate
+            index += 1
+
+    def promptCreateNode(self, scenePos=None) -> None:
+        """彈出對話框建立新任務節點。"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("新增任務")
+        rootLayout = QVBoxLayout(dialog)
+
+        formLayout = QFormLayout()
+        taskIdEdit = QLineEdit(self._generateNextTaskId(), dialog)
+        nameEdit = QLineEdit("", dialog)
+        propertyEdit = QLineEdit("", dialog)
+        formLayout.addRow("Task ID", taskIdEdit)
+        formLayout.addRow("名稱", nameEdit)
+        formLayout.addRow("Property", propertyEdit)
+        rootLayout.addLayout(formLayout)
+
+        buttonBox = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            parent=dialog,
+        )
+        buttonBox.accepted.connect(dialog.accept)
+        buttonBox.rejected.connect(dialog.reject)
+        rootLayout.addWidget(buttonBox)
+
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        taskId = taskIdEdit.text().strip()
+        taskName = nameEdit.text().strip() or taskId
+        taskProperty = propertyEdit.text().strip()
+
+        try:
+            self.createNode(
+                taskId=taskId,
+                taskName=taskName,
+                taskProperty=taskProperty,
+                scenePos=scenePos,
+            )
+        except ValueError as error:
+            QMessageBox.warning(self, "警告", str(error))
+
+    def createNode(
+        self,
+        *,
+        taskId: str,
+        taskName: str,
+        taskProperty: str = "",
+        scenePos=None,
+    ) -> TaskNode:
+        """建立新的任務節點並加入畫布。"""
+        normalizedTaskId = taskId.strip()
+        if not normalizedTaskId:
+            raise ValueError("Task ID 不可為空白。")
+        if normalizedTaskId in self.nodes:
+            raise ValueError(f"Task ID {normalizedTaskId} 已存在。")
+
+        node = TaskNode(
+            normalizedTaskId,
+            self._formatNodeText(taskName, taskProperty),
+            QColor(255, 215, 0),
+            self,
+            propertyValue=taskProperty,
+            name=taskName,
+        )
+
+        if scenePos is None:
+            index = len(self.nodes)
+            node.setPos((index % 5) * 180, (index // 5) * 120)
+        else:
+            snapPos = self.view.snapPointToGrid(scenePos)
+            node.setPos(snapPos)
+
+        self.executeCommand(AddNodeCommand(self, node))
+        self._updateSceneRectToFitNodes(padding=300)
+        self._ensureContentVisible(margin=80)
+        self._setNotice(f"已新增任務：{normalizedTaskId}")
+        return node
 
     def removeEdge(self, edge: EdgeItem) -> None:
         """移除邊。"""

@@ -15,8 +15,8 @@ def test_workflow_state_before_inputs_guides_user_to_import_files():
     )
 
     assert state.canRunFullAnalysis is False
-    assert state.canOpenDsmEditor is False
-    assert "請先匯入 WBS 與 DSM" in state.statusHtml
+    assert state.canOpenDsmEditor is True
+    assert "可先開 DSM 編輯器建立空白依賴圖" in state.statusHtml
 
 
 def test_workflow_state_after_analysis_without_resources_guides_rcpsp_step():

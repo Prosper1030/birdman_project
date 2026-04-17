@@ -90,8 +90,36 @@ def validateEditorInputs(
     dsmDf: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """驗證編輯器載入所需的 WBS 與 DSM。"""
-    if wbsDf is None or wbsDf.empty:
-        raise ValueError("WBS 不可為空，請先提供有效的 WBS 檔案。")
+    if wbsDf is None:
+        wbsDf = pd.DataFrame()
+
+    if wbsDf.empty:
+        if dsmDf is not None and not dsmDf.empty:
+            normalizedDsm = dsmDf.copy()
+            normalizedDsm.index = normalizedDsm.index.astype(str).str.strip()
+            normalizedDsm.columns = normalizedDsm.columns.astype(str).str.strip()
+
+            if normalizedDsm.shape[0] != normalizedDsm.shape[1]:
+                raise ValueError("DSM 必須為方陣，請檢查檔案內容。")
+            if set(normalizedDsm.index) != set(normalizedDsm.columns):
+                raise ValueError("DSM 的列與欄 Task ID 不一致，請檢查檔案格式。")
+
+            taskIds = normalizedDsm.index.tolist()
+            normalizedWbs = pd.DataFrame(
+                {
+                    "Task ID": taskIds,
+                    "Name": [""] * len(taskIds),
+                    "Property": [""] * len(taskIds),
+                }
+            )
+            normalizedDsm = normalizedDsm.reindex(index=taskIds, columns=taskIds)
+            normalizedDsm = normalizedDsm.fillna(0).astype(int)
+            return normalizedWbs, normalizedDsm
+
+        emptyWbs = pd.DataFrame(columns=["Task ID", "Name", "Property"])
+        emptyDsm = pd.DataFrame(dtype=int)
+        return emptyWbs, emptyDsm
+
     if "Task ID" not in wbsDf.columns:
         raise ValueError("WBS 缺少 Task ID 欄位，無法建立編輯器節點。")
 

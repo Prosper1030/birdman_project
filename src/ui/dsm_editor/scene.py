@@ -219,6 +219,16 @@ class DsmScene(QGraphicsScene):
             self.cancelConnectionMode()
             print("連線模式已結束")
 
+    def mouseDoubleClickEvent(self, event) -> None:
+        """雙擊空白處時可直接新增任務。"""
+        if event.button() == Qt.LeftButton:
+            item = self.itemAt(event.scenePos(), self.views()[0].transform())
+            if item is None:
+                self.editor.promptCreateNode(event.scenePos())
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+
     def mouseMoveEvent(self, event):
         """場景滑鼠移動事件 - 標準拖放行為"""
         if self.connectionMode and self.tempEdge:

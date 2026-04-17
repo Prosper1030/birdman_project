@@ -810,9 +810,11 @@ class BirdmanQtApp(QMainWindow):
 
     def openDsmEditor(self) -> None:
         """開啟視覺化依賴關係編輯器"""
-        if self.wbsDf is None:
-            QMessageBox.warning(self, "警告", "請先匯入 WBS 檔案")
-            return
+        editorWbs = (
+            self.wbsDf.copy()
+            if self.wbsDf is not None
+            else pd.DataFrame(columns=["Task ID", "Name", "Property"])
+        )
         try:
             dsm_df = loadOptionalDsmForEditor(getattr(self, "dsmPath", ""))
         except (OSError, pd.errors.ParserError, ValueError) as e:
@@ -820,10 +822,10 @@ class BirdmanQtApp(QMainWindow):
             return
 
         editor = DsmEditor(
-            self.wbsDf.copy(),
+            editorWbs,
             self,
             dsmDf=dsm_df,
-            wbsPath=getattr(self, "wbsPath", None),
+            wbsPath=getattr(self, "wbsPath", None) or None,
             dsmPath=getattr(self, "dsmPath", None) or None,
         )
         editor.exec_()

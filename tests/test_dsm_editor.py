@@ -78,6 +78,15 @@ def test_validate_editor_inputs_rejects_duplicate_wbs_task_id():
         validateEditorInputs(wbs)
 
 
+def test_validate_editor_inputs_allows_blank_editor_without_wbs():
+    """未提供 WBS 時，應可建立空白編輯器工作階段。"""
+    wbs, dsm = validateEditorInputs(pd.DataFrame())
+
+    assert list(wbs.columns) == ["Task ID", "Name", "Property"]
+    assert wbs.empty is True
+    assert dsm.empty is True
+
+
 def test_validate_editor_inputs_rejects_non_square_dsm():
     """非方陣 DSM 應回報明確錯誤。"""
     wbs = build_test_wbs(["A1", "A2"])
@@ -123,6 +132,27 @@ def test_cycle_changes_update_scc_summary_and_selection(qapp):
     editor.undo()
     assert editor.session.hasCycles is False
     assert editor.sccListWidget.count() == 0
+
+    editor.close()
+
+
+def test_editor_can_create_node_from_blank_state(qapp):
+    """空白編輯器應可直接新增任務節點。"""
+    editor = DsmEditor(pd.DataFrame())
+
+    node = editor.createNode(
+        taskId="TASK-001",
+        taskName="建立測試任務",
+        taskProperty="TEST",
+    )
+
+    assert node.taskId == "TASK-001"
+    assert "TASK-001" in editor.nodes
+    snapshot = editor.buildWbsSnapshot()
+    assert snapshot.loc[0, "Task ID"] == "TASK-001"
+    assert snapshot.loc[0, "Name"] == "建立測試任務"
+    assert snapshot.loc[0, "Property"] == "TEST"
+    assert editor.isSessionDirty() is True
 
     editor.close()
 
@@ -283,5 +313,29 @@ def test_main_window_open_dsm_editor_uses_loaded_wbs_and_dsm(
     assert captured["wbs_path"] == str(wbs_path)
     assert captured["dsm_path"] == str(dsm_path)
     pd.testing.assert_frame_equal(captured["dsm_df"], dsm)
+
+    window.close()
+
+
+def test_main_window_open_dsm_editor_without_loaded_wbs_opens_blank_editor(
+    monkeypatch,
+    qapp,
+):
+    """主 GUI 應允許直接開空白 DSM 編輯器。"""
+    captured: dict[str, object] = {}
+
+    def fake_exec(dialog_self):
+        captured["wbs_df"] = dialog_self.session.wbsDf.copy()
+        captured["dsm_df"] = dialog_self.getCurrentDsmDataFrame().copy()
+        return 0
+
+    monkeypatch.setattr(DsmEditor, "exec_", fake_exec)
+
+    window = BirdmanQtApp()
+    window.openDsmEditor()
+
+    assert captured["wbs_df"].empty is True
+    assert list(captured["wbs_df"].columns) == ["Task ID", "Name", "Property"]
+    assert captured["dsm_df"].empty is True
 
     window.close()
