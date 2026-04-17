@@ -1524,11 +1524,18 @@ class BirdmanQtApp(QMainWindow):
             config = loadProjectConfig()
             cmpParams = config.get("cmp_params", {})
             durationField = cmpParams.get("default_duration_field", "Te_newbie")
+            eligibleField = "Eligible_Groups"
+            resourceField = (
+                eligibleField
+                if eligibleField in self.mergedWbs.columns
+                and self.mergedWbs[eligibleField].fillna("").astype(str).str.strip().ne("").any()
+                else "Property"
+            )
 
             if durationField not in self.mergedWbs.columns:
                 raise ValueError(f"WBS 缺少工期欄位 {durationField}")
-            if "Property" not in self.mergedWbs.columns:
-                raise ValueError('WBS 缺少 "Property" 欄位')
+            if resourceField not in self.mergedWbs.columns:
+                raise ValueError('WBS 缺少 "Eligible_Groups" 或 "Property" 欄位')
             if "ResourceDemand" not in self.mergedWbs.columns:
                 raise ValueError('WBS 缺少 "ResourceDemand" 欄位')
 
@@ -1540,7 +1547,7 @@ class BirdmanQtApp(QMainWindow):
                 self.mergedGraph,
                 self.mergedWbs,
                 durationField=durationField,
-                resourceField="Property",
+                resourceField=resourceField,
                 demandField="ResourceDemand",
                 resourceCap=resourceCap,
             )

@@ -50,3 +50,29 @@ def test_resource_demand_affects_schedule():
 
     assert schedule["ProjectEnd"] == 5
     assert schedule["A"] + 2 <= schedule["B"] or schedule["B"] + 3 <= schedule["A"]
+
+
+def test_eligible_groups_allow_alternative_resource_assignment():
+    """Eligible_Groups 可讓任務在多個群組中擇一排程。"""
+    graph = nx.DiGraph()
+    graph.add_nodes_from(["A", "B"])
+
+    wbs = pd.DataFrame(
+        {
+            "Task ID": ["A", "B"],
+            "Te_newbie": [2, 3],
+            "Eligible_Groups": ["R1;R2", "R2"],
+            "ResourceDemand": [1, 1],
+        }
+    )
+
+    schedule = solveRcpsp(
+        graph,
+        wbs,
+        resourceField="Eligible_Groups",
+        resourceCap={"R1": 1, "R2": 1},
+    )
+
+    assert schedule["A"] == 0
+    assert schedule["B"] == 0
+    assert schedule["ProjectEnd"] == 3
