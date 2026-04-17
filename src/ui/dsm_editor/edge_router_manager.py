@@ -394,8 +394,9 @@ class EdgeRouterManager(QObject):
     def route_all_edges_for_layout(self, edges_data: List[Tuple]) -> Dict[Tuple[str, str], List[QPointF]]:
         """佈局後全圖正交路由：輸入 (edge_item, ps, pt) 清單，回傳並套用路徑字典。
         - 所有處理皆以 DrawEdge（獨立 stroke）為單位，禁止任何合併。
-        - 若啟用 band router，使用 _route_advanced_tb_with_bands（逐邊規則）；
-        - 否則逐條使用 _route_tb_canonical。
+        - 垂直同軸邊優先保留 band routing 規則。
+        - 其餘邊若有高級路由器，改走批次 sequential routing。
+        - 批次路由失敗時回退到既有 TB canonical。
         - 路徑會即時套用到 EdgeItem（若提供 set_complex_path）。
         """
         t0 = time.time()
@@ -406,16 +407,71 @@ class EdgeRouterManager(QObject):
             # 展開為 DrawEdge（目前 UI 已單向，這步主要生成穩定 draw_id）
             from .draw_edges import expand_to_draw_edges
             draw_edges = expand_to_draw_edges(edges_data)
+            batch: Dict[Tuple[str, str], List[QPointF]] = {}
+            advanced_frames: Dict[Tuple[str, str], List[QPointF]] = {}
+            advanced_requests = []
+            vertical_records = []
 
-            if self._band_router_enabled:
-                # 轉回與既有邏輯相容的輸入（仍逐邊，無合併）
-                ed = [(de.item, de.ps, de.pt) for de in draw_edges]
-                batch = self._route_advanced_tb_with_bands(ed)
-            else:
-                batch = {}
-                for edge_item, ps, pt in ((de.item, de.ps, de.pt) for de in draw_edges):
-                    edge_key = self._get_edge_key(edge_item)
-                    batch[edge_key] = self._route_tb_canonical(edge_item, ps, pt)
+            for draw_edge in draw_edges:
+                edge_item, ps, pt = draw_edge.item, draw_edge.ps, draw_edge.pt
+                edge_key = self._get_edge_key(edge_item)
+
+                if self._band_router_enabled and abs(ps.x() - pt.x()) < 1.0:
+                    vertical_records.append((edge_item, ps, pt))
+                    continue
+
+                base_path = self._route_tb_canonical(edge_item, ps, pt)
+                can_use_batch_router = (
+                    self._orthogonal_router is not None
+                    and hasattr(self._orthogonal_router, "route_edges")
+                    and len(base_path) >= 4
+                )
+                if not can_use_batch_router:
+                    batch[edge_key] = base_path
+                    continue
+
+                core_start = base_path[1]
+                core_end = base_path[-2]
+                obstacles = self._collect_obstacles(
+                    edge_item,
+                    roi_rect=self._calculate_roi(core_start, core_end),
+                )
+                if not obstacles:
+                    batch[edge_key] = base_path
+                    continue
+
+                advanced_frames[edge_key] = base_path
+                advanced_requests.append(
+                    self._build_advanced_route_request(
+                        edge_key=edge_key,
+                        start_pos=core_start,
+                        end_pos=core_end,
+                        obstacles=obstacles,
+                        edge_item=edge_item,
+                    )
+                )
+
+            if vertical_records:
+                batch.update(self._route_advanced_tb_with_bands(vertical_records))
+
+            if advanced_requests:
+                try:
+                    routed_cores = self._orthogonal_router.route_edges(advanced_requests)
+                    for edge_key, base_path in advanced_frames.items():
+                        core_path = routed_cores.get(edge_key)
+                        if core_path and len(core_path) >= 2:
+                            core_path = self._ensure_manhattan(core_path)
+                            batch[edge_key] = self._dedupe_keep_elbow(
+                                [base_path[0], base_path[1]]
+                                + core_path[1:-1]
+                                + [base_path[-2], base_path[-1]]
+                            )
+                        else:
+                            batch[edge_key] = base_path
+                except Exception as error:
+                    print(f"批次高級路由失敗，回退 TB canonical：{error}")
+                    for edge_key, base_path in advanced_frames.items():
+                        batch[edge_key] = base_path
 
             # 套用到 GUI
             for de in draw_edges:
@@ -428,6 +484,29 @@ class EdgeRouterManager(QObject):
             self.last_routing_time = int((time.time() - t0) * 1000)
             self.routing_stats['layout_count'] += 1
         return results
+
+    def _build_advanced_route_request(
+        self,
+        edge_key: Tuple[str, str],
+        start_pos: QPointF,
+        end_pos: QPointF,
+        obstacles: List[QRectF],
+        edge_item,
+    ):
+        """建立高級批次路由的 request，避免主流程直接依賴實作細節。"""
+        try:
+            from .advanced_routing import EdgeRouteRequest
+        except ImportError:
+            from advanced_routing import EdgeRouteRequest
+
+        previous_path = getattr(edge_item, "_user_path", None)
+        return EdgeRouteRequest(
+            edgeKey=edge_key,
+            startPos=start_pos,
+            endPos=end_pos,
+            obstacles=obstacles,
+            previousPath=previous_path,
+        )
     
     def _route_orthogonal(
         self, 
