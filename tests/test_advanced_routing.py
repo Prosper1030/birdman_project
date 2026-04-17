@@ -84,6 +84,21 @@ def test_route_edges_commits_occupancy_for_later_requests(monkeypatch):
     assert len(seen_occupancy[1]) == 1
 
 
+def test_route_edge_without_obstacles_still_returns_orthogonal_path():
+    """即使沒有障礙物，guide nodes 也應讓新版 router 產生正交折線。"""
+    router = AdvancedEdgeRouter()
+
+    path = router.route_edge(QPointF(0, 0), QPointF(100, 60), obstacles=[])
+
+    assert len(path) >= 3
+    assert path[0] == QPointF(0, 0)
+    assert path[-1] == QPointF(100, 60)
+    for index in range(len(path) - 1):
+        point1 = path[index]
+        point2 = path[index + 1]
+        assert abs(point1.x() - point2.x()) < 0.1 or abs(point1.y() - point2.y()) < 0.1
+
+
 def test_edge_router_manager_uses_batch_router_for_layout(monkeypatch, qapp):
     """layout 路由流程應把非垂直邊交給批次高級路由器。"""
 
@@ -136,3 +151,52 @@ def test_edge_router_manager_uses_batch_router_for_layout(monkeypatch, qapp):
     assert fake_router.requests[0].edgeKey == ("A1", "A2")
     assert ("A1", "A2") in routed
     assert edge_item.applied_paths
+
+
+def test_edge_router_manager_offsets_duplicate_paths(monkeypatch, qapp):
+    """完全重疊的路徑應自動展開 offset，避免畫面完全疊線。"""
+
+    class MockNode:
+        def __init__(self, task_id: str):
+            self.taskId = task_id
+
+    class MockEdge:
+        def __init__(self, src_id: str, dst_id: str):
+            self.src = MockNode(src_id)
+            self.dst = MockNode(dst_id)
+            self.applied_paths = []
+
+        def set_complex_path(self, path_points, offset_pixels=0):
+            self.applied_paths.append((path_points, offset_pixels))
+
+    class FakeBatchRouter:
+        def route_edges(self, requests):
+            result = {}
+            for request in requests:
+                result[request.edgeKey] = [
+                    request.startPos,
+                    QPointF(40, request.startPos.y()),
+                    QPointF(40, request.endPos.y()),
+                    request.endPos,
+                ]
+            return result
+
+    manager = EdgeRouterManager()
+    manager.set_band_router_enabled(False)
+    manager.set_orthogonal_router(FakeBatchRouter())
+    monkeypatch.setattr(manager, "_collect_obstacles", lambda edge_item, roi_rect=None: [])
+
+    edge_one = MockEdge("A1", "A2")
+    edge_two = MockEdge("B1", "B2")
+    manager.route_all_edges_for_layout(
+        [
+            (edge_one, QPointF(0, 0), QPointF(100, 100)),
+            (edge_two, QPointF(0, 0), QPointF(100, 100)),
+        ]
+    )
+
+    applied_offsets = [
+        edge_one.applied_paths[-1][1],
+        edge_two.applied_paths[-1][1],
+    ]
+    assert sorted(applied_offsets) == [-5.0, 5.0]

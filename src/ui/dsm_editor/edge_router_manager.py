@@ -408,6 +408,7 @@ class EdgeRouterManager(QObject):
             from .draw_edges import expand_to_draw_edges
             draw_edges = expand_to_draw_edges(edges_data)
             batch: Dict[Tuple[str, str], List[QPointF]] = {}
+            path_offsets: Dict[Tuple[str, str], float] = {}
             advanced_frames: Dict[Tuple[str, str], List[QPointF]] = {}
             advanced_requests = []
             vertical_records = []
@@ -436,10 +437,6 @@ class EdgeRouterManager(QObject):
                     edge_item,
                     roi_rect=self._calculate_roi(core_start, core_end),
                 )
-                if not obstacles:
-                    batch[edge_key] = base_path
-                    continue
-
                 advanced_frames[edge_key] = base_path
                 advanced_requests.append(
                     self._build_advanced_route_request(
@@ -473,12 +470,15 @@ class EdgeRouterManager(QObject):
                     for edge_key, base_path in advanced_frames.items():
                         batch[edge_key] = base_path
 
+            path_offsets = self._compute_duplicate_path_offsets(batch)
+
             # 套用到 GUI
             for de in draw_edges:
                 edge_item, ps, pt = de.item, de.ps, de.pt
                 edge_key = self._get_edge_key(edge_item)
                 path = batch.get(edge_key, [ps, pt])
-                self._apply_path_to_edge_immediate(edge_item, path)
+                offset_pixels = path_offsets.get(edge_key, 0.0)
+                self._apply_path_to_edge_immediate(edge_item, path, offset_pixels)
                 results[edge_key] = path
         finally:
             self.last_routing_time = int((time.time() - t0) * 1000)
@@ -507,6 +507,39 @@ class EdgeRouterManager(QObject):
             obstacles=obstacles,
             previousPath=previous_path,
         )
+
+    def _compute_duplicate_path_offsets(
+        self, batch_paths: Dict[Tuple[str, str], List[QPointF]]
+    ) -> Dict[Tuple[str, str], float]:
+        """
+        對完全重疊的同一路徑做簡單 lane offset。
+
+        先處理最保守的情況：只有在 full polyline 幾何完全相同
+        （忽略方向反轉）時才展開。這樣風險低，能先改善最明顯的疊線。
+        """
+        signature_groups: Dict[Tuple[Tuple[float, float], ...], List[Tuple[str, str]]] = {}
+        for edge_key, path in batch_paths.items():
+            if len(path) < 3:
+                continue
+            signature = self._path_signature(path)
+            signature_groups.setdefault(signature, []).append(edge_key)
+
+        offsets: Dict[Tuple[str, str], float] = {}
+        lane_spacing = 10.0
+        for edge_keys in signature_groups.values():
+            if len(edge_keys) <= 1:
+                continue
+            ordered_keys = sorted(edge_keys)
+            center = (len(ordered_keys) - 1) / 2.0
+            for index, edge_key in enumerate(ordered_keys):
+                offsets[edge_key] = (index - center) * lane_spacing
+        return offsets
+
+    def _path_signature(self, path: List[QPointF]) -> Tuple[Tuple[float, float], ...]:
+        """將 polyline 轉成與方向無關的穩定簽章。"""
+        forward = tuple((round(point.x(), 1), round(point.y(), 1)) for point in path)
+        backward = tuple(reversed(forward))
+        return min(forward, backward)
     
     def _route_orthogonal(
         self, 
@@ -546,18 +579,22 @@ class EdgeRouterManager(QObject):
         # 回退到簡單正交路由
         return self._route_simple_orthogonal(start_pos, end_pos)
     
-    def _apply_path_to_edge_immediate(self, edge_item, path_points: List[QPointF]) -> None:
+    def _apply_path_to_edge_immediate(
+        self,
+        edge_item,
+        path_points: List[QPointF],
+        offset_pixels: float = 0,
+    ) -> None:
         """
         立即應用路徑到邊線項目，確保路徑真正繪製到畫面
         
         Args:
             edge_item: 邊線圖形項目
             path_points: 路徑點列表
+            offset_pixels: 同一路徑 lane offset
         """
         try:
-            # Band routing 模式下，直接使用計算好的路徑，不再做額外偏移
             adjusted = path_points
-            offset_pixels = 0  # Band routing 已經處理了位置分配，不需要額外偏移
 
             # 使用 EdgeItem 的增強路徑設置方法
             if hasattr(edge_item, 'set_complex_path'):

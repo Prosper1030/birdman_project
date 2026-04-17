@@ -362,6 +362,7 @@ class AdvancedEdgeRouter:
         if not start_gate or not end_gate:
             return [start_pos, end_pos]
 
+        self._add_orthogonal_guide_nodes(start_gate, end_gate)
         self.visibility_graph.build_visibility_edges()
         previous_segments = self._path_points_to_segment_keys(previous_path)
         path_nodes = self.pathfinder.find_path(
@@ -475,6 +476,52 @@ class AdvancedEdgeRouter:
                 continue
             index += 1
         return deduped
+
+    def _add_orthogonal_guide_nodes(
+        self, start_gate: RoutingNode, end_gate: RoutingNode
+    ) -> None:
+        """
+        補上不依賴障礙物的正交導引節點。
+
+        目前 router 的 waypoint 主要來自 obstacle corners。
+        若畫面區域沒有障礙物，對角起終點就會缺少可轉彎節點，
+        導致 batch router 無法真正介入。這裡補幾個安全的 guide nodes，
+        讓無障礙或障礙稀疏時也能形成 L / dogleg 路徑。
+        """
+        candidate_points = [
+            (start_gate.x, end_gate.y),
+            (end_gate.x, start_gate.y),
+        ]
+
+        mid_x = round(((start_gate.x + end_gate.x) * 0.5) / self.visibility_graph.grid_pitch)
+        mid_y = round(((start_gate.y + end_gate.y) * 0.5) / self.visibility_graph.grid_pitch)
+        mid_x *= self.visibility_graph.grid_pitch
+        mid_y *= self.visibility_graph.grid_pitch
+        candidate_points.extend(
+            [
+                (mid_x, start_gate.y),
+                (mid_x, end_gate.y),
+                (start_gate.x, mid_y),
+                (end_gate.x, mid_y),
+            ]
+        )
+
+        seen = set()
+        for x_pos, y_pos in candidate_points:
+            point_key = (round(x_pos, 1), round(y_pos, 1))
+            if point_key in seen:
+                continue
+            seen.add(point_key)
+            self._add_guide_node_if_free(x_pos, y_pos)
+
+    def _add_guide_node_if_free(self, x_pos: float, y_pos: float) -> None:
+        """只在自由空間加入 guide node，避免直接落進障礙物。"""
+        test_point = QPointF(x_pos, y_pos)
+        for obstacle in self.visibility_graph.obstacles:
+            if obstacle.contains(test_point):
+                return
+        node_id = f"guide_{round(x_pos, 1)}_{round(y_pos, 1)}"
+        self.visibility_graph.add_node(RoutingNode(x_pos, y_pos, node_id, "guide"))
 
     def _rebuild_visibility_graph(self, obstacles: List[QRectF]):
         """重建可見性圖。"""
