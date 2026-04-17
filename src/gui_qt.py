@@ -1277,7 +1277,10 @@ class BirdmanQtApp(QMainWindow):
         scrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         scrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         scrollArea.setMinimumHeight(1000)
-        self.ganttCanvas.setMinimumSize(1200, max(1000, len(wbsDf) * 35))
+        self.ganttCanvas.setMinimumSize(
+            1200,
+            max(1000, len(scenarioResult.wbsWithCpm) * 35),
+        )
 
         containerLayout = QVBoxLayout()
         containerLayout.setContentsMargins(20, 40, 20, 40)
