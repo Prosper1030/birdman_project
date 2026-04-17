@@ -52,8 +52,19 @@ from .ui.main_app.analysis_service import (
     buildCpmScenarioResult,
     loadAnalysisBundle,
 )
+from .ui.main_app.advanced_analysis_dialogs import (
+    promptResourceCapacities,
+    showFigureResultDialog,
+)
+from .ui.main_app.advanced_analysis_service import (
+    buildRacpResultHtml,
+    buildRcpspResultHtml,
+    buildRcpspScheduleFrame,
+    runRacpAnalysis,
+)
 from .ui.main_app.chart_service import (
     createGanttFigure,
+    createRacpBarChartFigure,
     createRcpspGanttFigure,
     initializeMonteCarloFigure,
     renderMonteCarloFigure,
@@ -1663,185 +1674,51 @@ class BirdmanQtApp(QMainWindow):
 
     def runRacpOptimization(self) -> None:
         """執行 RACP 最小人力配置分析"""
-        if self.mergedGraph is None or self.mergedWbs is None:
-            QMessageBox.warning(self, "警告", "請先執行完整分析")
-            return
-
         try:
-            # 檢查必要欄位
-            if "Eligible_Groups" not in self.mergedWbs.columns:
-                raise ValueError('WBS 缺少 "Eligible_Groups" 欄位')
-            if "ResourceDemand" not in self.mergedWbs.columns:
-                raise ValueError('WBS 缺少 "ResourceDemand" 欄位')
-
-            # 載入配置
-            from .racp_solver import solve_racp_basic
-
-            config = loadProjectConfig()
-            cmpParams = config.get("cmp_params", {})
-            durationField = cmpParams.get("default_duration_field", "Te_newbie")
-
-            if durationField not in self.mergedWbs.columns:
-                raise ValueError(f"WBS 缺少工期欄位 {durationField}")
-
-            # 獲取截止時間
             deadline = self.racpDeadlineSpinBox.value()
-
-            # 執行 RACP 分析
-            result = solve_racp_basic(
+            result, _durationField = runRacpAnalysis(
                 self.mergedGraph,
                 self.mergedWbs,
-                deadline=deadline,
-                durationField=durationField,
-                demandField="ResourceDemand"
+                deadline,
             )
-
-            # 更新結果顯示
             self.showRacpResult(result, deadline)
-
         except Exception as e:
             QMessageBox.critical(self, "RACP 分析失敗", f"執行 RACP 分析時發生錯誤：{e}")
 
     def showRacpResult(self, result: dict[str, int], deadline: int) -> None:
         """顯示 RACP 分析結果"""
-        total_workforce = sum(result.values())
-
-        # 格式化結果文本
-        result_text = "<b>RACP 最小人力配置結果</b><br>"
-        result_text += f"截止時間: {deadline} 小時<br>"
-        result_text += f"總人力需求: {total_workforce} 人<br><br>"
-        result_text += "<b>各群組人力配置:</b><br>"
-
-        for group, count in sorted(result.items()):
-            result_text += f"• {group}: {count} 人<br>"
-
-        # 更新結果標籤
+        result_text = buildRacpResultHtml(result, deadline)
         self.racpResultLabel.setText(result_text)
         self.racpResultLabel.setStyleSheet("padding: 10px; border: 1px solid green; background-color: #e8f5e8;")
-
-        # 顯示詳細結果對話框
-        dialog = QDialog(self)
-        dialog.setWindowTitle("RACP 人力配置結果")
-        dialog.setMinimumSize(600, 500)
-
-        layout = QVBoxLayout()
-
-        # 文字結果
-        textEdit = QTextEdit()
-        textEdit.setHtml(result_text)
-        textEdit.setReadOnly(True)
-        textEdit.setMaximumHeight(150)
-        layout.addWidget(textEdit)
-
-        # RACP 人力配置長條圖
-        try:
-            fig = self.createRacpBarChart(result, deadline)
-            canvas = FigureCanvas(fig)
-            layout.addWidget(canvas)
-        except Exception as e:
-            error_label = QLabel(f"圖表生成失敗: {e}")
-            layout.addWidget(error_label)
-
-        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok)
-        buttonBox.accepted.connect(dialog.accept)
-        layout.addWidget(buttonBox)
-
-        dialog.setLayout(layout)
-        dialog.exec_()
-
-    def createRacpBarChart(self, result: dict[str, int], deadline: int) -> Figure:
-        """建立 RACP 人力配置長條圖"""
-        fig = Figure(figsize=(10, 6), dpi=100)
-        ax = fig.add_subplot(111)
-
-        # 準備資料
-        groups = list(result.keys())
-        counts = list(result.values())
-        total_workforce = sum(counts)
-
-        # 建立長條圖
-        bars = ax.bar(groups, counts, color='skyblue', alpha=0.8, edgecolor='navy', linewidth=1)
-
-        # 在每個長條上顯示數值
-        for bar, count in zip(bars, counts):
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
-                    f'{count}人', ha='center', va='bottom', fontweight='bold')
-
-        # 設定標籤和標題
-        ax.set_xlabel('技能群組 (Skill Groups)', fontsize=12, fontweight='bold')
-        ax.set_ylabel('人力需求 (Workforce Demand)', fontsize=12, fontweight='bold')
-        ax.set_title(f'RACP 最小人力配置 (截止時間: {deadline}h, 總人力: {total_workforce}人)',
-                     fontsize=14, pad=20, fontweight='bold')
-
-        # 設定網格
-        ax.grid(True, axis='y', linestyle='--', alpha=0.3)
-        ax.set_axisbelow(True)
-
-        # 設定 Y 軸從 0 開始
-        ax.set_ylim(0, max(counts) * 1.2 if counts else 1)
-
-        # 調整佈局
-        fig.tight_layout()
-
-        return fig
+        showFigureResultDialog(
+            self,
+            "RACP 人力配置結果",
+            result_text,
+            createRacpBarChartFigure(result, deadline),
+            textMaximumHeight=150,
+        )
 
     def showRcpspResult(self, schedule: dict[str, float], durationField: str) -> None:
         """以對話框方式顯示 RCPSP 排程結果"""
+        if self.mergedWbs is None:
+            raise ValueError("目前沒有可顯示的 RCPSP 資料")
         projectEnd = schedule.get("ProjectEnd", 0)
-        scheduleDf = self.mergedWbs[["Task ID", durationField]].copy()
-        scheduleDf["Start"] = scheduleDf["Task ID"].map(schedule).fillna(0)
-        scheduleDf["Finish"] = (
-            scheduleDf["Start"] + scheduleDf[durationField].fillna(0)
-        )
-        resultText = (
-            f"<b>RCPSP 排程結果 (總工期: {projectEnd:.2f} 小時):" "</b><br><br>"
-        )
-        resultText += "<table border='1' style='width:100%'>"
-        resultText += "<tr><th>任務 ID</th><th>開始時間 (小時)</th></tr>"
-        for task, startTime in sorted(schedule.items()):
-            if task == "ProjectEnd":
-                continue
-            resultText += f"<tr><td>{task}</td><td>{startTime}</td></tr>"
-        resultText += "</table>"
-
-        if self.rcpspResultDialog is not None:
-            try:
-                self.rcpspResultDialog.close()
-            except RuntimeError:
-                self.rcpspResultDialog = None
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("RCPSP 排程結果")
-        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
-        dialog.finished.connect(lambda _: setattr(self, "rcpspResultDialog", None))
-        layout = QVBoxLayout()
-        textEdit = QTextEdit()
-        textEdit.setHtml(resultText)
-        textEdit.setReadOnly(True)
-        layout.addWidget(textEdit)
-
+        scheduleDf = buildRcpspScheduleFrame(self.mergedWbs, schedule, durationField)
         fig = self.drawRcpspGanttChart(
             scheduleDf,
             durationField,
             f"RCPSP 排程 (總工期: {projectEnd:.2f} 小時)",
         )
-        canvas = FigureCanvas(fig)
-        scrollArea = QScrollArea()
-        scrollArea.setWidget(canvas)
-        scrollArea.setWidgetResizable(True)
-        scrollArea.setMinimumHeight(400)
-        layout.addWidget(scrollArea)
-
-        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok)
-        buttonBox.accepted.connect(dialog.accept)
-        layout.addWidget(buttonBox)
-        dialog.setLayout(layout)
-        dialog.resize(600, 500)
-        self.rcpspResultDialog = dialog
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+        self.rcpspResultDialog = showFigureResultDialog(
+            self,
+            "RCPSP 排程結果",
+            buildRcpspResultHtml(schedule),
+            fig,
+            figureScrollable=True,
+            existingDialog=self.rcpspResultDialog,
+            onDialogClosed=lambda: setattr(self, "rcpspResultDialog", None),
+            floating=True,
+        )
 
     def openResourceConfigDialog(self) -> None:
         """開啟資源容量設定對話框"""
@@ -1858,23 +1735,9 @@ class BirdmanQtApp(QMainWindow):
             QMessageBox.critical(self, "錯誤", f"讀取資源資料失敗：{e}")
             return
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("設定資源容量")
-        form = QFormLayout(dialog)
-        spinBoxes: dict[str, QSpinBox] = {}
-        for group, cap in resourceCap.items():
-            spin = QSpinBox()
-            spin.setMinimum(1)
-            spin.setValue(self.manualResourceCap.get(group, cap))
-            form.addRow(QLabel(group), spin)
-            spinBoxes[group] = spin
-
-        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        form.addRow(buttonBox)
-        buttonBox.accepted.connect(dialog.accept)
-        buttonBox.rejected.connect(dialog.reject)
-        if dialog.exec_() == QDialog.Accepted:
-            self.manualResourceCap = {g: s.value() for g, s in spinBoxes.items()}
+        updatedCap = promptResourceCapacities(self, resourceCap, self.manualResourceCap)
+        if updatedCap is not None:
+            self.manualResourceCap = updatedCap
 
 
 def main():

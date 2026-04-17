@@ -10,6 +10,7 @@ matplotlib.use("Agg")  # noqa: E402
 
 from src.ui.main_app.chart_service import (  # noqa: E402
     createGanttFigure,
+    createRacpBarChartFigure,
     createRcpspGanttFigure,
     initializeMonteCarloFigure,
     renderMonteCarloFigure,
@@ -47,6 +48,13 @@ def test_create_rcpsp_gantt_figure_sets_title():
     figure = createRcpspGanttFigure(schedule_df, "Te_newbie", "RCPSP 圖")
 
     assert figure.axes[0].get_title() == "RCPSP 圖"
+
+
+def test_create_racp_bar_chart_figure_sets_title():
+    figure = createRacpBarChartFigure({"R1": 2, "R2": 3}, 100)
+
+    assert "RACP 最小人力配置" in figure.axes[0].get_title()
+    assert "截止時間: 100h" in figure.axes[0].get_title()
 
 
 def test_render_monte_carlo_figure_returns_stats_and_density_axis():

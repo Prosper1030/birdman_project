@@ -178,6 +178,50 @@ def createRcpspGanttFigure(
     return fig
 
 
+def createRacpBarChartFigure(result: dict[str, int], deadline: int) -> Figure:
+    """建立 RACP 人力配置長條圖。"""
+    fig = Figure(figsize=(10, 6), dpi=100)
+    ax = fig.add_subplot(111)
+
+    groups = list(result.keys())
+    counts = list(result.values())
+    totalWorkforce = sum(counts)
+
+    bars = ax.bar(
+        groups,
+        counts,
+        color="skyblue",
+        alpha=0.8,
+        edgecolor="navy",
+        linewidth=1,
+    )
+
+    for bar, count in zip(bars, counts):
+        height = bar.get_height()
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            height + 0.1,
+            f"{count}人",
+            ha="center",
+            va="bottom",
+            fontweight="bold",
+        )
+
+    ax.set_xlabel("技能群組 (Skill Groups)", fontsize=12, fontweight="bold")
+    ax.set_ylabel("人力需求 (Workforce Demand)", fontsize=12, fontweight="bold")
+    ax.set_title(
+        f"RACP 最小人力配置 (截止時間: {deadline}h, 總人力: {totalWorkforce}人)",
+        fontsize=14,
+        pad=20,
+        fontweight="bold",
+    )
+    ax.grid(True, axis="y", linestyle="--", alpha=0.3)
+    ax.set_axisbelow(True)
+    ax.set_ylim(0, max(counts) * 1.2 if counts else 1)
+    fig.tight_layout()
+    return fig
+
+
 def summarizeMonteCarloResults(results: list[float]) -> dict[str, float]:
     """計算蒙地卡羅模擬的統計摘要。"""
     arr = np.array(results, dtype=float)
