@@ -9,6 +9,7 @@ from pandas import DataFrame
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from ...cpm_processor import cpmForwardPass
+from ...rcpsp_solver import solveRcpsp
 
 
 class MonteCarloWorker(QObject):
@@ -89,4 +90,49 @@ class MonteCarloWorker(QObject):
         self.is_running = False
 
 
-__all__ = ["MonteCarloWorker"]
+class RcpspWorker(QObject):
+    """執行 RCPSP 排程的背景工作執行緒。"""
+
+    finished = pyqtSignal(dict)
+    failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        graph: nx.DiGraph,
+        wbs_df: DataFrame,
+        duration_field: str,
+        resource_field: str,
+        demand_field: str,
+        resource_cap: dict[str, int],
+        time_limit: int = 10,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.graph = graph
+        self.wbs_df = wbs_df
+        self.duration_field = duration_field
+        self.resource_field = resource_field
+        self.demand_field = demand_field
+        self.resource_cap = resource_cap
+        self.time_limit = time_limit
+
+    def run(self) -> None:
+        """執行 RCPSP 並回傳結果或錯誤。"""
+        try:
+            schedule = solveRcpsp(
+                self.graph,
+                self.wbs_df,
+                durationField=self.duration_field,
+                resourceField=self.resource_field,
+                demandField=self.demand_field,
+                resourceCap=self.resource_cap,
+                timeLimit=self.time_limit,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            self.failed.emit(str(exc))
+            return
+
+        self.finished.emit(schedule)
+
+
+__all__ = ["MonteCarloWorker", "RcpspWorker"]

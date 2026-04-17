@@ -71,7 +71,7 @@ from .ui.main_app.helpers import (
     getCriticalPathEdges,
 )
 from .ui.main_app.settings_dialog import SettingsDialog
-from .ui.main_app.workers import MonteCarloWorker
+from .ui.main_app.workers import MonteCarloWorker, RcpspWorker
 from .ui.shared import PandasModel
 
 
@@ -110,6 +110,11 @@ class BirdmanQtApp(QMainWindow):
         self.mcLastResults = None
         self.mcThread = None
         self.mcWorker = None
+        self.rcpspThread = None
+        self.rcpspWorker = None
+        self.rcpspLastSchedule = None
+        self.rcpspLastDurationField = None
+        self.rcpspResultDialog = None
 
         # CPM 分析相關資料
         self.cmpResult = None
@@ -197,6 +202,14 @@ class BirdmanQtApp(QMainWindow):
 
             except RuntimeError:
                 # 線程已被刪除，正常繼續
+                pass
+
+        if hasattr(self, "rcpspThread") and self.rcpspThread is not None:
+            try:
+                if self.rcpspThread.isRunning():
+                    self.rcpspThread.quit()
+                    self.rcpspThread.wait(2000)
+            except RuntimeError:
                 pass
 
         # 接受關閉事件
@@ -553,6 +566,17 @@ class BirdmanQtApp(QMainWindow):
         self.runRcpspButton = QPushButton("執行 RCPSP 資源排程")
         rcpsp_layout.addWidget(self.runRcpspButton)
 
+        self.rcpspProgressBar = QProgressBar()
+        self.rcpspProgressBar.setVisible(False)
+        self.rcpspProgressBar.setTextVisible(False)
+        rcpsp_layout.addWidget(self.rcpspProgressBar)
+
+        self.rcpspStatusLabel = QLabel("尚未執行 RCPSP 排程")
+        self.rcpspStatusLabel.setStyleSheet(
+            "padding: 10px; border: 1px solid gray; background-color: #f0f0f0;"
+        )
+        rcpsp_layout.addWidget(self.rcpspStatusLabel)
+
         rcpsp_layout.addStretch()
         self.tab_advanced_analysis.layout().addWidget(rcpsp_group)
 
@@ -629,7 +653,11 @@ class BirdmanQtApp(QMainWindow):
         # --- 按鈕連接 ---
         self.mc_run_button.clicked.connect(self.run_monte_carlo_simulation)
         self.mc_chart_mode_combo.currentIndexChanged.connect(self.on_chart_mode_changed)
-        self.runRcpspButton.clicked.connect(self.runRcpspOptimization)
+        self.runRcpspButton.clicked.connect(
+            lambda checked=False: self.runRcpspOptimization(
+                checked=checked, showDialog=True
+            )
+        )
         self.configResourcesButton.clicked.connect(self.openResourceConfigDialog)
         self.runRacpButton.clicked.connect(self.runRacpOptimization)
 
@@ -1470,56 +1498,168 @@ class BirdmanQtApp(QMainWindow):
         initializeMonteCarloFigure(self.mcFigure, isDarkMode=self.isDarkMode)
         self.mcCanvas.draw()
 
-    def runRcpspOptimization(self, showDialog: bool = True) -> dict[str, float] | None:
-        """執行 RCPSP 資源排程並可選擇是否顯示結果對話框"""
-        if self.mergedGraph is None or self.mergedWbs is None:
-            QMessageBox.warning(self, "警告", "請先執行完整分析")
-            return None
-        if not self.resourcePath:
-            QMessageBox.warning(self, "警告", "請先匯入 Resources 檔案")
-            return None
+    def runRcpspOptimization(
+        self,
+        checked: bool = False,
+        *,
+        showDialog: bool = True,
+    ) -> dict[str, float] | None:
+        """執行 RCPSP 資源排程並可選擇是否顯示結果對話框。
 
+        Args:
+            checked: 保留給 Qt ``clicked`` 訊號的布林參數，不參與排程邏輯。
+            showDialog: 是否在完成後顯示結果視窗。
+        """
+        _ = checked
         try:
-            from .rcpsp_solver import solveRcpsp
-
-            config = loadProjectConfig()
-            cmpParams = config.get("cmp_params", {})
-            durationField = cmpParams.get("default_duration_field", "Te_newbie")
-            eligibleField = "Eligible_Groups"
-            resourceField = (
-                eligibleField
-                if eligibleField in self.mergedWbs.columns
-                and self.mergedWbs[eligibleField].fillna("").astype(str).str.strip().ne("").any()
-                else "Property"
-            )
-
-            if durationField not in self.mergedWbs.columns:
-                raise ValueError(f"WBS 缺少工期欄位 {durationField}")
-            if resourceField not in self.mergedWbs.columns:
-                raise ValueError('WBS 缺少 "Eligible_Groups" 或 "Property" 欄位')
-            if "ResourceDemand" not in self.mergedWbs.columns:
-                raise ValueError('WBS 缺少 "ResourceDemand" 欄位')
-
-            resourceCap = readResources(
-                self.resourcePath, self.mergedWbs, durationField)
-            if self.manualResourceCap:
-                resourceCap.update(self.manualResourceCap)
-            schedule = solveRcpsp(
-                self.mergedGraph,
-                self.mergedWbs,
-                durationField=durationField,
-                resourceField=resourceField,
-                demandField="ResourceDemand",
-                resourceCap=resourceCap,
-            )
-
-            if showDialog:
-                self.showRcpspResult(schedule, durationField)
-            return schedule
-
+            rcpspContext = self._buildRcpspContext()
         except Exception as e:
+            self._setRcpspStatus(f"RCPSP 失敗：{e}", isError=True)
             QMessageBox.critical(self, "排程失敗", f"執行 RCPSP 排程時發生錯誤：{e}")
             return None
+
+        if not showDialog:
+            try:
+                from .rcpsp_solver import solveRcpsp
+
+                schedule = solveRcpsp(
+                    self.mergedGraph,
+                    self.mergedWbs,
+                    durationField=rcpspContext["durationField"],
+                    resourceField=rcpspContext["resourceField"],
+                    demandField="ResourceDemand",
+                    resourceCap=rcpspContext["resourceCap"],
+                )
+            except Exception as e:
+                self._setRcpspStatus(f"RCPSP 失敗：{e}", isError=True)
+                QMessageBox.critical(self, "排程失敗", f"執行 RCPSP 排程時發生錯誤：{e}")
+                return None
+
+            self.rcpspLastSchedule = schedule
+            self.rcpspLastDurationField = rcpspContext["durationField"]
+            self._setRcpspStatus(
+                f"RCPSP 完成，總工期：{schedule.get('ProjectEnd', 0):.2f} 小時",
+                isSuccess=True,
+            )
+            return schedule
+
+        if self.rcpspThread is not None:
+            try:
+                if self.rcpspThread.isRunning():
+                    QMessageBox.warning(self, "警告", "RCPSP 排程正在計算中")
+                    return None
+            except RuntimeError:
+                pass
+
+        self._setRcpspBusy(True)
+        self._setRcpspStatus("RCPSP 計算中，請稍候（最多約 10 秒）...", isBusy=True)
+        self.rcpspLastDurationField = rcpspContext["durationField"]
+
+        self.rcpspThread = QThread()
+        self.rcpspWorker = RcpspWorker(
+            self.mergedGraph,
+            self.mergedWbs,
+            rcpspContext["durationField"],
+            rcpspContext["resourceField"],
+            "ResourceDemand",
+            rcpspContext["resourceCap"],
+        )
+        self.rcpspWorker.moveToThread(self.rcpspThread)
+        self.rcpspThread.started.connect(self.rcpspWorker.run)
+        self.rcpspWorker.finished.connect(self._handleRcpspFinished)
+        self.rcpspWorker.failed.connect(self._handleRcpspFailed)
+        self.rcpspWorker.finished.connect(self.rcpspThread.quit)
+        self.rcpspWorker.failed.connect(self.rcpspThread.quit)
+        self.rcpspWorker.finished.connect(self.rcpspWorker.deleteLater)
+        self.rcpspWorker.failed.connect(self.rcpspWorker.deleteLater)
+        self.rcpspThread.finished.connect(self.rcpspThread.deleteLater)
+        self.rcpspThread.finished.connect(lambda: setattr(self, "rcpspThread", None))
+        self.rcpspThread.finished.connect(lambda: setattr(self, "rcpspWorker", None))
+        self.rcpspThread.start()
+        return None
+
+    def _buildRcpspContext(self) -> dict[str, object]:
+        """整理 RCPSP 執行所需參數。"""
+        if self.mergedGraph is None or self.mergedWbs is None:
+            raise ValueError("請先執行完整分析")
+        if not self.resourcePath:
+            raise ValueError("請先匯入 Resources 檔案")
+
+        config = loadProjectConfig()
+        cmpParams = config.get("cmp_params", {})
+        durationField = cmpParams.get("default_duration_field", "Te_newbie")
+        eligibleField = "Eligible_Groups"
+        resourceField = (
+            eligibleField
+            if eligibleField in self.mergedWbs.columns
+            and self.mergedWbs[eligibleField].fillna("").astype(str).str.strip().ne("").any()
+            else "Property"
+        )
+
+        if durationField not in self.mergedWbs.columns:
+            raise ValueError(f"WBS 缺少工期欄位 {durationField}")
+        if resourceField not in self.mergedWbs.columns:
+            raise ValueError('WBS 缺少 "Eligible_Groups" 或 "Property" 欄位')
+        if "ResourceDemand" not in self.mergedWbs.columns:
+            raise ValueError('WBS 缺少 "ResourceDemand" 欄位')
+
+        resourceCap = readResources(self.resourcePath, self.mergedWbs, durationField)
+        if self.manualResourceCap:
+            resourceCap.update(self.manualResourceCap)
+
+        return {
+            "durationField": durationField,
+            "resourceField": resourceField,
+            "resourceCap": resourceCap,
+        }
+
+    def _setRcpspBusy(self, isBusy: bool) -> None:
+        """更新 RCPSP 執行中的 UI 狀態。"""
+        self.runRcpspButton.setEnabled(not isBusy)
+        self.configResourcesButton.setEnabled(not isBusy)
+        self.rcpspProgressBar.setVisible(isBusy)
+        if isBusy:
+            self.rcpspProgressBar.setRange(0, 0)
+        else:
+            self.rcpspProgressBar.setRange(0, 1)
+            self.rcpspProgressBar.setValue(0)
+
+    def _setRcpspStatus(
+        self,
+        message: str,
+        *,
+        isSuccess: bool = False,
+        isError: bool = False,
+        isBusy: bool = False,
+    ) -> None:
+        """更新 RCPSP 狀態文字與樣式。"""
+        if isError:
+            style = "padding: 10px; border: 1px solid #c62828; background-color: #fdecea;"
+        elif isSuccess:
+            style = "padding: 10px; border: 1px solid green; background-color: #e8f5e8;"
+        elif isBusy:
+            style = "padding: 10px; border: 1px solid #1565c0; background-color: #e3f2fd;"
+        else:
+            style = "padding: 10px; border: 1px solid gray; background-color: #f0f0f0;"
+        self.rcpspStatusLabel.setText(message)
+        self.rcpspStatusLabel.setStyleSheet(style)
+
+    def _handleRcpspFinished(self, schedule: dict[str, float]) -> None:
+        """處理 RCPSP 成功結果。"""
+        self._setRcpspBusy(False)
+        self.rcpspLastSchedule = schedule
+        self._setRcpspStatus(
+            f"RCPSP 完成，總工期：{schedule.get('ProjectEnd', 0):.2f} 小時，結果視窗已開啟",
+            isSuccess=True,
+        )
+        durationField = self.rcpspLastDurationField or "Te_newbie"
+        self.showRcpspResult(schedule, durationField)
+
+    def _handleRcpspFailed(self, errorMessage: str) -> None:
+        """處理 RCPSP 失敗結果。"""
+        self._setRcpspBusy(False)
+        self._setRcpspStatus(f"RCPSP 失敗：{errorMessage}", isError=True)
+        QMessageBox.critical(self, "排程失敗", f"執行 RCPSP 排程時發生錯誤：{errorMessage}")
 
     def runRacpOptimization(self) -> None:
         """執行 RACP 最小人力配置分析"""
@@ -1665,8 +1805,16 @@ class BirdmanQtApp(QMainWindow):
             resultText += f"<tr><td>{task}</td><td>{startTime}</td></tr>"
         resultText += "</table>"
 
+        if self.rcpspResultDialog is not None:
+            try:
+                self.rcpspResultDialog.close()
+            except RuntimeError:
+                self.rcpspResultDialog = None
+
         dialog = QDialog(self)
         dialog.setWindowTitle("RCPSP 排程結果")
+        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+        dialog.finished.connect(lambda _: setattr(self, "rcpspResultDialog", None))
         layout = QVBoxLayout()
         textEdit = QTextEdit()
         textEdit.setHtml(resultText)
@@ -1690,7 +1838,10 @@ class BirdmanQtApp(QMainWindow):
         layout.addWidget(buttonBox)
         dialog.setLayout(layout)
         dialog.resize(600, 500)
-        dialog.exec_()
+        self.rcpspResultDialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def openResourceConfigDialog(self) -> None:
         """開啟資源容量設定對話框"""
