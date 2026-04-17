@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -19,6 +20,9 @@ def prepareAppRuntime(projectRoot: Path) -> None:
     os.environ.setdefault("MPLBACKEND", "Qt5Agg")
     os.environ.setdefault("MPLCONFIGDIR", str(matplotlibCache))
     os.environ.setdefault("XDG_CACHE_HOME", str(xdgCache))
+
+    if str(projectRoot) not in sys.path:
+        sys.path.insert(0, str(projectRoot))
 
     os.chdir(projectRoot)
 
