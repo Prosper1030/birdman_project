@@ -41,24 +41,17 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from .dsm_processor import (
-    readDsm,
-    processDsm,
-    buildTaskMapping,
-    buildMergedDsm,
-)
-from .wbs_processor import readWbs, mergeByScc, validateIds
-from .cpm_processor import (
-    cpmForwardPass,
-    cpmBackwardPass,
-    calculateSlack,
-    findCriticalPath,
-    extractDurationFromWbs,
-)
+from .dsm_processor import readDsm
+from .wbs_processor import readWbs
 from .resource_processor import readResources
 from . import visualizer
 from .app_paths import loadProjectConfig, prepareQtApplication, saveProjectConfig
 from .ui.dsm_editor import DsmEditor
+from .ui.main_app.analysis_service import (
+    buildAllCpmScenarioResults,
+    buildCpmScenarioResult,
+    loadAnalysisBundle,
+)
 from .ui.main_app.helpers import (
     addNoColumn,
     buildDarkModeStylesheet,
@@ -793,8 +786,13 @@ class BirdmanQtApp(QMainWindow):
         """
         self.notify = show_notification
         try:
-            dsm = readDsm(self.dsmPath)
-            wbs = readWbs(self.wbsPath)
+            analysisBundle = loadAnalysisBundle(
+                self.dsmPath,
+                self.wbsPath,
+                self.kParams,
+            )
+            dsm = analysisBundle.sourceDsm
+            wbs = analysisBundle.sourceWbs
             self.wbsDf = wbs.copy()
             # 預覽原始資料 (保留在預覽區，但不在分析結果顯示)
             model_dsm = PandasModel(dsm.head(100), dsmMode=True)
@@ -803,62 +801,19 @@ class BirdmanQtApp(QMainWindow):
             model_wbs = PandasModel(wbs_with_no.head(100))
             self.wbs_preview.setModel(model_wbs)
 
-            validateIds(wbs, dsm)
-
             # 統一設定圖表主題顏色
             self.configure_chart_theme()
 
-            sortedDsm, sortedWbs, graph = processDsm(dsm, wbs)
-            self.sortedWbs = self._add_no_column(sortedWbs)
-            self.sortedDsm = sortedDsm
-            self.graph = graph  # 儲存圖形物件供後續使用
-
-            merged = mergeByScc(sortedWbs, self.kParams)
-            self.mergedWbs = self._add_no_column(merged)
-
-            # 建立原始 Task ID 到合併後 Task ID 的對應
-            task_mapping = buildTaskMapping(sortedWbs, merged)
-            # 依映射產生合併後的 DSM
-            mergedDsm = buildMergedDsm(self.graph, task_mapping)
-            # 根據合併後的 DSM 重新計算層次與圖形
-            (
-                self.mergedDsm,
-                merged_sorted_wbs,
-                self.mergedGraph,
-            ) = processDsm(
-                mergedDsm,
-                merged,
-            )
-
-            # 儲存原始圖的映射
-            self.scc_map = dict(zip(sortedWbs["Task ID"], sortedWbs["SCC_ID"]))
-            self.layer_map = dict(zip(sortedWbs["Task ID"], sortedWbs["Layer"]))
-
-            # 計算並儲存合併後圖形的映射
-            try:
-                source_nodes = [
-                    node for node, deg in self.mergedGraph.in_degree() if deg == 0
-                ]
-                self.merged_layer_map = {}
-                for node in self.mergedGraph.nodes():
-                    max_dist = 0
-                    for src in source_nodes:
-                        try:
-                            paths = nx.all_simple_paths(self.mergedGraph, src, node)
-                            dist = max((len(p) - 1 for p in paths), default=-1)
-                            if dist > max_dist:
-                                max_dist = dist
-                        except nx.NetworkXNoPath:
-                            continue
-                    self.merged_layer_map[node] = max_dist
-            except (ValueError, nx.NetworkXError):
-                self.merged_layer_map = {
-                    node: i for i, node in enumerate(self.mergedGraph.nodes())
-                }
-
-            self.merged_scc_map = {
-                node: i for i, node in enumerate(self.mergedGraph.nodes())
-            }
+            self.sortedWbs = self._add_no_column(analysisBundle.sortedWbs)
+            self.sortedDsm = analysisBundle.sortedDsm
+            self.graph = analysisBundle.graph
+            self.mergedWbs = self._add_no_column(analysisBundle.mergedWbs)
+            self.mergedDsm = analysisBundle.mergedDsm
+            self.mergedGraph = analysisBundle.mergedGraph
+            self.scc_map = analysisBundle.sccMap
+            self.layer_map = analysisBundle.layerMap
+            self.merged_scc_map = analysisBundle.mergedSccMap
+            self.merged_layer_map = analysisBundle.mergedLayerMap
 
             # 重新繪製依賴關係圖
             self.redraw_graph()
@@ -1039,14 +994,6 @@ class BirdmanQtApp(QMainWindow):
             return
 
         try:
-            # 檢查合併後的圖是否存在循環
-            cycles = list(nx.simple_cycles(self.mergedGraph))
-            if cycles:
-                cycle_str = " -> ".join(cycles[0] + [cycles[0][0]])
-                raise ValueError(
-                    f"發現循環依賴：{cycle_str}\n" "請先解決循環依賴問題再進行 CPM 分析"
-                )
-
             mode_map = {
                 "期望時間 (Te)": "Te",
                 "樂觀時間 (O)": "O",
@@ -1054,32 +1001,13 @@ class BirdmanQtApp(QMainWindow):
                 "最可能時間 (M)": "M",
             }
             timeKey = mode_map.get(self.ganttDisplayCombo.currentText(), "Te")
-            durationField = f"{timeKey}_{self.selected_role}"
-
-            durationsHours = extractDurationFromWbs(
-                self.mergedWbs.drop(columns=["No."]), durationField
-            )
-            forwardData = cpmForwardPass(self.mergedGraph, durationsHours)
-            projectEnd = max(ef for _, ef in forwardData.values())
-            backwardData = cpmBackwardPass(
-                self.mergedGraph, durationsHours, projectEnd
-            )
-            cpmResult = calculateSlack(
-                forwardData, backwardData, self.mergedGraph
-            )
-
             wbsWithCpm = self.mergedWbs.copy()
-            for col in ["ES", "EF", "LS", "LF", "TF", "FF", "Critical"]:
-                wbsWithCpm[col] = (
-                    wbsWithCpm["Task ID"].map(cpmResult[col].to_dict()).fillna(0)
-                )
-
             self.ganttResults = {"newbie": {}, "expert": {}}
-            self.ganttResults[self.selected_role][timeKey] = (
-                cpmResult,
-                durationsHours,
+            self.ganttResults[self.selected_role][timeKey] = buildCpmScenarioResult(
                 wbsWithCpm,
-                projectEnd,
+                self.mergedGraph,
+                self.selected_role,
+                timeKey,
             )
 
             self.update_gantt_display()
@@ -1094,36 +1022,10 @@ class BirdmanQtApp(QMainWindow):
         if not success:
             return
 
-        roles = {"新手": "newbie", "專家": "expert"}
-        time_types = {"期望時間": "Te", "樂觀時間": "O", "悲觀時間": "P", "最可能時間": "M"}
-
-        self.ganttResults = {"newbie": {}, "expert": {}}
-
-        for role_text, roleKey in roles.items():
-            for time_text, time_key in time_types.items():
-                durationField = f"{time_key}_{roleKey}"
-                durationsHours = extractDurationFromWbs(
-                    self.mergedWbs.drop(columns=["No."]), durationField
-                )
-                forwardData = cpmForwardPass(self.mergedGraph, durationsHours)
-                projectEnd = max(ef for _, ef in forwardData.values())
-                backwardData = cpmBackwardPass(
-                    self.mergedGraph, durationsHours, projectEnd
-                )
-                cpmResult = calculateSlack(
-                    forwardData, backwardData, self.mergedGraph
-                )
-                wbsWithCpm = self.mergedWbs.copy()
-                for col in ["ES", "EF", "LS", "LF", "TF", "FF", "Critical"]:
-                    wbsWithCpm[col] = (
-                        wbsWithCpm["Task ID"].map(cpmResult[col].to_dict()).fillna(0)
-                    )
-                self.ganttResults[roleKey][time_key] = (
-                    cpmResult,
-                    durationsHours,
-                    wbsWithCpm,
-                    projectEnd,
-                )
+        self.ganttResults = buildAllCpmScenarioResults(
+            self.mergedWbs.copy(),
+            self.mergedGraph,
+        )
 
         self.ganttDisplayCombo.setCurrentIndex(0)
         self.cpmDisplayCombo.setCurrentIndex(0)
@@ -1334,21 +1236,25 @@ class BirdmanQtApp(QMainWindow):
         if roleKey not in self.ganttResults or time_key not in self.ganttResults[roleKey]:
             return
 
-        cpmDf, durations, wbsDf, projectEnd = self.ganttResults[roleKey][time_key]
-        self.cmpResult = wbsDf
+        scenarioResult = self.ganttResults[roleKey][time_key]
+        self.cmpResult = scenarioResult.wbsWithCpm
 
-        self.currentDisplayCpmDf = self._create_cpm_display_df(wbsDf, roleKey, time_key)
-        self.criticalPath = findCriticalPath(cpmDf)
+        self.currentDisplayCpmDf = self._create_cpm_display_df(
+            scenarioResult.wbsWithCpm,
+            roleKey,
+            time_key,
+        )
+        self.criticalPath = scenarioResult.criticalPath
 
         # 更新關鍵路徑後，重繪合併後的依賴圖以顯示關鍵路徑
         self.redraw_merged_graph()
 
         self.cmp_result_view.setModel(PandasModel(self.currentDisplayCpmDf.head(100)))
-        self.total_hours_label.setText(f"總工時：{projectEnd:.1f} 小時")
+        self.total_hours_label.setText(f"總工時：{scenarioResult.projectEnd:.1f} 小時")
         role_text = "新手" if roleKey == "newbie" else "專家"
         mode_label_map = {"Te": "期望時間", "O": "樂觀時間", "P": "悲觀時間", "M": "最可能時間"}
         key_title = f"{role_text} - {mode_label_map[time_key]} ({time_key}_{roleKey})"
-        newTitle = f"{key_title}\n總工時: {projectEnd:.2f} 小時"
+        newTitle = f"{key_title}\n總工時: {scenarioResult.projectEnd:.2f} 小時"
 
         # 先清除舊的圖表
         layout = self.gantt_container.layout()
@@ -1359,10 +1265,10 @@ class BirdmanQtApp(QMainWindow):
 
         # 重新產生甘特圖並加入佈局
         self.ganttFigure = self.drawGanttChart(
-            cpmDf,
-            durations,
+            scenarioResult.cpmDf,
+            scenarioResult.durations,
             newTitle,
-            wbsDf,
+            scenarioResult.wbsWithCpm,
         )
         self.ganttCanvas = FigureCanvas(self.ganttFigure)
         scrollArea = QScrollArea()
