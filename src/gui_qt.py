@@ -4,7 +4,6 @@ PyQt5 進階 GUI，支援分頁切換與 DataFrame 表格預覽
 """
 import sys
 import json
-import os
 import networkx as nx
 from functools import partial
 
@@ -42,8 +41,6 @@ from matplotlib.backends.backend_qt5agg import (
 from matplotlib.figure import Figure
 import pandas as pd
 
-from .dsm_processor import readDsm
-from .wbs_processor import readWbs
 from .resource_processor import readResources
 from .app_paths import loadProjectConfig, prepareQtApplication, saveProjectConfig
 from .ui.dsm_editor import DsmEditor
@@ -80,6 +77,14 @@ from .ui.main_app.helpers import (
     configureChartTheme,
     createCpmDisplayDf,
     getCriticalPathEdges,
+)
+from .ui.main_app.input_service import (
+    FolderImportSelectionError,
+    loadDsmPreview,
+    loadFolderImportBundle,
+    loadOptionalDsmForEditor,
+    loadResourcesPreview,
+    loadWbsPreview,
 )
 from .ui.main_app.settings_dialog import SettingsDialog
 from .ui.main_app.workers import MonteCarloWorker, RcpspWorker
@@ -709,7 +714,7 @@ class BirdmanQtApp(QMainWindow):
             self.dsmPath = path
             self.dsm_path_label.setText(path)
             try:
-                dsm = readDsm(path)
+                dsm = loadDsmPreview(path)
                 model = PandasModel(dsm.head(100), dsmMode=True)
                 self.dsm_preview.setModel(model)
             except (OSError, pd.errors.ParserError, ValueError) as e:
@@ -724,9 +729,8 @@ class BirdmanQtApp(QMainWindow):
             self.wbsPath = path
             self.wbs_path_label.setText(path)
             try:
-                wbs = readWbs(path)
+                wbs, wbs_display = loadWbsPreview(path)
                 self.wbsDf = wbs.copy()
-                wbs_display = self._add_no_column(wbs)
                 model = PandasModel(wbs_display.head(100))
                 self.wbs_preview.setModel(model)
             except (OSError, pd.errors.ParserError, ValueError) as e:
@@ -739,7 +743,7 @@ class BirdmanQtApp(QMainWindow):
         )
         if path:
             try:
-                resources = pd.read_csv(path, encoding="utf-8-sig")
+                resources = loadResourcesPreview(path)
                 model = PandasModel(resources.head(100))
                 self.resources_preview.setModel(model)
                 self.resourcePath = path
@@ -752,13 +756,11 @@ class BirdmanQtApp(QMainWindow):
         if self.wbsDf is None:
             QMessageBox.warning(self, "警告", "請先匯入 WBS 檔案")
             return
-        dsm_df = None
-        if getattr(self, "dsmPath", ""):
-            try:
-                dsm_df = readDsm(self.dsmPath)
-            except (OSError, pd.errors.ParserError, ValueError) as e:
-                QMessageBox.critical(self, "錯誤", f"DSM 載入失敗：{e}")
-                return
+        try:
+            dsm_df = loadOptionalDsmForEditor(getattr(self, "dsmPath", ""))
+        except (OSError, pd.errors.ParserError, ValueError) as e:
+            QMessageBox.critical(self, "錯誤", f"DSM 載入失敗：{e}")
+            return
 
         editor = DsmEditor(
             self.wbsDf.copy(),
@@ -774,56 +776,32 @@ class BirdmanQtApp(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "選擇資料夾", "")
         if not folder:
             return
-        files = os.listdir(folder)
-        wbsFiles = [f for f in files if "wbs" in f.lower()]
-        dsmFiles = [f for f in files if "dsm" in f.lower()]
-        resourceFiles = [f for f in files if "resource" in f.lower()]
-        if len(wbsFiles) != 1 or len(dsmFiles) != 1:
-            QMessageBox.warning(
-                self, "錯誤", "請選擇一個剛好包含一份 WBS 和一份 DSM 檔案的資料夾。"
-            )
-            return
-        wbsPath = os.path.join(folder, wbsFiles[0])
-        dsmPath = os.path.join(folder, dsmFiles[0])
         try:
-            wbs = readWbs(wbsPath)
-            self.wbsDf = wbs.copy()
-            wbs_display = self._add_no_column(wbs)
-            dsm = readDsm(dsmPath)
+            bundle = loadFolderImportBundle(folder)
+        except FolderImportSelectionError as e:
+            QMessageBox.warning(self, "錯誤", str(e))
+            return
         except (OSError, pd.errors.ParserError, ValueError):
             QMessageBox.critical(
                 self, "錯誤", "資料夾中的 WBS 或 DSM 檔案格式不正確，請檢查檔案內容。"
             )
             return
-        self.wbsPath = wbsPath
-        self.dsmPath = dsmPath
-        self.wbs_path_label.setText(wbsPath)
-        self.dsm_path_label.setText(dsmPath)
-        model_wbs = PandasModel(wbs_display.head(100))
-        self.wbs_preview.setModel(model_wbs)
-        model_dsm = PandasModel(dsm.head(100), dsmMode=True)
-        self.dsm_preview.setModel(model_dsm)
 
-        # 匯入並預覽 Resources（可選）
-        self.resourcePath = ""
-        self.resources_path_label.setText("")
-        self.resources_preview.setModel(PandasModel(pd.DataFrame()))
-        if len(resourceFiles) > 1:
-            QMessageBox.warning(
-                self, "錯誤", "資料夾中最多只能有一份 Resources 檔案，將忽略多餘檔案。"
-            )
-        elif len(resourceFiles) == 1:
-            resourcePath = os.path.join(folder, resourceFiles[0])
-            try:
-                resources = pd.read_csv(resourcePath, encoding="utf-8-sig")
-                model_res = PandasModel(resources.head(100))
-                self.resources_preview.setModel(model_res)
-                self.resourcePath = resourcePath
-                self.resources_path_label.setText(resourcePath)
-            except (OSError, pd.errors.ParserError, ValueError):
-                QMessageBox.warning(
-                    self, "錯誤", "Resources 檔案格式不正確，將忽略。"
-                )
+        self.wbsDf = bundle.wbs.copy()
+        self.wbsPath = bundle.wbsPath
+        self.dsmPath = bundle.dsmPath
+        self.wbs_path_label.setText(bundle.wbsPath)
+        self.dsm_path_label.setText(bundle.dsmPath)
+        model_wbs = PandasModel(bundle.wbsDisplay.head(100))
+        self.wbs_preview.setModel(model_wbs)
+        model_dsm = PandasModel(bundle.dsm.head(100), dsmMode=True)
+        self.dsm_preview.setModel(model_dsm)
+        self.resourcePath = bundle.resourcePath
+        self.resources_path_label.setText(bundle.resourcePath)
+        self.resources_preview.setModel(PandasModel(bundle.resources.head(100)))
+
+        for warningMessage in bundle.warnings:
+            QMessageBox.warning(self, "錯誤", warningMessage)
 
     def runAnalysis(self, show_notification: bool = True) -> bool:
         """執行資料分析並更新各分頁。
