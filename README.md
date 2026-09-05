@@ -6,6 +6,12 @@ multi-subsystem engineering project**, with an interactive dependency-graph edit
 Built for the National Cheng Kung University human-powered aircraft team. Part of the
 [HPA-MDO project](https://github.com/Prosper1030/hpa-mdo-framework) — this is where it started.
 
+> **Third of three attempts.** `wbs_dsm_gui_v2` (2025-07-26) → `birdaman` (2025-07-30, private)
+> → this repository (2025-07-31). Neither prototype was extended; both were rebuilt. The second
+> already had SCC and layer analysis and was still discarded, because what needed fixing was the
+> structure rather than the features. Development continued here until 2026-04, in parallel with
+> the aircraft physics work rather than before it.
+
 ---
 
 ## Why this exists
