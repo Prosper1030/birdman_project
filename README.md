@@ -1,4 +1,75 @@
-# Birdman Project
+# birdman_project
+
+**Design Structure Matrix (DSM) and Work Breakdown Structure (WBS) analysis for a
+multi-subsystem engineering project**, with an interactive dependency-graph editor.
+
+Built for the National Cheng Kung University human-powered aircraft team. Part of the
+[HPA-MDO project](https://github.com/Prosper1030/hpa-mdo-framework) — this is where it started.
+
+---
+
+## Why this exists
+
+A human-powered aircraft is built by a student team spanning aerodynamics, structures,
+manufacturing, propulsion and flight test. The first real problem was not a physics problem: it
+was that nobody could state which decisions actually depended on which others.
+
+So the dependency structure was represented explicitly, before any solver was written. The
+question this tool answers — *which subsystems are irreducibly coupled?* — is what makes
+"multidisciplinary design optimization" a justified choice later on rather than a fashionable
+one. The coupled clusters it identifies are the reason a coupled solver was needed at all.
+
+## What it does
+
+**DSM semantics.** In the matrix, a `1` at (row, column) means the **row task waits on the
+column task**; the graph edge runs column → row.
+
+- **Topological sorting and lower-triangularization** — derive a feasible execution order, and
+  reorder the matrix so that dependencies fall below the diagonal wherever possible.
+- **Strongly-connected-component detection** — the substantive part. An SCC in a DSM is a set of
+  tasks that *cannot* be sequenced, because each depends on the others. Off-diagonal entries
+  that survive triangularization are exactly the feedback loops that force iteration. These are
+  the couplings a design process has to plan around rather than schedule away.
+- **Automatic SCC merging** — collapse each cycle into a single work item with aggregated hours,
+  with task-ID year consistency checking (mismatched years raise rather than silently merge).
+- **WBS reordering** — re-emit the work breakdown structure in dependency order, annotated with
+  `Layer` and `SCC_ID`.
+- **Interactive DSM editor** — build and edit the dependency graph directly: orthogonal edge
+  routing with Sugiyama layering, shared horizontal/vertical corridor separation, congestion
+  rerouting, cycle highlighting, session autosave, and guarded export.
+
+The edge-routing engine is the largest single piece of the codebase. Producing readable
+orthogonal routing on a dense dependency graph — without overlapping edges or ambiguous corridor
+sharing — turned out to be a substantial problem in its own right.
+
+## Quick start
+
+```bash
+python3 main.py --dsm sample_data/DSM.csv --wbs sample_data/WBS.csv   # CLI
+python3 -m src.gui_qt                                                 # GUI
+python3 run_dsm_editor.py                                             # DSM editor
+```
+
+Outputs `sorted_wbs.csv`, `merged_wbs.csv` and `sorted_dsm.csv`.
+
+## Scope and limitations
+
+- **Domain-agnostic.** The graph algorithms know nothing about aircraft. The connection to the
+  HPA project is in how it was used, not in the code.
+- **Desktop only.** The editor is a Qt application. A web feasibility assessment exists
+  (`docs/dsm_editor_web_feasibility.md`) but was not implemented.
+- **Estimation, not scheduling.** Hours are aggregated, but there is no resource levelling or
+  critical-path analysis.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+---
+
+# 詳細說明（繁體中文）
+
+以下為原有的操作與開發文件，維持繁體中文。
 
 此工具根據 DSM 與 WBS 檔案計算任務依賴層級並輸出排序後的 WBS。
 
